@@ -1,0 +1,7 @@
+{
+  "fmt": { "lineWidth": 120 },
+  "tasks": {
+    "check": "deno check *.ts",
+    "test": "deno test"
+  }
+}

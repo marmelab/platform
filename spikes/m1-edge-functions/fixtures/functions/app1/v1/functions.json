@@ -1,0 +1,1 @@
+{ "functions": { "hello": { "verify_jwt": false }, "env": { "verify_jwt": false }, "deps": { "verify_jwt": false }, "probe": { "verify_jwt": false }, "burn": { "verify_jwt": false } } }
