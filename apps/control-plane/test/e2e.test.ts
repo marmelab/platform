@@ -209,7 +209,7 @@ describe("control plane M2 e2e", () => {
     assert.equal(noJwt.status, 401);
   });
 
-  test("4b. archives with symlinks are rejected", async () => {
+  test("4b. archives with symlinks or .. are rejected", async () => {
     const evil = join(work, "evil");
     mkdirSync(evil, { recursive: true });
     writeFileSync(join(evil, "index.html"), "<h1>evil</h1>");
@@ -220,6 +220,18 @@ describe("control plane M2 e2e", () => {
     const result = await callRaw(admin, "finalize_deployment", { deployment_id: created.deployment_id });
     assert.equal(result.isError, true);
     assert.match(result.content[0].text, /SymbolicLink/);
+
+    const outside = join(work, "outside.txt");
+    writeFileSync(outside, "escape");
+    const created2 = await call(admin, "create_deployment", { app: APP, kind: "frontend" });
+    const file = join(work, "dotdot.tgz");
+    mkdirSync(join(work, "dist-escape"), { recursive: true });
+    await tar.c({ gzip: true, cwd: join(work, "dist-escape"), file, preservePaths: true }, ["../outside.txt"]);
+    const put = await fetch(created2.upload_url, { method: "PUT", body: new Blob([readFileSync(file)]) });
+    assert.equal(put.status, 200);
+    const result2 = await callRaw(admin, "finalize_deployment", { deployment_id: created2.deployment_id });
+    assert.equal(result2.isError, true);
+    assert.match(result2.content[0].text, /"\.\." is not allowed/);
   });
 
   let v1: number;

@@ -41,7 +41,6 @@ export const config = {
   edgeUpstream: env("EDGE_UPSTREAM", "edge:9000"),
   uploadTtlSeconds: Number(env("UPLOAD_TTL_SECONDS", "900")),
   maxUploadBytes: Number(env("MAX_UPLOAD_BYTES", String(200 * 1024 * 1024))),
-  keepVersions: Number(env("KEEP_VERSIONS", "5")),
 };
 
 if (config.masterKey.length !== 32) throw new Error("PLATFORM_MASTER_KEY must be 32 bytes hex");
