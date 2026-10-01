@@ -1,0 +1,158 @@
+[
+  {
+    "app": "app1",
+    "page": "table-editor",
+    "url": "/project/0d70033ad797/editor/17686?schema=public",
+    "failures": [],
+    "text": "todos Sort 4 RLS policies Index Advisor Enable Realtime Role postgres Insert id int8 user_id uuid title text done bool created_at timestamptz 4 82211fc2-b36d-4417-bd30-0fa161a5fea6 alice keeps this one FALSE 2026-10-01 20:02:45.624366+00 8 affcb9b1-fa73-4163-9d63-8ebbe1ff4b22 alice keeps this one FA",
+    "file": "screenshots/app1-table-editor.png"
+  },
+  {
+    "app": "app1",
+    "page": "sql-editor",
+    "url": "/project/0d70033ad797/sql/f61cd0ec-c457-4a02-9edb-59d48650ee3b",
+    "failures": [],
+    "text": "Untitled query 192 1 select current_user, current_database(), count(*) as users from auth.users; Results Chart Export Role postgres Run ⌘ ↵ current_user current_database users app_app1_owner app_app1 5 1 row (Limited to only 100 rows) Limit results to: 100 rows",
+    "file": "screenshots/app1-sql-editor.png"
+  },
+  {
+    "app": "app1",
+    "page": "policies",
+    "url": "/project/0d70033ad797/auth/policies",
+    "failures": [],
+    "text": "Policies Manage Row Level Security policies for your tables Docs schema public todos Disable RLS Create policy NAME COMMAND APPLIED TO ACTIONS todos: owner can delete DELETE authenticated todos: owner can insert INSERT authenticated todos: owner can read SELECT authenticated todos: owner can update ",
+    "file": "screenshots/app1-policies.png"
+  },
+  {
+    "app": "app1",
+    "page": "roles",
+    "url": "/project/0d70033ad797/database/roles",
+    "failures": [],
+    "text": "Database Roles Manage access control to your database through users, groups, and permissions All roles Active roles Active connections 6/200 Add role Roles managed by Supabase PROTECTED anon (ID: 16443) 0 connections authenticated (ID: 16444) 0 connections authenticator (ID: 16446) 0 connections das",
+    "file": "screenshots/app1-roles.png"
+  },
+  {
+    "app": "app1",
+    "page": "tables",
+    "url": "/project/0d70033ad797/database/tables",
+    "failures": [],
+    "text": "Database Tables schema public New table NAME COLUMNS ROWS (ESTIMATED) SIZE (ESTIMATED) REALTIME todos 5 2 32 kB Disabled View columns 1 table",
+    "file": "screenshots/app1-tables.png"
+  },
+  {
+    "app": "app1",
+    "page": "users",
+    "url": "/project/0d70033ad797/auth/users",
+    "failures": [
+      "FAILED POST http://studio.localhost:8080/api/platform/pg-meta/0d70033ad797/query?key=users-count net::ERR_ABORTED",
+      "FAILED POST http://studio.localhost:8080/api/platform/pg-meta/0d70033ad797/query?key=index-statuses net::ERR_ABORTED",
+      "FAILED POST http://studio.localhost:8080/api/platform/pg-meta/0d70033ad797/query?key=index-worker-status net::ERR_ABORTED"
+    ],
+    "text": "Users Email address All columns Sorted by user ID Add user UID Display name Email Phone Providers Provider type Created at 82211fc2-b36d-4417-bd30-0fa161a5fea6 - alice-1790884964517@app1.test - Email - Thu 01 Oct 2026 22:02:44 GMT+0200 affcb9b1-fa73-4163-9d63-8ebbe1ff4b22 - alice-1790885093181@app1.",
+    "file": "screenshots/app1-users.png"
+  },
+  {
+    "app": "app1",
+    "page": "storage",
+    "url": "/project/0d70033ad797/storage/files",
+    "failures": [
+      "500 GET /api/platform/storage/0d70033ad797/buckets"
+    ],
+    "text": "Files General file storage for most types of digital content Docs Buckets Policies Failed to retrieve buckets Error: API error happened while trying to communicate with the server. Try refreshing your browser, but if the issue persists for more than a few minutes, please reach out to us via support.",
+    "file": "screenshots/app1-storage.png"
+  },
+  {
+    "app": "app1",
+    "page": "functions",
+    "url": "/project/0d70033ad797/functions",
+    "failures": [],
+    "text": "Edge Functions Run server-side logic close to your users Docs Examples DEPLOY YOUR FIRST EDGE FUNCTION Via Editor Create and edit functions directly in the browser. Download to local at any time. Open Editor AI Assistant Let our AI assistant help you create functions. Perfect for kickstarting a func",
+    "file": "screenshots/app1-functions.png"
+  },
+  {
+    "app": "app1",
+    "page": "logs",
+    "url": "/project/0d70033ad797/logs/explorer",
+    "failures": [],
+    "text": "Insert source Last hour Field Reference 1 2 3 select timestamp, event_message, metadata from edge_logs limit 5 Results Run No results found Try another search or adjust the filters",
+    "file": "screenshots/app1-logs.png"
+  },
+  {
+    "app": "app2",
+    "page": "table-editor",
+    "url": "/project/353128dd69b6/editor/17706?schema=public",
+    "failures": [],
+    "text": "todos Sort 4 RLS policies Index Advisor Enable Realtime Role postgres Insert id int8 user_id uuid title text done bool created_at timestamptz 1 a1682a1a-5fc3-446f-9460-5b855acd5c08 carol todo FALSE 2026-10-01 20:02:45.614532+00 2 c48b0107-015e-4675-8979-ada14a362e8a carol todo FALSE 2026-10-01 20:04",
+    "file": "screenshots/app2-table-editor.png"
+  },
+  {
+    "app": "app2",
+    "page": "sql-editor",
+    "url": "/project/353128dd69b6/sql/84285221-5501-4c9b-81ff-b948c9408265",
+    "failures": [],
+    "text": "Untitled query 582 1 select current_user, current_database(), count(*) as users from auth.users; Results Chart Export Role postgres Run ⌘ ↵ current_user current_database users app_app2_owner app_app2 2 1 row (Limited to only 100 rows) Limit results to: 100 rows",
+    "file": "screenshots/app2-sql-editor.png"
+  },
+  {
+    "app": "app2",
+    "page": "policies",
+    "url": "/project/353128dd69b6/auth/policies",
+    "failures": [],
+    "text": "Policies Manage Row Level Security policies for your tables Docs schema public todos Disable RLS Create policy NAME COMMAND APPLIED TO ACTIONS todos: owner can delete DELETE authenticated todos: owner can insert INSERT authenticated todos: owner can read SELECT authenticated todos: owner can update ",
+    "file": "screenshots/app2-policies.png"
+  },
+  {
+    "app": "app2",
+    "page": "roles",
+    "url": "/project/353128dd69b6/database/roles",
+    "failures": [],
+    "text": "Database Roles Manage access control to your database through users, groups, and permissions All roles Active roles Active connections 6/200 Add role Roles managed by Supabase PROTECTED anon (ID: 16443) 0 connections authenticated (ID: 16444) 0 connections authenticator (ID: 16446) 0 connections das",
+    "file": "screenshots/app2-roles.png"
+  },
+  {
+    "app": "app2",
+    "page": "tables",
+    "url": "/project/353128dd69b6/database/tables",
+    "failures": [],
+    "text": "Database Tables schema public New table NAME COLUMNS ROWS (ESTIMATED) SIZE (ESTIMATED) REALTIME todos 5 2 32 kB Disabled View columns 1 table",
+    "file": "screenshots/app2-tables.png"
+  },
+  {
+    "app": "app2",
+    "page": "users",
+    "url": "/project/353128dd69b6/auth/users",
+    "failures": [
+      "FAILED POST http://studio.localhost:8080/api/platform/pg-meta/353128dd69b6/query?key=users-count net::ERR_ABORTED",
+      "FAILED POST http://studio.localhost:8080/api/platform/pg-meta/353128dd69b6/query?key=index-statuses net::ERR_ABORTED",
+      "FAILED POST http://studio.localhost:8080/api/platform/pg-meta/353128dd69b6/query?key=index-worker-status net::ERR_ABORTED"
+    ],
+    "text": "Users Email address All columns Sorted by user ID Add user UID Display name Email Phone Providers Provider type Created at a1682a1a-5fc3-446f-9460-5b855acd5c08 - carol-1790884964517@app2.test - Email - Thu 01 Oct 2026 22:02:45 GMT+0200 c48b0107-015e-4675-8979-ada14a362e8a - carol-1790885093181@app2.",
+    "file": "screenshots/app2-users.png"
+  },
+  {
+    "app": "app2",
+    "page": "storage",
+    "url": "/project/353128dd69b6/storage/files",
+    "failures": [
+      "500 GET /api/platform/storage/353128dd69b6/buckets"
+    ],
+    "text": "Files General file storage for most types of digital content Docs Buckets Policies Failed to retrieve buckets Error: API error happened while trying to communicate with the server. Try refreshing your browser, but if the issue persists for more than a few minutes, please reach out to us via support.",
+    "file": "screenshots/app2-storage.png"
+  },
+  {
+    "app": "app2",
+    "page": "functions",
+    "url": "/project/353128dd69b6/functions",
+    "failures": [],
+    "text": "Edge Functions Run server-side logic close to your users Docs Examples DEPLOY YOUR FIRST EDGE FUNCTION Via Editor Create and edit functions directly in the browser. Download to local at any time. Open Editor AI Assistant Let our AI assistant help you create functions. Perfect for kickstarting a func",
+    "file": "screenshots/app2-functions.png"
+  },
+  {
+    "app": "app2",
+    "page": "logs",
+    "url": "/project/353128dd69b6/logs/explorer",
+    "failures": [],
+    "text": "Insert source Last hour Field Reference 1 2 3 select timestamp, event_message, metadata from edge_logs limit 5 Results Run No results found Try another search or adjust the filters",
+    "file": "screenshots/app2-logs.png"
+  }
+]

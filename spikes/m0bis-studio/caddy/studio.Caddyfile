@@ -1,0 +1,20 @@
+# Source of the "studio" route; scripts/up.sh adapts it to JSON and pushes it through the admin API.
+http://studio.localhost:8080 {
+	route {
+		# fake SSO login page, must stay reachable without a session
+		handle /_sso/* {
+			reverse_proxy m0bis-fwd-auth:9000
+		}
+		forward_auth m0bis-fwd-auth:9000 {
+			uri /verify
+			copy_headers Remote-User Remote-Groups
+		}
+		# Studio's own GoTrue (dashboard login): the browser calls <studio origin>/auth/v1
+		handle_path /auth/v1/* {
+			reverse_proxy m0bis-auth:9999
+		}
+		handle {
+			reverse_proxy m0bis-studio:3000
+		}
+	}
+}
