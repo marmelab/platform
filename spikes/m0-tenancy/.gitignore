@@ -4,4 +4,3 @@ data/
 apps/*/
 !apps/.gitkeep
 sites/*/
-results/
