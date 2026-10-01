@@ -178,6 +178,42 @@ async function prepareFunctions(staging: string) {
   return { root, manifest: { functions } };
 }
 
+interface WarmResult {
+  ok: boolean;
+  function: string;
+  status?: number;
+  code?: string;
+  error?: string;
+  ms?: number;
+}
+
+/** Boots each function on the new version (not `current`) through the main worker, before the switch. */
+async function warmFunctions(slug: string, version: number, functions: string[]) {
+  const results = await Promise.all(functions.map(async (name): Promise<WarmResult> => {
+    try {
+      const response = await fetch(`http://${config.edgeUpstream}/_internal/warm`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-platform-admin-token": config.edgeAdminToken },
+        body: JSON.stringify({ app: slug, version, function: name }),
+        signal: AbortSignal.timeout(config.warmTimeoutMs),
+      });
+      const body = await response.json().catch(() => ({})) as Partial<WarmResult>;
+      if (response.ok && body.ok) return { ok: true, function: name, status: body.status, ms: body.ms };
+      return { ok: false, function: name, code: body.code ?? `HTTP_${response.status}`, error: body.error ?? "" };
+    } catch (error) {
+      return { ok: false, function: name, code: "WARM_UNREACHABLE", error: String(error) };
+    }
+  }));
+  const failed = results.filter((r) => !r.ok);
+  if (failed.length) {
+    throw new UserError(
+      `functions failed to start, version ${version} was not published (current version unchanged): ` +
+        failed.map((r) => `${r.function}: ${r.code} ${r.error}`).join("; "),
+    );
+  }
+  return Object.fromEntries(results.map((r) => [r.function, { boot_status: r.status, ms: r.ms }]));
+}
+
 async function loadDeployment(user: User, deploymentId: string) {
   const deployment = await one<DeploymentRow & { slug: string }>(
     "select d.*, a.slug from deployments d join apps a on a.id = d.app_id where d.id = $1",
@@ -216,7 +252,17 @@ export async function finalizeDeployment(user: User, deploymentId: string) {
     const { root, manifest } = kind === "frontend" ? await prepareFrontend(staging) : await prepareFunctions(staging);
     await rm(join(appRoot, versionDir), { recursive: true, force: true });
     await rename(root, join(appRoot, versionDir));
-    if (kind === "functions") await writeEdgeConfig(app);
+    let warm: Record<string, unknown> | undefined;
+    if (kind === "functions") {
+      await writeEdgeConfig(app);
+      const names = Object.keys((manifest as { functions: Record<string, unknown> }).functions);
+      try {
+        warm = await warmFunctions(app.slug, deployment.version, names);
+      } catch (error) {
+        await rm(join(appRoot, versionDir), { recursive: true, force: true });
+        throw error;
+      }
+    }
     await switchCurrent(appRoot, versionDir);
     await markLive(app.id, kind, deployment.id);
     await platform.query("update deployments set manifest = $2 where id = $1", [
@@ -231,6 +277,7 @@ export async function finalizeDeployment(user: User, deploymentId: string) {
       status: "live",
       url: kind === "frontend" ? appUrl(app.slug) : undefined,
       ...manifest,
+      warm,
     };
   } catch (error) {
     await platform.query("update deployments set status = 'failed', error = $2 where id = $1", [

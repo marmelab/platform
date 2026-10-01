@@ -1,6 +1,6 @@
 import { assertEquals } from "jsr:@std/assert@1";
 import { extractToken, signHs256, verifyHs256 } from "./jwt.ts";
-import { isValidAppSlug, parseFunctionName, resolveFunction } from "./resolve.ts";
+import { isValidAppSlug, isValidFunctionName, parseFunctionName, parseVersion, resolveFunction } from "./resolve.ts";
 
 const SECRET = "a".repeat(40);
 
@@ -32,6 +32,20 @@ Deno.test("slug and function name validation", () => {
   assertEquals(parseFunctionName("/%2e%2e"), null);
   assertEquals(parseFunctionName("/_shared"), null);
   assertEquals(parseFunctionName("/"), null);
+  assertEquals(isValidFunctionName("hello"), true);
+  assertEquals(isValidFunctionName("../x"), false);
+  assertEquals(isValidFunctionName(3), false);
+});
+
+Deno.test("parseVersion", () => {
+  assertEquals(parseVersion(3), "v3");
+  assertEquals(parseVersion("3"), "v3");
+  assertEquals(parseVersion("v12"), "v12");
+  assertEquals(parseVersion("current"), null);
+  assertEquals(parseVersion("v1/../v2"), null);
+  assertEquals(parseVersion(-1), null);
+  assertEquals(parseVersion(1.5), null);
+  assertEquals(parseVersion(undefined), null);
 });
 
 Deno.test("resolveFunction follows current and refuses escapes", async () => {
@@ -48,6 +62,12 @@ Deno.test("resolveFunction follows current and refuses escapes", async () => {
   assertEquals(await resolveFunction(root, "app1", "escape"), null);
   assertEquals(await resolveFunction(root, "app1", "missing"), null);
   assertEquals(await resolveFunction(root, "app2", "secret"), null);
+
+  await Deno.mkdir(`${root}/app1/v2/hello`, { recursive: true });
+  await Deno.writeTextFile(`${root}/app1/v2/hello/index.ts`, "");
+  const pinned = await resolveFunction(root, "app1", "hello", "v2");
+  assertEquals(pinned?.versionDir, `${await Deno.realPath(root)}/app1/v2`);
+  assertEquals(await resolveFunction(root, "app1", "hello", "v3"), null);
 
   await Deno.symlink(`${root}/app2/v1`, `${root}/app2/current`);
   await Deno.remove(`${root}/app1/current`);

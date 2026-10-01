@@ -39,6 +39,10 @@ export const config = {
   /** Paths as seen by Caddy / the edge runtime (named volumes mounted elsewhere). */
   caddySitesRoot: env("CADDY_SITES_ROOT", "/sites"),
   edgeUpstream: env("EDGE_UPSTREAM", "edge:9000"),
+  /** Main worker internal endpoint (/_internal/warm), protected by the edge admin token. */
+  edgeAdminToken: env("PLATFORM_EDGE_ADMIN_TOKEN"),
+  /** First boot of a function may download its npm: dependencies. */
+  warmTimeoutMs: Number(env("WARM_TIMEOUT_MS", "60000")),
   uploadTtlSeconds: Number(env("UPLOAD_TTL_SECONDS", "900")),
   maxUploadBytes: Number(env("MAX_UPLOAD_BYTES", String(200 * 1024 * 1024))),
 };

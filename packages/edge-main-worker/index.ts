@@ -1,6 +1,6 @@
 import { type AppConfig, loadJsonFile, validateAppConfig, validateManifest } from "./config.ts";
 import { extractToken, type JwtFailure, verifyHs256 } from "./jwt.ts";
-import { isValidAppSlug, parseFunctionName, resolveFunction } from "./resolve.ts";
+import { isValidAppSlug, isValidFunctionName, parseFunctionName, parseVersion, resolveFunction } from "./resolve.ts";
 
 declare const EdgeRuntime: {
   userWorkers: {
@@ -29,6 +29,7 @@ const DEFAULT_LIMITS = {
   wall_clock_ms: Number(env("PLATFORM_DEFAULT_WALL_CLOCK_MS", "150000")),
 };
 const IDLE_TIMEOUT_MS = Number(env("PLATFORM_WORKER_IDLE_TIMEOUT_MS", "30000"));
+const WARM_TIMEOUT_MS = Number(env("PLATFORM_WARM_TIMEOUT_MS", "45000"));
 
 const APP_HEADER = "x-platform-app";
 const GATEWAY_HEADER = "x-platform-gateway-token";
@@ -158,16 +159,86 @@ function workerErrorResponse(error: unknown): Response {
   return json(500, "Internal Server Error", "Request failed due to an internal server error");
 }
 
+function isAdmin(req: Request) {
+  const token = req.headers.get("x-platform-admin-token") ?? "";
+  return !!ADMIN_TOKEN && constantTimeEqual(token, ADMIN_TOKEN);
+}
+
+function withTimeout<T>(promise: Promise<T>, ms: number, what: string): Promise<T> {
+  let timer: number | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${what} timed out after ${ms} ms`)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
+/**
+ * POST /_internal/warm {app, version, function}: boots the function on that version (not `current`)
+ * with the app env, and sends it a CORS preflight (OPTIONS). Boot errors (bad imports, missing npm
+ * packages, top-level exceptions) surface here, and `npm:`/`jsr:` dependencies land in DENO_DIR.
+ * Internal only: requests relayed by Caddy carry the gateway token and are refused.
+ */
+async function warm(req: Request): Promise<Response> {
+  if (req.headers.has(GATEWAY_HEADER)) return json(404, "NOT_FOUND", "Function not found");
+  if (!isAdmin(req)) return json(403, "FORBIDDEN", "Forbidden");
+  if (req.method !== "POST") return json(405, "METHOD_NOT_ALLOWED", "Use POST");
+  const body = await req.json().catch(() => null) as Record<string, unknown> | null;
+  const app = body?.app as string | null;
+  const functionName = body?.function;
+  const version = parseVersion(body?.version);
+  if (!isValidAppSlug(app) || !isValidFunctionName(functionName) || !version) {
+    return json(400, "INVALID_REQUEST", "Expected {app, version, function}");
+  }
+  const appConfig = await loadAppConfig(app);
+  if (!appConfig) return json(404, "NOT_FOUND", `No config for app ${app}`);
+  const resolved = await resolveFunction(FUNCTIONS_ROOT, app, functionName, version);
+  if (!resolved) return json(404, "NOT_FOUND", `Function ${functionName} not found in ${version}`);
+
+  const started = performance.now();
+  try {
+    const status = await withTimeout(
+      (async () => {
+        const worker = await createWorker(app, functionName, appConfig.value, appConfig.hash, resolved);
+        const preflight = new Request(`http://localhost/${functionName}`, {
+          method: "OPTIONS",
+          headers: {
+            origin: "http://localhost",
+            "access-control-request-method": "POST",
+            "access-control-request-headers": "authorization, content-type",
+          },
+        });
+        EdgeRuntime.applySupabaseTag?.(req, preflight);
+        const response = await worker.fetch(preflight);
+        await response.body?.cancel();
+        return response.status;
+      })(),
+      WARM_TIMEOUT_MS,
+      "warm-up",
+    );
+    const ms = Math.round(performance.now() - started);
+    log("info", { app, function: functionName, version, event: "warm", status, ms });
+    return Response.json({ ok: true, app, function: functionName, version, status, ms });
+  } catch (error) {
+    const ms = Math.round(performance.now() - started);
+    const code = isDenoError(error, "InvalidWorkerCreation") ? "BOOT_ERROR" : "WARM_FAILED";
+    log("error", { app, function: functionName, version, event: "warm", error: String(error), ms });
+    return Response.json({ ok: false, app, function: functionName, version, code, error: String(error), ms }, {
+      status: 422,
+    });
+  }
+}
+
 async function handle(req: Request): Promise<Response> {
   const url = new URL(req.url);
 
   if (url.pathname === "/_internal/health") return Response.json({ message: "ok" });
 
   if (url.pathname === "/_internal/metrics") {
-    const token = req.headers.get("x-platform-admin-token") ?? "";
-    if (!ADMIN_TOKEN || !constantTimeEqual(token, ADMIN_TOKEN)) return json(403, "FORBIDDEN", "Forbidden");
+    if (!isAdmin(req)) return json(403, "FORBIDDEN", "Forbidden");
     return Response.json(await EdgeRuntime.getRuntimeMetrics());
   }
+
+  if (url.pathname === "/_internal/warm") return await warm(req);
 
   if (!constantTimeEqual(req.headers.get(GATEWAY_HEADER) ?? "", GATEWAY_TOKEN)) {
     return json(403, "FORBIDDEN", "Requests must go through the platform gateway");

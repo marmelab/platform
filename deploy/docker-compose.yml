@@ -56,6 +56,7 @@ services:
       PLATFORM_FUNCTIONS_ROOT: /functions
       PLATFORM_APPS_CONFIG_DIR: /config/apps
       PLATFORM_WORKER_IDLE_TIMEOUT_MS: "30000"
+      PLATFORM_WARM_TIMEOUT_MS: "45000"
       DENO_DIR: /deno-cache
     volumes:
       - ../packages/edge-main-worker:/main:ro
@@ -81,6 +82,7 @@ services:
     environment:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       PLATFORM_MASTER_KEY: ${PLATFORM_MASTER_KEY}
+      PLATFORM_EDGE_ADMIN_TOKEN: ${PLATFORM_EDGE_ADMIN_TOKEN}
       PGHOST: db
       APPS_DOMAIN: localhost
       PUBLIC_PORT: "8100"

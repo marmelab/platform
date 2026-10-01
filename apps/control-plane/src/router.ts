@@ -38,6 +38,11 @@ export class CaddyRouter implements Router {
   private apiRoutes(route: AppRoute) {
     return [
       {
+        // main worker endpoints (/_internal/warm, metrics...) are reachable from the internal network only
+        match: [{ path: ["/functions/v1/_internal", "/functions/v1/_internal/*"] }],
+        handle: [{ handler: "static_response", status_code: 404, body: "not found\n" }],
+      },
+      {
         match: [{ path: ["/auth/v1/*"] }],
         handle: [
           { handler: "rewrite", strip_path_prefix: "/auth/v1" },
