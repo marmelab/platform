@@ -42,15 +42,18 @@ export async function docker(...args: string[]): Promise<string> {
 export async function waitReady(app = "app1") {
   for (let i = 0; i < 60; i++) {
     try {
-      if ((await curl(fn(app, "hello"))).status === 200) return;
+      if ((await curl(fn(app, "_internal/health"))).status === 200) return;
     } catch { /* not ready yet */ }
     await new Promise((r) => setTimeout(r, 500));
   }
   throw new Error("stack not ready");
 }
 
-export async function memoryUsage(): Promise<string> {
-  return await docker("stats", "--no-stream", "--format", "{{.Name}} {{.MemUsage}}", "m1-edge-1", "m1-caddy-1");
+export async function memoryMiB(container: string): Promise<number> {
+  const usage = await docker("stats", "--no-stream", "--format", "{{.MemUsage}}", container);
+  const [, value, unit] = usage.match(/^([\d.]+)\s*([KMG]i?B)/) ?? [];
+  const factor = unit?.startsWith("G") ? 1024 : unit?.startsWith("K") ? 1 / 1024 : 1;
+  return Math.round(Number(value) * factor);
 }
 
 export interface AppTokens {
@@ -86,6 +89,9 @@ export const switchCurrent = (app: string, version: string) =>
   controlPlane(`cd /functions/${app} && ln -s ${version} current.tmp && mv -T current.tmp current`);
 
 export const writeAppConfig = (app: string, content: string) =>
-  controlPlane(`cat > /config/apps/${app}.json.tmp && mv /config/apps/${app}.json.tmp /config/apps/${app}.json`, content);
+  controlPlane(
+    `cat > /config/apps/${app}.json.tmp && mv /config/apps/${app}.json.tmp /config/apps/${app}.json`,
+    content,
+  );
 
 export { signHs256 };

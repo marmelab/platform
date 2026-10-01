@@ -30,6 +30,7 @@ Deno.serve(async () =>
     runCommand: await attempt(() => new Deno.Command("id").output().then((o) => new TextDecoder().decode(o.stdout))),
     callMainLocalhost: await attempt(() => callMain("127.0.0.1:9000", other)),
     callMainByServiceName: await attempt(() => callMain("edge:9000", other)),
+    callCaddyAdmin: await attempt(async () => (await fetch("http://caddy:2019/config/")).status),
     envKeys: Object.keys(Deno.env.toObject()).sort(),
   })
 );

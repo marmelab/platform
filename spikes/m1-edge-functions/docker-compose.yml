@@ -8,6 +8,7 @@ services:
     environment:
       PLATFORM_FUNCTIONS_ROOT: /functions
       PLATFORM_APPS_CONFIG_DIR: /config/apps
+      PLATFORM_WORKER_IDLE_TIMEOUT_MS: ${PLATFORM_WORKER_IDLE_TIMEOUT_MS:-10000}
       DENO_DIR: /deno-cache
     volumes:
       - ../../packages/edge-main-worker:/main:ro

@@ -53,6 +53,8 @@ Deno.test("client cannot choose the app with a forged header", async () => {
     assertEquals(res.json().APP_NAME, "app1", headers.join(" "));
     assert(!res.body.includes(secret2));
   }
+  const spoofedHost = await curl(fn("app1", "hello"), ["-H", "X-Forwarded-Host: app2.localhost:8090"]);
+  assertEquals(spoofedHost.json().url, "http://app1.localhost:8090/hello");
   const viaIp = await curl("http://127.0.0.1:8090/functions/v1/env", ["-H", "X-Platform-App: app2"]);
   assertEquals(viaIp.status, 404);
 });
@@ -100,6 +102,8 @@ Deno.test("npm: dependencies (zod, supabase-js) work", async () => {
   assertEquals(valid.json(), { zod: "valid: Ada", supabaseClient: true });
   const invalid = await curl(fn("app1", "deps"), ["-X", "POST", "-d", '{"name":""}']);
   assertStringIncludes(invalid.json<{ zod: string }>().zod, "invalid");
+  const bare = await curl(fn("app2", "imports"));
+  assertEquals(bare.json(), { parsed: "bare specifier via deno.json" }, "per-function deno.json import map");
 });
 
 Deno.test("user worker sandbox: no access to config, other apps, main worker or gateway", async () => {
@@ -122,6 +126,7 @@ Deno.test("user worker sandbox: no access to config, other apps, main worker or 
   }
   assertStringIncludes(probe.callMainLocalhost.value ?? "", "403");
   assertStringIncludes(probe.callMainByServiceName.value ?? "", "403");
+  assertEquals(probe.callCaddyAdmin.ok, false, "Caddy admin API must not be reachable from functions");
 });
 
 Deno.test("internal metrics are not reachable through the gateway without admin token", async () => {

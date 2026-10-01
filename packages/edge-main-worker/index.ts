@@ -1,9 +1,4 @@
-import {
-  type AppConfig,
-  loadJsonFile,
-  validateAppConfig,
-  validateManifest,
-} from "./config.ts";
+import { type AppConfig, loadJsonFile, validateAppConfig, validateManifest } from "./config.ts";
 import { extractToken, type JwtFailure, verifyHs256 } from "./jwt.ts";
 import { isValidAppSlug, parseFunctionName, resolveFunction } from "./resolve.ts";
 
@@ -33,6 +28,7 @@ const DEFAULT_LIMITS = {
   cpu_hard_ms: Number(env("PLATFORM_DEFAULT_CPU_HARD_MS", "2000")),
   wall_clock_ms: Number(env("PLATFORM_DEFAULT_WALL_CLOCK_MS", "150000")),
 };
+const IDLE_TIMEOUT_MS = Number(env("PLATFORM_WORKER_IDLE_TIMEOUT_MS", "30000"));
 
 const APP_HEADER = "x-platform-app";
 const GATEWAY_HEADER = "x-platform-gateway-token";
@@ -135,7 +131,11 @@ async function createWorker(
       allow_import: [],
       allow_sys: ["hostname"],
     },
-    context: { useReadSyncFileAPI: true, projectRef: app },
+    context: {
+      useReadSyncFileAPI: true,
+      projectRef: app,
+      supervisor: { requestAbsentTimeoutMs: IDLE_TIMEOUT_MS },
+    },
     staticPatterns: [],
   });
 }
@@ -196,7 +196,7 @@ async function handle(req: Request): Promise<Response> {
   }
 
   const started = performance.now();
-  for (let attempt = 0; ; attempt++) {
+  for (let attempt = 0;; attempt++) {
     try {
       const worker = await createWorker(app, functionName, appConfig.value, appConfig.hash, resolved);
       const response = await worker.fetch(forwardRequest(req, url.pathname, url.search), { signal: req.signal });

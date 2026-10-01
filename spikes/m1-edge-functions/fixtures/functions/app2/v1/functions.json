@@ -1,1 +1,1 @@
-{ "functions": { "hello": { "verify_jwt": false }, "env": { "verify_jwt": false }, "probe": { "verify_jwt": false } } }
+{"functions": {"hello": {"verify_jwt": false}, "env": {"verify_jwt": false}, "probe": {"verify_jwt": false}, "imports": {"verify_jwt": false}}}
