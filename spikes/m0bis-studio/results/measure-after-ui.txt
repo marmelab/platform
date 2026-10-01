@@ -1,9 +1,9 @@
-Thu Oct  1 22:24:57 CEST 2026
+Thu Oct  1 22:30:29 CEST 2026
 NAME             MEM USAGE / LIMIT   CPU %
-m0bis-studio     415.3MiB / 1GiB     56.73%
-m0bis-meta       175.1MiB / 256MiB   0.39%
-m0bis-auth       17.65MiB / 128MiB   0.01%
-m0bis-fwd-auth   16.17MiB / 64MiB    0.00%
+m0bis-studio     411.2MiB / 1GiB     0.18%
+m0bis-meta       121.8MiB / 256MiB   0.64%
+m0bis-auth       16.9MiB / 128MiB    0.03%
+m0bis-fwd-auth   16.58MiB / 64MiB    0.00%
  usename | datname | count 
 ---------+---------+-------
 (0 rows)

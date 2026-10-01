@@ -1,11 +1,11 @@
-=== app1 (ref 0d70033ad797)
+=== app1 (ref 57e3d22a5141)
 -- identity:        [{"current_user":"app_app1_owner","current_database":"app_app1"}]
 -- tables (query):  [{"t":"todos"}]
--- tables (pg-meta GET /tables): 200 [{"id":17686,"schema":"public","name":"todos","rls_enabled":true,"rls_forced":false,"replica_identity":"DEFAULT","bytes":32768,"size":"32 kB","live_rows_estimate":2,"dead_rows_estimate":5,"comment":null,"primary_keys":[{
+-- tables (pg-meta GET /tables): 200 [{"id":17686,"schema":"public","name":"todos","rls_enabled":true,"rls_forced":false,"replica_identity":"DEFAULT","bytes":32768,"size":"32 kB","live_rows_estimate":2,"dead_rows_estimate":6,"comment":null,"primary_keys":[{
 -- policies GET:    200 [{"id":17704,"schema":"public","table":"todos","table_id":17686,"name":"todos: owner can delete","action":"PERMISSIVE","roles":["authenticated"],"command":"DELETE","definition":"(user_id = ( SELECT auth.uid() AS uid))","
 -- todos count:     [{"count":2}]
 -- auth.users (SQL, Studio users page): [{"n":5,"string_agg":"burst@app1.test,bob-1790885093181@app1.test,alice-1790884964517@app1.test,alice-1790885093181@app1.test,bob-1790884964517@app1.test"}]
--- databases list:  [{"string_agg":"template0,template1,app_app1,template_supabase,app_app2,postgres,studio_meta_default,studio_auth"}]
+-- databases list:  [{"string_agg":"app_app2,template0,template1,template_supabase,postgres,studio_meta_default,studio_auth,app_app1"}]
 -- app roles seen:  [{"string_agg":"app_app1_auth_admin,app_app2_authenticator,app_app2_auth_admin,app_app1_authenticator,app_app1_owner,app_app2_owner"}]
 -- connect other DB via dblink-free check: [{"app2":false,"app1":true}]
 -- set role postgres: {"message":"permission denied to set role \"postgres\"","formattedError":"ERROR:  42501: permission denied to set role \"postgres\"\n"}
@@ -15,14 +15,14 @@
 -- logs:            200 {"result":[]}
 -- settings:        200 {"app_config":{"db_schema":"public","endpoint":"app1.localhost:8080","storage_endpoint":"app1.localhost:8080","protocol":"http"},"cloud_provider":"AWS","db_dns_name":"-","db_host":"db","db_ip_addr_config":"legacy","db_na
 -- api keys (temp): {"iss":"supabase","ref":"app1","role":"service_role","iat":1790884960,"exp":2106244960}
-=== app2 (ref 353128dd69b6)
+=== app2 (ref bab9d47993c4)
 -- identity:        [{"current_user":"app_app2_owner","current_database":"app_app2"}]
 -- tables (query):  [{"t":"todos"}]
 -- tables (pg-meta GET /tables): 200 [{"id":17706,"schema":"public","name":"todos","rls_enabled":true,"rls_forced":false,"replica_identity":"DEFAULT","bytes":32768,"size":"32 kB","live_rows_estimate":2,"dead_rows_estimate":0,"comment":null,"primary_keys":[{
 -- policies GET:    200 [{"id":17724,"schema":"public","table":"todos","table_id":17706,"name":"todos: owner can delete","action":"PERMISSIVE","roles":["authenticated"],"command":"DELETE","definition":"(user_id = ( SELECT auth.uid() AS uid))","
 -- todos count:     [{"count":2}]
 -- auth.users (SQL, Studio users page): [{"n":2,"string_agg":"carol-1790884964517@app2.test,carol-1790885093181@app2.test"}]
--- databases list:  [{"string_agg":"template0,template1,app_app1,template_supabase,app_app2,postgres,studio_meta_default,studio_auth"}]
+-- databases list:  [{"string_agg":"app_app2,template0,template1,template_supabase,postgres,studio_meta_default,studio_auth,app_app1"}]
 -- app roles seen:  [{"string_agg":"app_app1_auth_admin,app_app2_authenticator,app_app2_auth_admin,app_app1_authenticator,app_app1_owner,app_app2_owner"}]
 -- connect other DB via dblink-free check: [{"app2":true,"app1":false}]
 -- set role postgres: {"message":"permission denied to set role \"postgres\"","formattedError":"ERROR:  42501: permission denied to set role \"postgres\"\n"}
