@@ -1,7 +1,7 @@
 ---
 name: deploy
 description: Deploy the current Vite + Supabase project to the internal platform (database migrations, edge functions, static frontend). Use when the user asks to deploy, publish, ship or put the app online "on the platform", or to redeploy after changes.
-allowed-tools: mcp__plugin_platform_platform__*, Bash(npm *), Bash(git *), Bash(${CLAUDE_PLUGIN_ROOT}/skills/deploy/scripts/*), Read, Glob, Grep, Write
+allowed-tools: mcp__plugin_platform_platform__*, Bash(npm *), Bash(git *), Bash(curl *), Bash(${CLAUDE_PLUGIN_ROOT}/skills/deploy/scripts/*), Read, Glob, Grep, Write, Edit
 ---
 
 # Deploy to the platform
@@ -11,13 +11,16 @@ The platform hosts Supabase-style apps: one Postgres database, Auth (GoTrue), RE
 Helper scripts (run them from the project root, call them by absolute path):
 
 - `${CLAUDE_PLUGIN_ROOT}/skills/deploy/scripts/migrations.sh` prints `supabase/migrations/*.sql` as the JSON array `apply_migrations` expects.
+- `${CLAUDE_PLUGIN_ROOT}/skills/deploy/scripts/build.sh <supabase_url> <anon_key>` installs dependencies if needed and runs `npm run build` with `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY`.
 - `${CLAUDE_PLUGIN_ROOT}/skills/deploy/scripts/upload.sh <frontend|functions> <upload_url>` packs the bundle (`tar` with `COPYFILE_DISABLE=1`) and uploads it with `curl -X PUT`.
+
+Shell hygiene, so that permission rules match: run **one command per Bash call** (no `&&`, `;`, pipes or `VAR=value cmd` prefixes), call the scripts directly by their absolute path, and create or edit files with the Write/Edit tools rather than shell redirections.
 
 Never pass archives or file contents other than migration SQL through MCP arguments. Never print or write the platform token.
 
 ## Workflow
 
-Follow these steps in order. Keep the user informed with one short line per step.
+Follow these steps in order. Keep the user informed with one short line per step, in the user's language.
 
 ### 1. Identify the app
 
@@ -25,7 +28,7 @@ Follow these steps in order. Keep the user informed with one short line per step
 - If it is missing:
   1. Pick a name from `package.json` `name` (or the directory name). The slug must match `^[a-z][a-z0-9-]{1,30}[a-z0-9]$`.
   2. Call `create_app` with `name` (and `slug`). It is idempotent.
-  3. Write `.platform.json` with `{ "app": "<slug>", "url": "<url>" }` and commit it alone: `git add .platform.json && git commit -m "Add platform app config"`. If there is no git repository or the commit fails, say so and continue.
+  3. Write `.platform.json` (Write tool) with `{ "app": "<slug>", "url": "<url>" }` and commit it alone: `git add .platform.json`, then `git commit -m "Add platform app config"` (two Bash calls). If there is no git repository or the commit fails, say so and continue.
 - If it exists, call `get_app` to check the app is reachable. If access is denied, stop and tell the user.
 
 ### 2. Check the project
@@ -48,7 +51,7 @@ Follow these steps in order. Keep the user informed with one short line per step
 
 ### 4. Edge functions (skip if `supabase/functions/` has no `<name>/index.ts`)
 
-1. Look for secrets the functions need: grep for `Deno.env.get("...")` in `supabase/functions`. `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY` and `SUPABASE_DB_URL` are provided by the platform. For the others, call `list_secrets`; ask the user for any missing value, then `set_secrets`. Never invent a secret value. In a non-interactive session, report the missing names and continue.
+1. Look for secrets the functions need: grep for `Deno.env.get("...")` in `supabase/functions`. `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY` and `SUPABASE_DB_URL` are provided by the platform. For the others, call `list_secrets`; ask the user for any missing value, then `set_secrets`. Never invent a secret value. If a secret is still missing and the function reads it at boot, do not deploy the functions (they would fail to start): say which secret is missing and ask whether to deploy the frontend alone.
 2. `create_deployment` with `kind: "functions"`.
 3. Run `upload.sh functions '<upload_url>'` (the URL is single-use and expires after 15 minutes: upload right away).
 4. `finalize_deployment` with the `deployment_id`. It returns the deployed function names and the version.
@@ -56,11 +59,8 @@ Follow these steps in order. Keep the user informed with one short line per step
 ### 5. Build the frontend
 
 1. `get_app` to obtain `supabase_url` and `anon_key`.
-2. Install dependencies if `node_modules` is missing (`npm ci` when `package-lock.json` exists, otherwise `npm install`).
-3. Build with the variables inline, without writing them to a file:
-   `VITE_SUPABASE_URL='<supabase_url>' VITE_SUPABASE_ANON_KEY='<anon_key>' npm run build`
-   The anon key is public (it ships in the bundle), but do not commit it.
-4. If the build fails, show the error and stop.
+2. Run `build.sh '<supabase_url>' '<anon_key>'`. It installs dependencies when `node_modules` is missing and builds with the variables passed inline, never written to a file. The anon key is public (it ships in the bundle), but do not commit it.
+3. If the build fails, show the error and stop.
 
 ### 6. Deploy the frontend
 
@@ -70,8 +70,9 @@ Follow these steps in order. Keep the user informed with one short line per step
 
 ### 7. Verify and report
 
-1. `curl -fsS -o /dev/null -w '%{http_code}' <url>` must return 200.
-2. Final message, short:
+1. `curl -sS -o /dev/null -w '%{http_code}' <url>` must return 200.
+2. For each deployed function, `curl -sS -X OPTIONS -w ' %{http_code}' <url>/functions/v1/<name>` (preflight requests skip JWT checks, so this boots the function). A 5xx or a `BOOT_ERROR` / `WORKER_ERROR` body means the function is broken: follow **On errors** below with `service: "functions"`.
+3. Final message, short:
    - app URL;
    - migrations applied / skipped, frontend version, functions version and names;
    - linter warnings, if any;
