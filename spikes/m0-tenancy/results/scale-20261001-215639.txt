@@ -1,0 +1,458 @@
+# scale test: 20 apps
+provisioned 18 apps in 38s
+
+### IDLE after provisioning
+## docker stats
+NAME             MEM USAGE / LIMIT     CPU %
+m0-app1-auth     14.33MiB / 256MiB     0.05%
+m0-app1-rest     27.87MiB / 256MiB     0.22%
+m0-app2-auth     16.74MiB / 256MiB     0.02%
+m0-app2-rest     25.23MiB / 256MiB     0.15%
+m0-caddy         26.11MiB / 7.751GiB   0.06%
+m0-db            314.5MiB / 7.751GiB   3.53%
+m0-load01-auth   13.76MiB / 256MiB     0.08%
+m0-load01-rest   34.14MiB / 256MiB     0.11%
+m0-load02-auth   11.79MiB / 256MiB     0.00%
+m0-load02-rest   31.46MiB / 256MiB     0.13%
+m0-load03-auth   13.88MiB / 256MiB     0.00%
+m0-load03-rest   28.35MiB / 256MiB     0.11%
+m0-load04-auth   13.96MiB / 256MiB     0.00%
+m0-load04-rest   34.06MiB / 256MiB     0.35%
+m0-load05-auth   13.62MiB / 256MiB     0.02%
+m0-load05-rest   30.55MiB / 256MiB     0.09%
+m0-load06-auth   11.79MiB / 256MiB     0.04%
+m0-load06-rest   29.34MiB / 256MiB     0.12%
+m0-load07-auth   10.5MiB / 256MiB      0.01%
+m0-load07-rest   27.38MiB / 256MiB     0.11%
+m0-load08-auth   9.938MiB / 256MiB     0.00%
+m0-load08-rest   13.95MiB / 256MiB     0.10%
+m0-load09-auth   10.8MiB / 256MiB      0.00%
+m0-load09-rest   15.13MiB / 256MiB     0.06%
+m0-load10-auth   10.44MiB / 256MiB     0.00%
+m0-load10-rest   17.56MiB / 256MiB     0.06%
+m0-load11-auth   10.11MiB / 256MiB     0.02%
+m0-load11-rest   26.54MiB / 256MiB     0.08%
+m0-load12-auth   10.15MiB / 256MiB     0.04%
+m0-load12-rest   31.22MiB / 256MiB     0.09%
+m0-load13-auth   10.41MiB / 256MiB     0.01%
+m0-load13-rest   21.06MiB / 256MiB     0.09%
+m0-load14-auth   10.4MiB / 256MiB      0.01%
+m0-load14-rest   20.32MiB / 256MiB     0.61%
+m0-load15-auth   10.05MiB / 256MiB     0.00%
+m0-load15-rest   19.36MiB / 256MiB     0.10%
+m0-load16-auth   10.39MiB / 256MiB     0.00%
+m0-load16-rest   12.09MiB / 256MiB     0.23%
+m0-load17-auth   10.42MiB / 256MiB     0.00%
+m0-load17-rest   13.89MiB / 256MiB     0.09%
+m0-load18-auth   9.918MiB / 256MiB     0.04%
+m0-load18-rest   12.09MiB / 256MiB     0.09%
+
+## connections per database / role
+  datname   |         usename          |         backend_type         | conns | idle 
+------------+--------------------------+------------------------------+-------+------
+ (none)     | (bg)                     | autovacuum launcher          |     1 |    0
+ (none)     | (bg)                     | background writer            |     1 |    0
+ (none)     | (bg)                     | checkpointer                 |     1 |    0
+ (none)     | (bg)                     | walwriter                    |     1 |    0
+ (none)     | supabase_admin           | logical replication launcher |     1 |    0
+ app_app1   | app_app1_authenticator   | client backend               |     2 |    2
+ app_app2   | app_app2_authenticator   | client backend               |     2 |    2
+ app_load01 | app_load01_authenticator | client backend               |     2 |    2
+ app_load02 | app_load02_authenticator | client backend               |     2 |    2
+ app_load03 | app_load03_authenticator | client backend               |     2 |    2
+ app_load04 | app_load04_authenticator | client backend               |     2 |    2
+ app_load05 | app_load05_authenticator | client backend               |     2 |    2
+ app_load06 | app_load06_authenticator | client backend               |     2 |    2
+ app_load07 | app_load07_authenticator | client backend               |     2 |    2
+ app_load08 | app_load08_authenticator | client backend               |     2 |    2
+ app_load09 | app_load09_authenticator | client backend               |     2 |    2
+ app_load10 | app_load10_authenticator | client backend               |     2 |    2
+ app_load11 | app_load11_authenticator | client backend               |     2 |    2
+ app_load12 | app_load12_authenticator | client backend               |     2 |    2
+ app_load13 | app_load13_authenticator | client backend               |     2 |    2
+ app_load14 | app_load14_authenticator | client backend               |     2 |    2
+ app_load15 | app_load15_authenticator | client backend               |     2 |    2
+ app_load16 | app_load16_authenticator | client backend               |     2 |    2
+ app_load17 | app_load17_authenticator | client backend               |     2 |    2
+ app_load18 | app_load18_authenticator | client backend               |     2 |    2
+ postgres   | supabase_admin           | pg_cron launcher             |     1 |    0
+ postgres   | supabase_admin           | pg_net 0.20.3 worker         |     1 |    1
+(27 rows)
+
+ client_conns | all_backends | max_connections 
+--------------+--------------+-----------------
+           40 |           47 | 200
+(1 row)
+
+
+## database sizes
+      datname      | pg_size_pretty 
+-------------------+----------------
+ app_app1          | 9867 kB
+ app_app2          | 9867 kB
+ app_load01        | 9377 kB
+ app_load02        | 9361 kB
+ app_load03        | 9361 kB
+ app_load04        | 9361 kB
+ app_load05        | 9451 kB
+ app_load06        | 9523 kB
+ app_load07        | 9451 kB
+ app_load08        | 9369 kB
+ app_load09        | 9361 kB
+ app_load10        | 9515 kB
+ app_load11        | 9451 kB
+ app_load12        | 9361 kB
+ app_load13        | 9361 kB
+ app_load14        | 9523 kB
+ app_load15        | 9451 kB
+ app_load16        | 9515 kB
+ app_load17        | 9451 kB
+ app_load18        | 9385 kB
+ postgres          | 8083 kB
+ template0         | 7345 kB
+ template1         | 7571 kB
+ template_supabase | 8107 kB
+(24 rows)
+
+
+### UNDER LOAD (all apps hit concurrently)
+## docker stats
+NAME             MEM USAGE / LIMIT     CPU %
+m0-app1-auth     14.38MiB / 256MiB     0.01%
+m0-app1-rest     41.27MiB / 256MiB     0.12%
+m0-app2-auth     17MiB / 256MiB        0.06%
+m0-app2-rest     41MiB / 256MiB        0.84%
+m0-caddy         40.22MiB / 7.751GiB   45.23%
+m0-db            722.3MiB / 7.751GiB   138.21%
+m0-load01-auth   15.95MiB / 256MiB     0.03%
+m0-load01-rest   37.33MiB / 256MiB     6.46%
+m0-load02-auth   12.54MiB / 256MiB     0.01%
+m0-load02-rest   37.36MiB / 256MiB     5.68%
+m0-load03-auth   16.09MiB / 256MiB     0.00%
+m0-load03-rest   35.57MiB / 256MiB     4.29%
+m0-load04-auth   16.37MiB / 256MiB     0.00%
+m0-load04-rest   35.2MiB / 256MiB      3.78%
+m0-load05-auth   14.52MiB / 256MiB     0.01%
+m0-load05-rest   37.52MiB / 256MiB     4.29%
+m0-load06-auth   12.6MiB / 256MiB      0.02%
+m0-load06-rest   37.21MiB / 256MiB     3.72%
+m0-load07-auth   13.24MiB / 256MiB     0.08%
+m0-load07-rest   38.08MiB / 256MiB     6.08%
+m0-load08-auth   11.21MiB / 256MiB     0.00%
+m0-load08-rest   20.55MiB / 256MiB     4.62%
+m0-load09-auth   11.38MiB / 256MiB     0.06%
+m0-load09-rest   27.02MiB / 256MiB     3.60%
+m0-load10-auth   12.91MiB / 256MiB     0.00%
+m0-load10-rest   25.85MiB / 256MiB     5.59%
+m0-load11-auth   11.33MiB / 256MiB     0.01%
+m0-load11-rest   35.5MiB / 256MiB      3.87%
+m0-load12-auth   11.1MiB / 256MiB      0.01%
+m0-load12-rest   34.96MiB / 256MiB     3.63%
+m0-load13-auth   11.41MiB / 256MiB     0.01%
+m0-load13-rest   30.68MiB / 256MiB     3.92%
+m0-load14-auth   11.4MiB / 256MiB      0.01%
+m0-load14-rest   21.52MiB / 256MiB     4.48%
+m0-load15-auth   10.88MiB / 256MiB     0.04%
+m0-load15-rest   26.04MiB / 256MiB     4.19%
+m0-load16-auth   12.88MiB / 256MiB     0.00%
+m0-load16-rest   20.76MiB / 256MiB     4.17%
+m0-load17-auth   11.11MiB / 256MiB     0.01%
+m0-load17-rest   20.1MiB / 256MiB      4.69%
+m0-load18-auth   12.57MiB / 256MiB     0.01%
+m0-load18-rest   23.38MiB / 256MiB     4.38%
+
+## connections per database / role
+  datname   |         usename          |         backend_type         | conns | idle 
+------------+--------------------------+------------------------------+-------+------
+ (none)     | (bg)                     | autovacuum launcher          |     1 |    0
+ (none)     | (bg)                     | background writer            |     1 |    0
+ (none)     | (bg)                     | checkpointer                 |     1 |    0
+ (none)     | (bg)                     | walwriter                    |     1 |    0
+ (none)     | supabase_admin           | logical replication launcher |     1 |    0
+ app_app1   | app_app1_authenticator   | client backend               |     4 |    4
+ app_app2   | app_app2_authenticator   | client backend               |     4 |    4
+ app_load01 | app_load01_authenticator | client backend               |     4 |    4
+ app_load02 | app_load02_authenticator | client backend               |     4 |    4
+ app_load03 | app_load03_authenticator | client backend               |     4 |    4
+ app_load04 | app_load04_authenticator | client backend               |     4 |    4
+ app_load05 | app_load05_authenticator | client backend               |     4 |    3
+ app_load06 | app_load06_authenticator | client backend               |     4 |    4
+ app_load07 | app_load07_authenticator | client backend               |     4 |    4
+ app_load08 | app_load08_authenticator | client backend               |     4 |    3
+ app_load09 | app_load09_authenticator | client backend               |     4 |    4
+ app_load10 | app_load10_authenticator | client backend               |     4 |    4
+ app_load11 | app_load11_authenticator | client backend               |     4 |    4
+ app_load12 | app_load12_authenticator | client backend               |     4 |    4
+ app_load13 | app_load13_authenticator | client backend               |     4 |    4
+ app_load14 | app_load14_authenticator | client backend               |     4 |    4
+ app_load15 | app_load15_authenticator | client backend               |     4 |    4
+ app_load16 | app_load16_authenticator | client backend               |     4 |    4
+ app_load17 | app_load17_authenticator | client backend               |     3 |    3
+ app_load18 | app_load18_authenticator | client backend               |     4 |    4
+ postgres   | supabase_admin           | pg_cron launcher             |     1 |    0
+ postgres   | supabase_admin           | pg_net 0.20.3 worker         |     1 |    1
+(27 rows)
+
+ client_conns | all_backends | max_connections 
+--------------+--------------+-----------------
+           79 |           86 | 200
+(1 row)
+
+
+## database sizes
+      datname      | pg_size_pretty 
+-------------------+----------------
+ app_app1          | 9867 kB
+ app_app2          | 9867 kB
+ app_load01        | 9787 kB
+ app_load02        | 9771 kB
+ app_load03        | 9771 kB
+ app_load04        | 9771 kB
+ app_load05        | 9707 kB
+ app_load06        | 9779 kB
+ app_load07        | 9707 kB
+ app_load08        | 9779 kB
+ app_load09        | 9771 kB
+ app_load10        | 9771 kB
+ app_load11        | 9707 kB
+ app_load12        | 9771 kB
+ app_load13        | 9771 kB
+ app_load14        | 9779 kB
+ app_load15        | 9707 kB
+ app_load16        | 9771 kB
+ app_load17        | 9707 kB
+ app_load18        | 9795 kB
+ postgres          | 8083 kB
+ template0         | 7345 kB
+ template1         | 7571 kB
+ template_supabase | 8107 kB
+(24 rows)
+
+
+### right after load
+## docker stats
+NAME             MEM USAGE / LIMIT     CPU %
+m0-app1-auth     14.38MiB / 256MiB     0.02%
+m0-app1-rest     41.27MiB / 256MiB     0.29%
+m0-app2-auth     17MiB / 256MiB        0.04%
+m0-app2-rest     41MiB / 256MiB        0.15%
+m0-caddy         39.76MiB / 7.751GiB   0.00%
+m0-db            730.6MiB / 7.751GiB   1.57%
+m0-load01-auth   15.95MiB / 256MiB     0.02%
+m0-load01-rest   38.48MiB / 256MiB     0.69%
+m0-load02-auth   12.54MiB / 256MiB     0.00%
+m0-load02-rest   38.6MiB / 256MiB      0.30%
+m0-load03-auth   16.09MiB / 256MiB     0.00%
+m0-load03-rest   36.47MiB / 256MiB     0.45%
+m0-load04-auth   16.37MiB / 256MiB     0.00%
+m0-load04-rest   36.53MiB / 256MiB     0.46%
+m0-load05-auth   14.52MiB / 256MiB     0.02%
+m0-load05-rest   38.46MiB / 256MiB     0.37%
+m0-load06-auth   12.6MiB / 256MiB      0.02%
+m0-load06-rest   38.43MiB / 256MiB     0.26%
+m0-load07-auth   13.24MiB / 256MiB     0.02%
+m0-load07-rest   38.67MiB / 256MiB     0.38%
+m0-load08-auth   11.21MiB / 256MiB     0.00%
+m0-load08-rest   21.61MiB / 256MiB     0.22%
+m0-load09-auth   11.38MiB / 256MiB     0.00%
+m0-load09-rest   27.71MiB / 256MiB     0.43%
+m0-load10-auth   12.91MiB / 256MiB     0.00%
+m0-load10-rest   26.95MiB / 256MiB     0.45%
+m0-load11-auth   11.33MiB / 256MiB     0.03%
+m0-load11-rest   36.57MiB / 256MiB     0.20%
+m0-load12-auth   11.1MiB / 256MiB      0.02%
+m0-load12-rest   36.12MiB / 256MiB     0.31%
+m0-load13-auth   11.41MiB / 256MiB     0.00%
+m0-load13-rest   31.62MiB / 256MiB     0.19%
+m0-load14-auth   11.4MiB / 256MiB      0.01%
+m0-load14-rest   22.84MiB / 256MiB     0.21%
+m0-load15-auth   10.88MiB / 256MiB     0.00%
+m0-load15-rest   26.78MiB / 256MiB     0.23%
+m0-load16-auth   12.88MiB / 256MiB     0.00%
+m0-load16-rest   21.93MiB / 256MiB     0.25%
+m0-load17-auth   11.11MiB / 256MiB     0.02%
+m0-load17-rest   21.27MiB / 256MiB     0.43%
+m0-load18-auth   12.57MiB / 256MiB     0.02%
+m0-load18-rest   23.77MiB / 256MiB     0.67%
+
+## connections per database / role
+  datname   |         usename          |         backend_type         | conns | idle 
+------------+--------------------------+------------------------------+-------+------
+ (none)     | (bg)                     | autovacuum launcher          |     1 |    0
+ (none)     | (bg)                     | background writer            |     1 |    0
+ (none)     | (bg)                     | checkpointer                 |     1 |    0
+ (none)     | (bg)                     | walwriter                    |     1 |    0
+ (none)     | supabase_admin           | logical replication launcher |     1 |    0
+ app_app1   | app_app1_authenticator   | client backend               |     4 |    4
+ app_app2   | app_app2_authenticator   | client backend               |     4 |    4
+ app_load01 | app_load01_authenticator | client backend               |     4 |    4
+ app_load02 | app_load02_authenticator | client backend               |     4 |    4
+ app_load03 | app_load03_authenticator | client backend               |     4 |    4
+ app_load04 | app_load04_authenticator | client backend               |     4 |    4
+ app_load05 | app_load05_authenticator | client backend               |     4 |    4
+ app_load06 | app_load06_authenticator | client backend               |     4 |    4
+ app_load07 | app_load07_authenticator | client backend               |     4 |    4
+ app_load08 | app_load08_authenticator | client backend               |     4 |    4
+ app_load09 | app_load09_authenticator | client backend               |     4 |    4
+ app_load10 | app_load10_authenticator | client backend               |     4 |    4
+ app_load11 | app_load11_authenticator | client backend               |     4 |    4
+ app_load12 | app_load12_authenticator | client backend               |     4 |    4
+ app_load13 | app_load13_authenticator | client backend               |     4 |    4
+ app_load14 | app_load14_authenticator | client backend               |     4 |    4
+ app_load15 | app_load15_authenticator | client backend               |     4 |    4
+ app_load16 | app_load16_authenticator | client backend               |     4 |    4
+ app_load17 | app_load17_authenticator | client backend               |     4 |    4
+ app_load18 | app_load18_authenticator | client backend               |     4 |    4
+ postgres   | supabase_admin           | pg_cron launcher             |     1 |    0
+ postgres   | supabase_admin           | pg_net 0.20.3 worker         |     1 |    1
+(27 rows)
+
+ client_conns | all_backends | max_connections 
+--------------+--------------+-----------------
+           80 |           87 | 200
+(1 row)
+
+
+## database sizes
+      datname      | pg_size_pretty 
+-------------------+----------------
+ app_app1          | 9867 kB
+ app_app2          | 9867 kB
+ app_load01        | 9787 kB
+ app_load02        | 9771 kB
+ app_load03        | 9771 kB
+ app_load04        | 9771 kB
+ app_load05        | 9707 kB
+ app_load06        | 9779 kB
+ app_load07        | 9707 kB
+ app_load08        | 9779 kB
+ app_load09        | 9771 kB
+ app_load10        | 9771 kB
+ app_load11        | 9707 kB
+ app_load12        | 9771 kB
+ app_load13        | 9771 kB
+ app_load14        | 9779 kB
+ app_load15        | 9707 kB
+ app_load16        | 9771 kB
+ app_load17        | 9707 kB
+ app_load18        | 9795 kB
+ postgres          | 8083 kB
+ template0         | 7345 kB
+ template1         | 7571 kB
+ template_supabase | 8107 kB
+(24 rows)
+
+
+### 45s after load
+## docker stats
+NAME             MEM USAGE / LIMIT     CPU %
+m0-app1-auth     14.36MiB / 256MiB     0.00%
+m0-app1-rest     41.24MiB / 256MiB     0.13%
+m0-app2-auth     16.99MiB / 256MiB     0.04%
+m0-app2-rest     40.96MiB / 256MiB     0.11%
+m0-caddy         39.18MiB / 7.751GiB   0.00%
+m0-db            731.1MiB / 7.751GiB   1.23%
+m0-load01-auth   15.95MiB / 256MiB     0.00%
+m0-load01-rest   38.45MiB / 256MiB     0.16%
+m0-load02-auth   12.54MiB / 256MiB     0.03%
+m0-load02-rest   38.57MiB / 256MiB     0.13%
+m0-load03-auth   16.09MiB / 256MiB     0.01%
+m0-load03-rest   36.45MiB / 256MiB     0.10%
+m0-load04-auth   16.37MiB / 256MiB     0.00%
+m0-load04-rest   36.51MiB / 256MiB     0.12%
+m0-load05-auth   14.52MiB / 256MiB     0.00%
+m0-load05-rest   38.43MiB / 256MiB     0.11%
+m0-load06-auth   12.6MiB / 256MiB      0.02%
+m0-load06-rest   38.41MiB / 256MiB     0.17%
+m0-load07-auth   13.24MiB / 256MiB     0.02%
+m0-load07-rest   38.64MiB / 256MiB     0.06%
+m0-load08-auth   11.21MiB / 256MiB     0.01%
+m0-load08-rest   21.59MiB / 256MiB     0.09%
+m0-load09-auth   11.38MiB / 256MiB     0.02%
+m0-load09-rest   27.68MiB / 256MiB     0.15%
+m0-load10-auth   12.91MiB / 256MiB     0.00%
+m0-load10-rest   26.92MiB / 256MiB     0.15%
+m0-load11-auth   11.32MiB / 256MiB     0.00%
+m0-load11-rest   36.54MiB / 256MiB     0.27%
+m0-load12-auth   11.1MiB / 256MiB      0.00%
+m0-load12-rest   36.11MiB / 256MiB     0.67%
+m0-load13-auth   11.4MiB / 256MiB      0.04%
+m0-load13-rest   31.59MiB / 256MiB     0.18%
+m0-load14-auth   11.4MiB / 256MiB      0.02%
+m0-load14-rest   22.83MiB / 256MiB     0.14%
+m0-load15-auth   10.88MiB / 256MiB     0.01%
+m0-load15-rest   26.75MiB / 256MiB     0.11%
+m0-load16-auth   12.88MiB / 256MiB     0.00%
+m0-load16-rest   21.89MiB / 256MiB     0.08%
+m0-load17-auth   11.11MiB / 256MiB     0.00%
+m0-load17-rest   21.25MiB / 256MiB     0.07%
+m0-load18-auth   12.57MiB / 256MiB     0.00%
+m0-load18-rest   23.74MiB / 256MiB     0.10%
+
+## connections per database / role
+  datname   |         usename          |         backend_type         | conns | idle 
+------------+--------------------------+------------------------------+-------+------
+ (none)     | (bg)                     | autovacuum launcher          |     1 |    0
+ (none)     | (bg)                     | background writer            |     1 |    0
+ (none)     | (bg)                     | checkpointer                 |     1 |    0
+ (none)     | (bg)                     | walwriter                    |     1 |    0
+ (none)     | supabase_admin           | logical replication launcher |     1 |    0
+ app_app1   | app_app1_authenticator   | client backend               |     4 |    4
+ app_app2   | app_app2_authenticator   | client backend               |     4 |    4
+ app_load01 | app_load01_authenticator | client backend               |     4 |    4
+ app_load02 | app_load02_authenticator | client backend               |     4 |    4
+ app_load03 | app_load03_authenticator | client backend               |     4 |    4
+ app_load04 | app_load04_authenticator | client backend               |     4 |    4
+ app_load05 | app_load05_authenticator | client backend               |     4 |    4
+ app_load06 | app_load06_authenticator | client backend               |     4 |    4
+ app_load07 | app_load07_authenticator | client backend               |     4 |    4
+ app_load08 | app_load08_authenticator | client backend               |     4 |    4
+ app_load09 | app_load09_authenticator | client backend               |     4 |    4
+ app_load10 | app_load10_authenticator | client backend               |     4 |    4
+ app_load11 | app_load11_authenticator | client backend               |     4 |    4
+ app_load12 | app_load12_authenticator | client backend               |     4 |    4
+ app_load13 | app_load13_authenticator | client backend               |     4 |    4
+ app_load14 | app_load14_authenticator | client backend               |     4 |    4
+ app_load15 | app_load15_authenticator | client backend               |     4 |    4
+ app_load16 | app_load16_authenticator | client backend               |     4 |    4
+ app_load17 | app_load17_authenticator | client backend               |     4 |    4
+ app_load18 | app_load18_authenticator | client backend               |     4 |    4
+ postgres   | supabase_admin           | pg_cron launcher             |     1 |    0
+ postgres   | supabase_admin           | pg_net 0.20.3 worker         |     1 |    1
+(27 rows)
+
+ client_conns | all_backends | max_connections 
+--------------+--------------+-----------------
+           80 |           87 | 200
+(1 row)
+
+
+## database sizes
+      datname      | pg_size_pretty 
+-------------------+----------------
+ app_app1          | 9867 kB
+ app_app2          | 9867 kB
+ app_load01        | 9633 kB
+ app_load02        | 9771 kB
+ app_load03        | 9771 kB
+ app_load04        | 9771 kB
+ app_load05        | 9617 kB
+ app_load06        | 9779 kB
+ app_load07        | 9617 kB
+ app_load08        | 9779 kB
+ app_load09        | 9771 kB
+ app_load10        | 9771 kB
+ app_load11        | 9617 kB
+ app_load12        | 9771 kB
+ app_load13        | 9771 kB
+ app_load14        | 9779 kB
+ app_load15        | 9617 kB
+ app_load16        | 9771 kB
+ app_load17        | 9617 kB
+ app_load18        | 9641 kB
+ postgres          | 8083 kB
+ template0         | 7345 kB
+ template1         | 7571 kB
+ template_supabase | 8107 kB
+(24 rows)
+

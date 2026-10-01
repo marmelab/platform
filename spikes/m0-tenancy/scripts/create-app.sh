@@ -18,6 +18,8 @@ GOTRUE_IMAGE=supabase/gotrue:v2.196.0
 POSTGREST_IMAGE=postgrest/postgrest:v14.17
 PGRST_POOL="${PGRST_POOL:-3}"
 GOTRUE_POOL="${GOTRUE_POOL:-3}"
+# PostgREST is built with -N (one GHC capability per CPU): ~90 MB on a 10-CPU host. -N2 gives ~32 MB.
+PGRST_GHCRTS="${PGRST_GHCRTS:--N2}"
 
 # 1. secrets ---------------------------------------------------------------
 mkdir -p "$APP_DIR"
@@ -33,6 +35,7 @@ set +a
 # 2. roles + database -----------------------------------------------------
 echo "[$APP] roles"
 psql_admin postgres <<SQL
+set client_min_messages = warning;
 select 'create role ${AUTHENTICATOR}'
   where not exists (select from pg_roles where rolname = '${AUTHENTICATOR}') \gexec
 select 'create role ${AUTH_ADMIN}'
@@ -114,6 +117,7 @@ run_container "m0-${APP}-rest" postgrest \
   -e PGRST_APP_SETTINGS_JWT_SECRET="$JWT_SECRET" \
   -e PGRST_APP_SETTINGS_JWT_EXP=3600 \
   -e PGRST_ADMIN_SERVER_PORT=3001 \
+  -e GHCRTS="$PGRST_GHCRTS" \
   "$POSTGREST_IMAGE"
 
 # 4. static placeholder ----------------------------------------------------
@@ -124,7 +128,7 @@ mkdir -p "$M0_DIR/sites/$APP"
 echo "[$APP] caddy route"
 ROUTE_ID="app-${APP}"
 curl -fsS -X DELETE "$CADDY_ADMIN/id/$ROUTE_ID" >/dev/null 2>&1 || true
-curl -fsS -X POST "$CADDY_ADMIN/config/apps/http/servers/platform/routes" \
+curl -fsS -X POST "$CADDY_ADMIN/id/apps/handle/0/routes" \
   -H 'Content-Type: application/json' -d @- <<JSON
 {
   "@id": "${ROUTE_ID}",

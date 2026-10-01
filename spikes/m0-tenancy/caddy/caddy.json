@@ -9,7 +9,15 @@
         "platform": {
           "listen": [":8080"],
           "automatic_https": { "disable": true },
-          "routes": []
+          "routes": [
+            {
+              "@id": "apps",
+              "handle": [{ "handler": "subroute", "routes": [] }]
+            },
+            {
+              "handle": [{ "handler": "static_response", "status_code": 404, "body": "unknown app\n" }]
+            }
+          ]
         }
       }
     }
