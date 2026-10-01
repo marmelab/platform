@@ -7,7 +7,7 @@ import { apiUrl } from "./config.ts";
 import { createDeployment, finalizeDeployment, listDeployments, rollback } from "./deployments.ts";
 import { getLogs } from "./logs.ts";
 import { listSecrets, setSecrets } from "./secrets.ts";
-import { applyMigrations, executeSql } from "./sql.ts";
+import { applyMigrations, executeSql, StructuredUserError } from "./sql.ts";
 
 async function run(fn: () => Promise<unknown>): Promise<CallToolResult> {
   try {
@@ -15,7 +15,11 @@ async function run(fn: () => Promise<unknown>): Promise<CallToolResult> {
     return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
   } catch (error) {
     if (!(error instanceof UserError)) console.error(error);
-    const message = error instanceof Error ? error.message : String(error);
+    const message = error instanceof StructuredUserError
+      ? JSON.stringify(error.details, null, 2)
+      : error instanceof Error
+      ? error.message
+      : String(error);
     return { isError: true, content: [{ type: "text", text: message }] };
   }
 }
@@ -59,11 +63,20 @@ export function buildMcpServer(user: User): McpServer {
     "apply_migrations",
     {
       description:
-        "Apply supabase/migrations files. Only versions not yet applied run, all in one transaction. " +
-        "Returns the security linter results: stop and warn the user when a public table has no RLS.",
+        "Apply supabase/migrations files. Only versions not yet applied run, all in one transaction, followed " +
+        "by the security linter in the same transaction. If the batch introduces an ERROR lint (table without " +
+        "RLS, security definer view...), everything is rolled back and the lints are returned: stop and show " +
+        "them to the user. dry_run=true always rolls back. accept_lints commits despite the listed ERRORs " +
+        "(audited): use it only with the user's explicit consent.",
       inputSchema: t.apply_migrations,
     },
-    ({ app, migrations }) => run(async () => applyMigrations(user, await appForUser(user, app), migrations)),
+    ({ app, migrations, dry_run, accept_lints }) =>
+      run(async () =>
+        applyMigrations(user, await appForUser(user, app), migrations, {
+          dryRun: dry_run ?? false,
+          acceptLints: accept_lints ?? [],
+        })
+      ),
   );
 
   server.registerTool(
@@ -89,7 +102,11 @@ export function buildMcpServer(user: User): McpServer {
 
   server.registerTool(
     "finalize_deployment",
-    { description: "Verify, extract and publish an uploaded deployment", inputSchema: t.finalize_deployment },
+    {
+      description: "Verify, extract and publish an uploaded deployment. Functions are booted on the new version " +
+        "first: if one fails to start (BOOT_ERROR), the deployment fails and the live version is unchanged.",
+      inputSchema: t.finalize_deployment,
+    },
     ({ deployment_id }) => run(() => finalizeDeployment(user, deployment_id)),
   );
 

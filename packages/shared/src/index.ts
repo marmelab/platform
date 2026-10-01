@@ -15,6 +15,13 @@ export const migration = z.object({
 });
 export type Migration = z.infer<typeof migration>;
 
+/** A lint name accepts it on every object; {name, object} accepts it on one object only. */
+export const acceptedLint = z.union([
+  z.string().min(1),
+  z.object({ name: z.string().min(1), object: z.string().min(1) }),
+]);
+export type AcceptedLint = z.infer<typeof acceptedLint>;
+
 export const toolInputs = {
   get_app: { app: slug },
   create_app: {
@@ -24,6 +31,10 @@ export const toolInputs = {
   apply_migrations: {
     app: slug,
     migrations: z.array(migration).describe("Contents of supabase/migrations/<version>_<name>.sql"),
+    dry_run: z.boolean().default(false)
+      .describe("Apply, run the linter, then always roll back: nothing is committed"),
+    accept_lints: z.array(acceptedLint).optional()
+      .describe("ERROR lints to accept (audited). Only with the user's explicit consent"),
   },
   execute_sql: {
     app: slug,
