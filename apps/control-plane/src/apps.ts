@@ -1,4 +1,4 @@
-import { mkdir, stat, writeFile } from "node:fs/promises";
+import { mkdir, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
   appDatabaseSql,
@@ -7,6 +7,7 @@ import {
   createDatabaseSql,
   databaseExistsSql,
   databaseGrantsSql,
+  dropAppSql,
 } from "@platform/sql";
 import { type AppInfo, SLUG_RE } from "@platform/shared";
 import { audit } from "./audit.ts";
@@ -300,4 +301,15 @@ export async function syncAll() {
 
 export async function pathExists(path: string) {
   return stat(path).then(() => true, () => false);
+}
+
+/** Symmetric of provision(): routes, containers, database and roles, files, rows. */
+export async function deleteApp(slug: string) {
+  await router.removeApp(slug);
+  await orchestrator.removeApp(slug);
+  await withAdmin("postgres", (c) => runAll(c, dropAppSql(dbId(slug))));
+  await rm(join(config.dataDir.appsConfig, `${slug}.json`), { force: true });
+  await rm(join(config.dataDir.sites, slug), { recursive: true, force: true });
+  await rm(join(config.dataDir.functions, slug), { recursive: true, force: true });
+  await platform.query("delete from apps where slug = $1", [slug]);
 }

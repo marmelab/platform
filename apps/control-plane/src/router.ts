@@ -12,19 +12,23 @@ export interface Router {
   removeApp(slug: string): Promise<void>;
 }
 
+// undici sends Sec-Fetch-Mode, which makes Caddy enforce the Origin check: send an allowed one.
 /** Caddy admin JSON API. Bootstrap config: routes "apps" (public) and "internal-apps" (edge -> API). */
 export class CaddyRouter implements Router {
   private async call(method: string, path: string, body?: unknown) {
     const response = await fetch(`${config.caddyAdmin}${path}`, {
       method,
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", origin: config.caddyAdmin },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
     if (!response.ok) throw new Error(`caddy ${method} ${path}: ${response.status} ${await response.text()}`);
   }
 
   private async delete(id: string) {
-    const response = await fetch(`${config.caddyAdmin}/id/${id}`, { method: "DELETE" });
+    const response = await fetch(`${config.caddyAdmin}/id/${id}`, {
+      method: "DELETE",
+      headers: { origin: config.caddyAdmin },
+    });
     if (!response.ok && response.status !== 404) {
       const text = await response.text();
       if (!text.includes("unknown object ID")) throw new Error(`caddy DELETE ${id}: ${response.status} ${text}`);
