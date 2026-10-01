@@ -1,0 +1,44 @@
+{
+  "admin": {
+    "listen": "0.0.0.0:2019",
+    "origins": ["caddy:2019", "localhost:2030", "127.0.0.1:2030"]
+  },
+  "apps": {
+    "http": {
+      "servers": {
+        "public": {
+          "listen": [":8100"],
+          "automatic_https": { "disable": true },
+          "routes": [
+            {
+              "@id": "api",
+              "match": [{ "host": ["api.localhost"] }],
+              "terminal": true,
+              "handle": [{ "handler": "reverse_proxy", "upstreams": [{ "dial": "control-plane:3000" }] }]
+            },
+            {
+              "@id": "apps",
+              "handle": [{ "handler": "subroute", "routes": [] }]
+            },
+            {
+              "handle": [{ "handler": "static_response", "status_code": 404, "body": "unknown app\n" }]
+            }
+          ]
+        },
+        "internal": {
+          "listen": [":8180"],
+          "automatic_https": { "disable": true },
+          "routes": [
+            {
+              "@id": "internal-apps",
+              "handle": [{ "handler": "subroute", "routes": [] }]
+            },
+            {
+              "handle": [{ "handler": "static_response", "status_code": 404, "body": "unknown app\n" }]
+            }
+          ]
+        }
+      }
+    }
+  }
+}

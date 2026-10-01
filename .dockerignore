@@ -1,0 +1,5 @@
+**/node_modules
+.git
+spikes
+deploy
+**/.DS_Store

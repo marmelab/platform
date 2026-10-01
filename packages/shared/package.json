@@ -1,0 +1,10 @@
+{
+  "name": "@platform/shared",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/index.ts" },
+  "scripts": { "typecheck": "tsc --noEmit" },
+  "dependencies": { "zod": "^4.6.5" },
+  "devDependencies": { "@types/node": "^26.6.3", "typescript": "^7.0.2" }
+}

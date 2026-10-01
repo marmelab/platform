@@ -1,0 +1,10 @@
+{
+  "name": "platform",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.28.0",
+  "scripts": {
+    "typecheck": "pnpm -r typecheck",
+    "e2e": "pnpm --filter @platform/control-plane e2e"
+  }
+}

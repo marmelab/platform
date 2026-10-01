@@ -1,0 +1,111 @@
+name: plat
+
+services:
+  db:
+    image: supabase/postgres:17.6.1.136
+    container_name: plat-db
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:54350:5432"
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    command:
+      - postgres
+      - -c
+      - config_file=/etc/postgresql/postgresql.conf
+      - -c
+      - "log_line_prefix=%m [%p] db=%d user=%u app=%a "
+      - -c
+      - max_connections=500
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres", "-h", "localhost"]
+      interval: 3s
+      timeout: 3s
+      retries: 60
+    labels:
+      platform.service: postgres
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: plat-caddy
+    restart: unless-stopped
+    command: ["caddy", "run", "--config", "/etc/caddy/caddy.json", "--resume"]
+    environment:
+      PLATFORM_GATEWAY_TOKEN: ${PLATFORM_GATEWAY_TOKEN}
+    ports:
+      - "127.0.0.1:8100:8100"
+      - "127.0.0.1:2030:2019"
+    volumes:
+      - ./caddy/caddy.json:/etc/caddy/caddy.json:ro
+      - caddy-config:/config
+      - caddy-data:/data
+      - sites:/sites:ro
+    labels:
+      platform.service: caddy
+
+  edge:
+    image: supabase/edge-runtime:v1.76.2
+    container_name: plat-edge
+    restart: unless-stopped
+    command: ["start", "--main-service", "/main", "--event-worker", "/main/events", "--port", "9000", "--policy", "per_worker"]
+    environment:
+      PLATFORM_GATEWAY_TOKEN: ${PLATFORM_GATEWAY_TOKEN}
+      PLATFORM_ADMIN_TOKEN: ${PLATFORM_EDGE_ADMIN_TOKEN}
+      PLATFORM_FUNCTIONS_ROOT: /functions
+      PLATFORM_APPS_CONFIG_DIR: /config/apps
+      PLATFORM_WORKER_IDLE_TIMEOUT_MS: "30000"
+      DENO_DIR: /deno-cache
+    volumes:
+      - ../packages/edge-main-worker:/main:ro
+      - functions:/functions:ro
+      - apps-config:/config/apps:ro
+      - deno-cache:/deno-cache
+    mem_limit: 1g
+    labels:
+      platform.service: edge
+
+  control-plane:
+    build:
+      context: ..
+      dockerfile: apps/control-plane/Dockerfile
+    image: plat/control-plane:dev
+    container_name: plat-control-plane
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      caddy:
+        condition: service_started
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      PLATFORM_MASTER_KEY: ${PLATFORM_MASTER_KEY}
+      PGHOST: db
+      APPS_DOMAIN: localhost
+      PUBLIC_PORT: "8100"
+      API_HOST: api.localhost
+      CADDY_ADMIN_URL: http://caddy:2019
+      DOCKER_NETWORK: plat
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - sites:/data/sites
+      - functions:/data/functions
+      - apps-config:/data/config/apps
+      - uploads:/data/uploads
+    labels:
+      platform.service: control-plane
+
+volumes:
+  db-data:
+  caddy-config:
+  caddy-data:
+  sites:
+  functions:
+  apps-config:
+  uploads:
+  deno-cache:
+
+networks:
+  default:
+    name: plat
