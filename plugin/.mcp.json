@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "platform": {
+      "type": "http",
+      "url": "${PLATFORM_URL:-http://api.localhost:8100/mcp}",
+      "headers": {
+        "Authorization": "Bearer ${PLATFORM_TOKEN}"
+      }
+    }
+  }
+}

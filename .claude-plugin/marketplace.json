@@ -1,0 +1,12 @@
+{
+  "name": "platform-local",
+  "description": "Internal plugins for the platform",
+  "owner": { "name": "Platform team" },
+  "plugins": [
+    {
+      "name": "platform",
+      "source": "./plugin",
+      "description": "Deploy Vite + Supabase apps to the platform"
+    }
+  ]
+}
