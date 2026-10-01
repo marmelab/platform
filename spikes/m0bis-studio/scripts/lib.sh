@@ -36,8 +36,13 @@ fwd_curl() {
 
 # Studio dashboard token (Studio's own GoTrue, password grant)
 studio_token() {
-  fwd_curl -fsS -X POST "$STUDIO_URL/auth/v1/token?grant_type=password" -H 'Content-Type: application/json' \
-    -d "{\"email\":\"$STUDIO_ADMIN_EMAIL\",\"password\":\"$STUDIO_ADMIN_PASSWORD\"}" | jq -r .access_token
+  fwd_curl -sS -X POST "$STUDIO_URL/auth/v1/token?grant_type=password" -H 'Content-Type: application/json' \
+    -d "$(jq -n --arg email "$STUDIO_ADMIN_EMAIL" --arg password "$STUDIO_ADMIN_PASSWORD" '{$email, $password}')" | jq -r .access_token
+}
+
+# GoTrue admin API of Studio's GoTrue (service_role key)
+gotrue_admin() {
+  fwd_curl -fsS -H "Authorization: Bearer $STUDIO_SERVICE_KEY" "$@"
 }
 
 # curl through Caddy + forward auth + Studio login

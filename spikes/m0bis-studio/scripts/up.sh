@@ -19,6 +19,7 @@ psql_admin studio_auth < sql/studio_auth.sql
 
 echo "[m0bis] containers"
 docker compose up -d
+docker compose restart fwd-auth >/dev/null  # server.mjs is bind-mounted: pick up edits
 
 echo "[m0bis] caddy route"
 ROUTE=$(docker exec -i m0-caddy caddy adapt --adapter caddyfile --config /dev/stdin < caddy/studio.Caddyfile 2>/dev/null \
@@ -36,8 +37,23 @@ done
 fwd_curl -fsS "$STUDIO_URL/api/self-hosted/bootstrap" >/dev/null || { docker logs --tail 40 m0bis-studio; exit 1; }
 
 echo "[m0bis] Studio admin"
+# Create the admin on first run, then always realign its password (and email confirmation) with .env:
+# bootstrap is a no-op once an admin exists, so a regenerated .env would otherwise leave a stale password.
 if fwd_curl -fsS "$STUDIO_URL/api/self-hosted/bootstrap" | grep -q '"bootstrapped":false'; then
   fwd_curl -fsS -X POST "$STUDIO_URL/api/self-hosted/bootstrap" -H 'Content-Type: application/json' \
-    -d "{\"email\":\"$STUDIO_ADMIN_EMAIL\",\"password\":\"$STUDIO_ADMIN_PASSWORD\"}" >/dev/null
+    -d "$(jq -n --arg email "$STUDIO_ADMIN_EMAIL" --arg password "$STUDIO_ADMIN_PASSWORD" '{$email, $password}')" >/dev/null
 fi
-echo "[m0bis] ready: $STUDIO_URL (forward auth: FWD_AUTH_* ; Studio login: STUDIO_ADMIN_* in .env)"
+ADMIN_ID=$(gotrue_admin "$STUDIO_URL/auth/v1/admin/users" \
+  | jq -r --arg email "$STUDIO_ADMIN_EMAIL" '.users[] | select(.email == $email) | .id')
+[ -n "$ADMIN_ID" ] || { echo "Studio admin $STUDIO_ADMIN_EMAIL not found in studio_auth"; exit 1; }
+gotrue_admin -X PUT "$STUDIO_URL/auth/v1/admin/users/$ADMIN_ID" -H 'Content-Type: application/json' \
+  -d "$(jq -n --arg password "$STUDIO_ADMIN_PASSWORD" '{$password, email_confirm: true}')" >/dev/null
+
+echo "[m0bis] login check"
+TOKEN=$(studio_token || true)
+[ -n "$TOKEN" ] && [ "$TOKEN" != null ] || { echo "Studio login failed for STUDIO_ADMIN_EMAIL"; exit 1; }
+cat <<EOF2
+[m0bis] ready: $STUDIO_URL
+  1. Platform SSO (mock):  FWD_AUTH_USER / FWD_AUTH_PASSWORD from .env
+  2. Studio sign-in:       STUDIO_ADMIN_EMAIL / STUDIO_ADMIN_PASSWORD from .env
+EOF2

@@ -202,10 +202,12 @@ scripts/measure.sh            # RAM + connexions
 scripts/teardown.sh [--purge] # arrête m0bis et retire la route ; --purge : rôles, bases studio_*, owners, data/, .env
 ```
 
-Dans le navigateur, ouvrir http://studio.localhost:8080 :
-1. login SSO factice : `FWD_AUTH_USER` et `FWD_AUTH_PASSWORD` du `.env` ;
-2. login Studio : `STUDIO_ADMIN_EMAIL` et `STUDIO_ADMIN_PASSWORD` ;
-3. l'URL de chaque projet est dans `apps/<id>/studio.json`.
+Dans le navigateur, ouvrir http://studio.localhost:8080. Il y a deux logins successifs, avec des identifiants différents :
+1. page « Platform SSO » (login SSO factice) : `FWD_AUTH_USER` et `FWD_AUTH_PASSWORD` du `.env`. Les identifiants Studio y sont refusés (« invalid credentials ») ; chaque échec est tracé dans `docker logs m0bis-fwd-auth` ;
+2. page « Welcome back » de Studio : `STUDIO_ADMIN_EMAIL` et `STUDIO_ADMIN_PASSWORD` ;
+3. l'URL de chaque projet est dans `apps/<id>/studio.json` (capture : `screenshots/login-fixed.png`).
+
+`up.sh` réaligne à chaque exécution le mot de passe et la confirmation d'email de l'admin Studio sur le `.env` (API admin du GoTrue de Studio), puis vérifie le login. Avant, le bootstrap ne s'exécutait qu'une fois : un `.env` régénéré laissait l'ancien mot de passe dans `studio_auth`. En cas de doute, relancer `scripts/up.sh`.
 
 ### Infos de connexion (stack laissée démarrée, environ 0,57 Go)
 

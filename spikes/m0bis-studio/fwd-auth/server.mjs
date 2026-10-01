@@ -29,9 +29,11 @@ const userFromRequest = (req) => {
 
 const form = (error = "") => `<!doctype html><title>Platform SSO (mock)</title>
 <style>body{font:16px system-ui;margin:4rem auto;max-width:22rem}input,button{display:block;width:100%;margin:.5rem 0;padding:.5rem}</style>
-<h1>Platform SSO</h1><p>Mock of the control plane login.</p>${error && `<p style="color:#c00">${error}</p>`}
-<form method="post"><input name="user" placeholder="user" autocomplete="username">
-<input name="password" type="password" placeholder="password" autocomplete="current-password"><button>Sign in</button></form>`;
+<h1>Platform SSO</h1><p>Mock of the control plane login: <code>FWD_AUTH_USER</code> / <code>FWD_AUTH_PASSWORD</code>
+from <code>spikes/m0bis-studio/.env</code>. The Studio sign-in (<code>STUDIO_ADMIN_*</code>) comes next.</p>
+${error && `<p style="color:#c00">${error}</p>`}
+<form method="post"><input name="user" placeholder="FWD_AUTH_USER" autocomplete="username">
+<input name="password" type="password" placeholder="FWD_AUTH_PASSWORD" autocomplete="current-password"><button>Sign in</button></form>`;
 
 createServer(async (req, res) => {
   const url = new URL(req.url, "http://x");
@@ -55,8 +57,9 @@ createServer(async (req, res) => {
       let body = "";
       for await (const chunk of req) body += chunk;
       const params = new URLSearchParams(body);
-      const user = params.get("user") || "";
-      if (!checkPassword(user, params.get("password") || "")) {
+      const user = (params.get("user") || "").trim();
+      if (!checkPassword(user, (params.get("password") || "").trim())) {
+        console.log(`login failed for user "${user}"`);
         res.writeHead(401, { "Content-Type": "text/html" });
         return res.end(form("invalid credentials"));
       }
