@@ -41,20 +41,20 @@ Follow these steps in order. Keep the user informed with one short line per step
 
 1. Find which versions are already applied:
    `execute_sql` with `sql: "select version from supabase_migrations.schema_migrations order by version"`.
-2. **Pre-flight review of the new migrations** (versions not in that list). Read each of them. If one creates a table (or view) in the `public` schema without `alter table ... enable row level security` in the same set of new migrations, **stop before applying anything**: name the file and table, explain that the table would be readable and writable by anyone holding the anon key, and propose the fix (enable RLS and add policies). Only continue if the user explicitly consents in this conversation.
+2. **Pre-flight review of the new migrations** (versions not in that list), as a help for the user: read them and point out anything risky (a `public` table or view without RLS, a `security definer` view or function). The server enforces the linter anyway. When in doubt, call `apply_migrations` with `dry_run: true` first: it applies, lints and always rolls back.
 3. Run `migrations.sh` and call `apply_migrations` with `app` and the full array (already applied versions are skipped by the server, so sending all files is safe and keeps ordering checks on the server).
-4. Report `applied` and `skipped`.
-5. Read `lints`:
-   - Any `ERROR` (e.g. `rls_disabled_in_public`, `policy_exists_rls_disabled`, `security_definer_view`): **stop the deployment here** unless the user has explicitly consented. Show each lint (`name`, `object`, `detail`), explain the risk, and propose a corrective migration (a new file, never edit an applied one). The migrations are already committed in the database, so say that the frontend and functions were *not* deployed.
-   - `WARN` / `INFO`: list them briefly and continue.
-6. If `apply_migrations` fails, the whole batch is rolled back: show the SQL error, fix nothing silently, stop.
+4. The linter runs inside the transaction:
+   - **Rejected** (tool error with `status: "rejected"`, `applied: []`): the batch introduces at least one `ERROR` lint (e.g. `rls_disabled_in_public`, `policy_exists_rls_disabled`, `security_definer_view`) and **nothing was applied**. Stop the deployment here: show each lint of `blocking_lints` (`name`, `object`, `detail`), explain the risk, and propose a corrective change (the migrations were not applied, so fixing the new files is fine). Say that the frontend and functions were *not* deployed.
+   - Only if the user explicitly consents in this conversation to keep a flagged object, call `apply_migrations` again with `accept_lints` listing exactly those lints as `{ "name": ..., "object": ... }` (the acceptance is audited). Never use `accept_lints` on your own initiative.
+   - **Applied**: report `applied` and `skipped`; list `WARN` / `INFO` lints briefly and continue.
+5. If `apply_migrations` fails with an SQL error, the whole batch is rolled back: show the SQL error, fix nothing silently, stop.
 
 ### 4. Edge functions (skip if `supabase/functions/` has no `<name>/index.ts`)
 
 1. Look for secrets the functions need: grep for `Deno.env.get("...")` in `supabase/functions`. `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY` and `SUPABASE_DB_URL` are provided by the platform. For the others, call `list_secrets`; ask the user for any missing value, then `set_secrets`. Never invent a secret value. If a secret is still missing and the function reads it at boot, do not deploy the functions (they would fail to start): say which secret is missing and ask whether to deploy the frontend alone.
 2. `create_deployment` with `kind: "functions"`.
 3. Run `upload.sh functions '<upload_url>'` (the URL is single-use and expires after 15 minutes: upload right away).
-4. `finalize_deployment` with the `deployment_id`. It returns the deployed function names and the version.
+4. `finalize_deployment` with the `deployment_id`. It boots every function on the new version before publishing it, and returns the deployed function names and the version. If it fails (e.g. `BOOT_ERROR`: missing npm package, missing secret read at boot), the live functions are unchanged: **stop before the frontend**, follow **On errors** with `service: "functions"`, and report that nothing was published.
 
 ### 5. Build the frontend
 
@@ -71,7 +71,7 @@ Follow these steps in order. Keep the user informed with one short line per step
 ### 7. Verify and report
 
 1. `curl -sS -o /dev/null -w '%{http_code}' <url>` must return 200.
-2. For each deployed function, `curl -sS -X OPTIONS -w ' %{http_code}' <url>/functions/v1/<name>` (preflight requests skip JWT checks, so this boots the function). A 5xx or a `BOOT_ERROR` / `WORKER_ERROR` body means the function is broken: follow **On errors** below with `service: "functions"`.
+2. For each deployed function, `curl -sS -X OPTIONS -w ' %{http_code}' <url>/functions/v1/<name>` (preflight requests skip JWT checks). `finalize_deployment` already checked that the functions boot; this smoke test goes through the public route. A 5xx or a `BOOT_ERROR` / `WORKER_ERROR` body means something is broken: follow **On errors** below with `service: "functions"`.
 3. Final message, short:
    - app URL;
    - migrations applied / skipped, frontend version, functions version and names;

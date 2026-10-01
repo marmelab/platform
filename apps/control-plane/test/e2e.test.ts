@@ -22,6 +22,7 @@ const MCP_URL = env.PLATFORM_URL ?? "http://api.localhost:8100/mcp";
 const APP = "demo";
 const APP_URL = `http://${APP}.localhost:8100`;
 const RUN = Date.now();
+const NPM_CACHE = "/deno-cache/npm/registry.npmjs.org";
 const work = mkdtempSync(join(tmpdir(), "plat-e2e-"));
 
 async function connect(token: string) {
@@ -75,6 +76,8 @@ const getPage = async (path = "/") => {
   return { status: response.status, text: await response.text(), headers: response.headers };
 };
 
+const sqlLiteral = (value: string) => `'${value.replaceAll("'", "''")}'`;
+
 describe("control plane M2 e2e", () => {
   let admin: Client;
   let app: any;
@@ -113,7 +116,29 @@ describe("control plane M2 e2e", () => {
     assert.equal(health.status, 200);
   });
 
-  test("3. apply_migrations: todos + RLS, idempotence, linter", async () => {
+  async function rejected(args: Record<string, unknown>) {
+    const result = await callRaw(admin, "apply_migrations", args);
+    assert.equal(result.isError, true, result.content[0]?.text);
+    const body = JSON.parse(result.content[0].text);
+    assert.equal(body.status, "rejected");
+    assert.deepEqual(body.applied, []);
+    return body;
+  }
+
+  async function relationExists(name: string) {
+    const result = await call(admin, "execute_sql", { app: APP, sql: `select to_regclass(${sqlLiteral(name)}) as r` });
+    return result.rows[0].r !== null;
+  }
+
+  async function migrationRecorded(version: string) {
+    const result = await call(admin, "execute_sql", {
+      app: APP,
+      sql: `select 1 from supabase_migrations.schema_migrations where version = ${sqlLiteral(version)}`,
+    });
+    return result.row_count === 1;
+  }
+
+  test("3. apply_migrations: todos + RLS, idempotence, linter in the transaction", async () => {
     const todos = {
       version: "20260101000001",
       name: "create_todos",
@@ -127,14 +152,66 @@ describe("control plane M2 e2e", () => {
     assert.deepEqual(second.applied, []);
     assert.deepEqual(second.skipped, [todos.version]);
 
+    // a public table without RLS is rejected: nothing committed
     const unsafe = { version: `${RUN}1`, name: "lint_probe", sql: "create table public.lint_probe (id int primary key);" };
-    const third = await call(admin, "apply_migrations", { app: APP, migrations: [todos, unsafe] });
-    assert.deepEqual(third.applied, [unsafe.version]);
-    const alert = third.lints.find((l: { name: string; object: string }) =>
+    const third = await rejected({ app: APP, migrations: [todos, unsafe] });
+    assert.deepEqual(third.would_apply, [unsafe.version]);
+    const alert = third.blocking_lints.find((l: { name: string; object: string }) =>
       l.name === "rls_disabled_in_public" && l.object === "public.lint_probe"
     );
-    assert.ok(alert, `linter should flag lint_probe: ${JSON.stringify(third.lints)}`);
+    assert.ok(alert, `linter should flag lint_probe: ${JSON.stringify(third)}`);
     assert.equal(alert.level, "ERROR");
+    assert.equal(await relationExists("public.lint_probe"), false);
+    assert.equal(await migrationRecorded(unsafe.version), false);
+
+    // a security definer view bypasses RLS: rejected, then dry run, then accepted
+    const view = {
+      version: `${RUN}5`,
+      name: "todo_titles",
+      sql: "create view public.todo_titles as select title from public.todos;",
+    };
+    const definer = await rejected({ app: APP, migrations: [todos, view] });
+    assert.ok(
+      definer.blocking_lints.some((l: { name: string; object: string }) =>
+        l.name === "security_definer_view" && l.object === "public.todo_titles"
+      ),
+      JSON.stringify(definer),
+    );
+    assert.equal(await relationExists("public.todo_titles"), false);
+    assert.equal(await migrationRecorded(view.version), false);
+
+    const dry = await call(admin, "apply_migrations", { app: APP, migrations: [todos, view], dry_run: true });
+    assert.equal(dry.status, "dry_run");
+    assert.deepEqual(dry.applied, []);
+    assert.deepEqual(dry.would_apply, [view.version]);
+    assert.deepEqual(dry.skipped, [todos.version]);
+    assert.equal(dry.blocking_lints[0]?.name, "security_definer_view");
+    assert.equal(await relationExists("public.todo_titles"), false);
+    assert.equal(await migrationRecorded(view.version), false);
+
+    const accepted = await call(admin, "apply_migrations", {
+      app: APP,
+      migrations: [todos, view],
+      accept_lints: [{ name: "security_definer_view", object: "public.todo_titles" }],
+    });
+    assert.equal(accepted.status, "applied");
+    assert.deepEqual(accepted.applied, [view.version]);
+    assert.deepEqual(accepted.accepted_lints.map((l: { object: string }) => l.object), ["public.todo_titles"]);
+    assert.equal(await relationExists("public.todo_titles"), true);
+    assert.equal(await migrationRecorded(view.version), true);
+    const audited = execFileSync("docker", [
+      "exec",
+      "plat-db",
+      "psql",
+      "-U",
+      "supabase_admin",
+      "-d",
+      "platform",
+      "-tAc",
+      "select details->'accepted_lints'->0->>'name' from audit_log where action = 'apply_migrations' " +
+      "order by created_at desc limit 1",
+    ], { encoding: "utf8" }).trim();
+    assert.equal(audited, "security_definer_view");
 
     // a failing migration rolls back the whole batch
     const broken = await callRaw(admin, "apply_migrations", {
@@ -149,9 +226,10 @@ describe("control plane M2 e2e", () => {
 
     const cleanup = await call(admin, "apply_migrations", {
       app: APP,
-      migrations: [{ version: `${RUN}4`, name: "drop_lint_probe", sql: "drop table public.lint_probe;" }],
+      migrations: [{ version: `${RUN}4`, name: "drop_todo_titles", sql: "drop view public.todo_titles;" }],
     });
     assert.deepEqual(cleanup.applied, [`${RUN}4`]);
+    assert.ok(!cleanup.lints.some((l: { level: string }) => l.level === "ERROR"), JSON.stringify(cleanup.lints));
 
     const tables = await call(admin, "execute_sql", {
       app: APP,
@@ -197,10 +275,30 @@ describe("control plane M2 e2e", () => {
       join(project, "supabase/functions/ping/index.ts"),
       `Deno.serve(() => Response.json({ pong: true }));\n`,
     );
-    writeFileSync(join(project, "supabase/config.toml"), `[functions.ping]\nverify_jwt = false\n`);
+    mkdirSync(join(project, "supabase/functions/odd"), { recursive: true });
+    writeFileSync(
+      join(project, "supabase/functions/odd/index.ts"),
+      `import isOdd from "npm:is-odd@3.0.1";\nDeno.serve(() => Response.json({ odd: isOdd(3) }));\n`,
+    );
+    writeFileSync(
+      join(project, "supabase/config.toml"),
+      `[functions.ping]\nverify_jwt = false\n\n[functions.odd]\nverify_jwt = false\n`,
+    );
+    // the warm-up before the switch must download npm dependencies into the shared DENO_DIR
+    execFileSync("docker", ["exec", "plat-edge", "rm", "-rf", `${NPM_CACHE}/is-odd`]);
     const { finalized } = await deploy(admin, "functions", await pack(project, ["supabase"]));
     assert.equal(finalized.status, "live");
-    assert.deepEqual(finalized.functions, { hello: { verify_jwt: true }, ping: { verify_jwt: false } });
+    assert.deepEqual(finalized.functions, {
+      hello: { verify_jwt: true },
+      odd: { verify_jwt: false },
+      ping: { verify_jwt: false },
+    });
+    assert.deepEqual(Object.keys(finalized.warm).sort(), ["hello", "odd", "ping"]);
+    execFileSync("docker", ["exec", "plat-edge", "test", "-d", `${NPM_CACHE}/is-odd/3.0.1`]);
+    const started = Date.now();
+    const odd = await fetch(`${APP_URL}/functions/v1/odd`);
+    assert.deepEqual(await odd.json(), { odd: true });
+    assert.ok(Date.now() - started < 1500, `first real call should hit a warm cache (${Date.now() - started} ms)`);
 
     const ping = await fetch(`${APP_URL}/functions/v1/ping`);
     assert.equal(ping.status, 200);
@@ -232,6 +330,49 @@ describe("control plane M2 e2e", () => {
     const result2 = await callRaw(admin, "finalize_deployment", { deployment_id: created2.deployment_id });
     assert.equal(result2.isError, true);
     assert.match(result2.content[0].text, /"\.\." is not allowed/);
+  });
+
+  test("4c. a function that fails to boot is not published", async () => {
+    const previous = await call(admin, "get_app", { app: APP });
+    const project = join(work, "project-broken");
+    mkdirSync(join(project, "supabase/functions/ping"), { recursive: true });
+    mkdirSync(join(project, "supabase/functions/broken"), { recursive: true });
+    writeFileSync(join(project, "supabase/functions/ping/index.ts"), `Deno.serve(() => Response.json({ v: "new" }));\n`);
+    writeFileSync(
+      join(project, "supabase/functions/broken/index.ts"),
+      `import { createClient } from "npm:@supabase/supabase-js@2.999.0";\n` +
+        `Deno.serve(() => Response.json({ ok: typeof createClient }));\n`,
+    );
+    writeFileSync(join(project, "supabase/config.toml"), `[functions.ping]\nverify_jwt = false\n`);
+    const created = await call(admin, "create_deployment", { app: APP, kind: "functions" });
+    const put = await fetch(created.upload_url, { method: "PUT", body: await pack(project, ["supabase"]) });
+    assert.equal(put.status, 200);
+    const result = await callRaw(admin, "finalize_deployment", { deployment_id: created.deployment_id });
+    assert.equal(result.isError, true);
+    assert.match(result.content[0].text, /broken: BOOT_ERROR .*2\.999\.0/);
+
+    const current = await call(admin, "get_app", { app: APP });
+    assert.equal(current.functions_version, previous.functions_version, "current must not move");
+    const deployments = await call(admin, "list_deployments", { app: APP, kind: "functions" });
+    const failed = deployments.find((d: { id: string }) => d.id === created.deployment_id);
+    assert.equal(failed.status, "failed");
+    assert.match(failed.error, /BOOT_ERROR/);
+    const ping = await fetch(`${APP_URL}/functions/v1/ping`);
+    assert.equal(ping.status, 200);
+    assert.deepEqual(await ping.json(), { pong: true }, "the previous version keeps answering");
+  });
+
+  test("4d. the warm-up endpoint is not reachable through the public routes", async () => {
+    const adminToken = /^PLATFORM_EDGE_ADMIN_TOKEN=(.*)$/m.exec(readFileSync(new URL("deploy/.env", ROOT), "utf8"))?.[1];
+    assert.ok(adminToken);
+    for (const path of ["/functions/v1/_internal/warm", "/functions/v1/_internal/metrics"]) {
+      const response: Response = await fetch(`${APP_URL}${path}`, {
+        method: "POST",
+        headers: { "x-platform-admin-token": adminToken, "content-type": "application/json" },
+        body: JSON.stringify({ app: APP, version: 1, function: "ping" }),
+      });
+      assert.equal(response.status, 404, path);
+    }
   });
 
   let v1: number;

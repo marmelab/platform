@@ -230,3 +230,46 @@ Ce qui change selon le type de déploiement :
 | Caddy admin | `http://127.0.0.1:2030` |
 | Relancer | `deploy/install.sh` (idempotent), puis `pnpm --filter @platform/control-plane e2e` |
 | CLI | `docker exec plat-control-plane node src/cli.ts create-user <email> [admin\|developer]` (affiche un PAT) ; `... delete-app <slug>` |
+
+## Correctifs post-M3
+
+Date : 2026-10-01. Ils corrigent les deux défauts relevés par M3 (`spikes/m3-plugin/REPORT.md`, « Améliorations proposées > MCP / control plane », points 1 et 2).
+
+### 1. Linter dans la transaction (`apply_migrations`)
+
+- Le linter tourne **dans la transaction**, après les migrations, avec le rôle owner. Il tourne aussi au début de la transaction : seules les `ERROR` **nouvelles** (couple lint/objet absent avant le lot) bloquent. Les `ERROR` déjà présentes en base sont renvoyées dans `lints` sans bloquer, pour ne pas figer une app existante.
+- **Au moins une `ERROR` nouvelle** : `ROLLBACK`. Rien n'est appliqué ni inscrit dans `schema_migrations`. L'outil renvoie une erreur MCP dont le corps est du JSON : `status: "rejected"`, `applied: []`, `would_apply`, `skipped`, `blocking_lints`, `lints` et un message. La tentative est journalisée (`apply_migrations_rejected`).
+- **`accept_lints`** (optionnel) : une liste de noms de lints (`"security_definer_view"`) ou de couples `{ name, object }`. Les `ERROR` correspondantes ne bloquent plus, et elles sont journalisées dans `audit_log` (`details.accepted_lints`) et dans le manifeste du déploiement `migrations`.
+- **`dry_run: true`** : applique, lance le linter, puis fait toujours un `ROLLBACK`. Il renvoie `status: "dry_run"`, `applied: []`, `would_apply`, `blocking_lints` et `lints`.
+- Les `WARN` et `INFO` ne bloquent pas. Le schéma zod (`packages/shared`) porte les deux nouveaux paramètres.
+
+### 2. Préchauffage avant la bascule (`finalize_deployment`, functions)
+
+- **Main worker** : nouvel endpoint `POST /_internal/warm` avec le corps `{ app, version, function }`.
+  - Il exige `X-Platform-Admin-Token` et refuse toute requête qui porte le gateway token, c'est-à-dire tout ce qui passe par Caddy.
+  - Caddy renvoie en plus 404 sur `/functions/v1/_internal/*`, pour toutes les apps. Avant ce correctif, `/_internal/health` et `/_internal/metrics` étaient joignables à travers la route publique de chaque app (metrics restait protégé par le token).
+  - Il résout la fonction dans `v<N>`, sans passer par `current`, crée le user worker avec l'env de l'app (même `servicePath` que la vraie requête), puis envoie une **requête CORS preflight** (`OPTIONS` avec `Origin` et `Access-Control-Request-Method`).
+  - Choix documenté : le handler est bien appelé, mais avec une requête OPTIONS, que les fonctions Supabase traitent par convention sans effet de bord. C'est aussi ce que faisait déjà le smoke test de la skill.
+  - Les erreurs de graphe de modules (import npm introuvable) sortent dès `userWorkers.create` (`InvalidWorkerCreation`, code `BOOT_ERROR`). Une exception levée au chargement du module sort au premier `fetch` (`InvalidWorkerResponse`, code `WARM_FAILED`).
+  - Timeout : 45 s côté edge (`PLATFORM_WARM_TIMEOUT_MS`), 60 s côté control plane (`WARM_TIMEOUT_MS`).
+- **Piège** : `worker.fetch()` exige le tag interne de la requête entrante (`streamRid`). Une `Request` synthétique échoue (`Cannot read properties of undefined (reading 'streamRid')`) tant qu'on ne lui applique pas `EdgeRuntime.applySupabaseTag(req, preflight)`.
+- **Control plane** : après l'extraction en `v<N>` et avant `switchCurrent`, `finalize_deployment` préchauffe toutes les fonctions en parallèle. Si une seule échoue, le déploiement passe à `failed` avec l'erreur (par exemple `broken: BOOT_ERROR ... Could not find npm package '@supabase/supabase-js' matching '2.999.0'`), le répertoire `v<N>` est supprimé et `current` n'est pas touché. En cas de succès, la réponse contient `warm` (statut et durée par fonction). Le control plane reçoit `PLATFORM_EDGE_ADMIN_TOKEN` (compose).
+- **Cache npm** : le préchauffage remplit `DENO_DIR` (volume `deno-cache`). L'e2e supprime `is-odd` du cache, déploie une fonction qui l'importe, vérifie que le paquet est revenu dans le cache **avant toute requête réelle**, puis que le premier appel public répond en moins de 1,5 s. Comme `forceCreate: false` et que le `servicePath` est le même, le worker préchauffé est même réutilisé s'il est encore en vie.
+
+### Tests
+
+- **e2e** : 13/13 en environ 2,3 s. Les nouveaux cas :
+  - table sans RLS et vue `security definer` rejetées (objet absent de la base, version absente de `schema_migrations`) ;
+  - `dry_run` ;
+  - la même vue acceptée avec `accept_lints`, plus la trace dans `audit_log` ;
+  - une fonction `npm:@supabase/supabase-js@2.999.0` : finalize échoue, `functions_version` inchangée, l'ancienne `ping` répond toujours ;
+  - `/_internal/warm` et `/_internal/metrics` répondent 404 par la route publique, même avec le bon token.
+- **Unitaires du main worker** : `deno test --allow-read --allow-write`, 5/5 (`parseVersion` et `resolveFunction` sur une version donnée en plus).
+- **`pnpm -r typecheck`** passe.
+- La stack a été reconstruite avec `deploy/install.sh`. `todo-app` (front et fonction `summary`) et `demo` répondent toujours.
+
+### Reste à faire
+
+- Une migration qui contient elle-même `COMMIT` échappe toujours au rollback, donc au linter bloquant.
+- Le préchauffage appelle le handler sur `OPTIONS`. Une fonction qui fait des effets de bord quelle que soit la méthode les fera aussi au déploiement.
+- Une fonction qui lit un secret au boot doit avoir ses secrets posés **avant** `finalize_deployment` (sinon `WARM_FAILED`), ce qui correspond déjà à la consigne de la skill.
