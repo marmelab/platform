@@ -1,0 +1,48 @@
+name: m0
+
+services:
+  db:
+    image: supabase/postgres:17.6.1.136
+    container_name: m0-db
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:54320:5432"
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    command:
+      - postgres
+      - -c
+      - config_file=/etc/postgresql/postgresql.conf
+      - -c
+      - "log_line_prefix=%m [%p] db=%d user=%u app=%a "
+      - -c
+      - max_connections=${PG_MAX_CONNECTIONS:-200}
+    volumes:
+      - ./data/db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres", "-h", "localhost"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+    labels:
+      platform.service: postgres
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: m0-caddy
+    restart: unless-stopped
+    command: ["caddy", "run", "--config", "/etc/caddy/caddy.json", "--resume"]
+    ports:
+      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:2020:2019"
+    volumes:
+      - ./caddy/caddy.json:/etc/caddy/caddy.json:ro
+      - ./data/caddy-config:/config
+      - ./data/caddy-data:/data
+      - ./sites:/sites:ro
+    labels:
+      platform.service: caddy
+
+networks:
+  default:
+    name: m0

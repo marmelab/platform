@@ -1,0 +1,17 @@
+{
+  "admin": {
+    "listen": "0.0.0.0:2019",
+    "origins": ["localhost:2019", "localhost:2020", "127.0.0.1:2020"]
+  },
+  "apps": {
+    "http": {
+      "servers": {
+        "platform": {
+          "listen": [":8080"],
+          "automatic_https": { "disable": true },
+          "routes": []
+        }
+      }
+    }
+  }
+}
