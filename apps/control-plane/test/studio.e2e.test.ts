@@ -174,6 +174,17 @@ describe("Studio for app builders", () => {
     assert.equal(profile.primary_email, users.alice.email);
   });
 
+  test("2b. add-member and remove-member apply to open sessions", async () => {
+    cli(["add-member", A, users.bob.email, "developer"]);
+    assert.deepEqual(await projectRefs(bob), [A, B].sort());
+    assert.equal((await sql(bob, A, "select 1")).status, 200);
+    assert.equal(cli(["remove-member", A, users.bob.email]).trim(), `${users.bob.email} removed from ${A}`);
+    assert.equal(cli(["remove-member", A, users.bob.email]).trim(), `${users.bob.email} is not a member of ${A}`);
+    assert.deepEqual(await projectRefs(bob), [B]);
+    assert.equal((await sql(bob, A, "select 1")).status, 403);
+    assert.throws(() => cli(["remove-member", A, local.PLATFORM_ADMIN_EMAIL!]), /last owner/);
+  });
+
   test("3. alice queries her app through pg-meta (own database, owner role)", async () => {
     const reply = await sql(alice, A, "select current_user as u, current_database() as d");
     assert.equal(reply.status, 200, reply.body);

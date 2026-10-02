@@ -5,17 +5,19 @@
 //   node src/cli.ts set-password <email>        (password read from stdin: docker exec -i ... < file)
 //   node src/cli.ts set-password <email> --generate                     -> prints a generated password
 //   node src/cli.ts add-member <slug> <email> [owner|developer]
+//   node src/cli.ts remove-member <slug> <email>   (idempotent, refuses to remove the last owner)
 //   node src/cli.ts delete-app <slug>
 import { randomBytes } from "node:crypto";
 import { text } from "node:stream/consumers";
 import { deleteApp } from "./apps.ts";
+import { audit } from "./audit.ts";
 import { createToken, upsertUser } from "./auth.ts";
 import { one, platform } from "./db.ts";
 import { initCluster } from "./init.ts";
 import { setPassword } from "./sessions.ts";
 
 const USAGE = "usage: cli.ts init | create-user <email> [admin|developer] [token-name] | delete-user <email> | " +
-  "set-password <email> [--generate] | add-member <slug> <email> [owner|developer] | delete-app <slug>";
+  "set-password <email> [--generate] | add-member <slug> <email> [owner|developer] | remove-member <slug> <email> | delete-app <slug>";
 
 const [command, ...args] = process.argv.slice(2);
 
@@ -48,6 +50,35 @@ if (command === "init") {
   );
   if (!row) throw new Error(`unknown app ${slug} or user ${email}`);
   console.log(`${email} is ${role} of ${slug}`);
+} else if (command === "remove-member" && args[0] && args[1]) {
+  const [slug, email] = args;
+  const app = await one<{ id: string }>("select id from apps where slug = $1", [slug]);
+  if (!app) throw new Error(`unknown app ${slug}`);
+  const user = await one<{ id: string }>("select id from users where email = $1", [email.toLowerCase()]);
+  if (!user) throw new Error(`unknown user ${email}`);
+  const client = await platform.connect();
+  let removed: string | undefined;
+  try {
+    await client.query("begin");
+    const { rows } = await client.query<{ user_id: string; role: string }>(
+      "select user_id, role from app_members where app_id = $1 for update",
+      [app.id],
+    );
+    const member = rows.find((row) => row.user_id === user.id);
+    if (member?.role === "owner" && rows.filter((row) => row.role === "owner").length === 1) {
+      throw new Error(`${email} is the last owner of ${slug}: add another owner first, or delete the app`);
+    }
+    if (member) await client.query("delete from app_members where app_id = $1 and user_id = $2", [app.id, user.id]);
+    await client.query("commit");
+    removed = member?.role;
+  } catch (error) {
+    await client.query("rollback");
+    throw error;
+  } finally {
+    client.release();
+  }
+  if (removed) await audit(null, app.id, "remove_member", { email: email.toLowerCase(), role: removed });
+  console.log(removed ? `${email} removed from ${slug}` : `${email} is not a member of ${slug}`);
 } else if (command === "delete-app" && args[0]) {
   await deleteApp(args[0]);
   console.log(`app ${args[0]} deleted`);
