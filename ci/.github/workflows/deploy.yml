@@ -1,0 +1,97 @@
+# Reusable deployment workflow of the platform (PLAN_1 §6.2), maintained by the platform admin.
+#
+# App repositories call it (see ci/examples/platform.yml); they cannot change what it runs. The platform only
+# accepts CI tokens whose `job_workflow_ref` is in CI_ALLOWED_WORKFLOWS, so the company checks below cannot be
+# skipped by editing the app repository's workflow.
+#
+# Publishing: this file must live at .github/workflows/deploy.yml of the internal platform repository (the plugin
+# marketplace), whose Actions access is open to the organization's repositories, together with
+# packages/deploy-cli (the composite action used below). See packages/deploy-cli/README.md.
+name: Platform
+
+on:
+  workflow_call:
+    inputs:
+      mode:
+        description: "deploy (push on the default branch) or check (pull requests: nothing is published)"
+        type: string
+        required: true
+      platform-url:
+        description: "Platform API URL, e.g. https://api.platform.example.com (default: the PLATFORM_URL variable)"
+        type: string
+        required: false
+        default: ""
+      working-directory:
+        description: "App directory, with .platform.json and package.json"
+        type: string
+        required: false
+        default: "."
+      node-version:
+        description: "Node version for the build and platform-deploy (>= 22.18)"
+        type: string
+        required: false
+        default: "24"
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  company-checks:
+    name: Company checks
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      # ======================================================================================================
+      # PLACEHOLDER: COMPANY CHECKS. Replace this step with the company's existing CI checks (dependency audit,
+      # secret scanning, SAST, licence checks...). The platform imposes none; a failing check blocks the
+      # deployment job below, in both modes.
+      # ======================================================================================================
+      - name: Company checks (placeholder)
+        run: |
+          echo "No company checks configured yet: edit the company-checks job of the reusable workflow."
+
+  platform:
+    name: Platform ${{ inputs.mode }}
+    needs: company-checks
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # GitHub OIDC token, audience = platform URL: no deploy secret in GitHub
+    # one deployment at a time per app repository, in push order; a new push cancels the check of an older one
+    concurrency:
+      group: platform-${{ inputs.mode }}-${{ github.repository }}-${{ inputs.mode == 'deploy' && 'deploy' || github.ref }}
+      cancel-in-progress: ${{ inputs.mode == 'check' }}
+    steps:
+      - name: Validate inputs
+        env:
+          MODE: ${{ inputs.mode }}
+          PLATFORM_URL: ${{ inputs.platform-url || vars.PLATFORM_URL }}
+        run: |
+          case "$MODE" in check|deploy) ;; *) echo "::error::mode must be check or deploy, not '$MODE'"; exit 1 ;; esac
+          [ -n "$PLATFORM_URL" ] || { echo "::error::set the PLATFORM_URL variable (organization or repository)"; exit 1; }
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+
+      - name: npm ci
+        working-directory: ${{ inputs.working-directory }}
+        run: |
+          if [ -f package-lock.json ]; then npm ci --no-audit --no-fund
+          elif [ -f package.json ]; then npm install --no-audit --no-fund
+          else echo "no package.json: nothing to install"; fi
+
+      # PLACEHOLDER: replace YOUR-ORG/platform with the repository that publishes this workflow, and keep the ref
+      # in sync with the ref pinned in CI_ALLOWED_WORKFLOWS (expressions are not allowed in `uses`).
+      - name: platform-deploy
+        uses: YOUR-ORG/platform/packages/deploy-cli@main
+        with:
+          mode: ${{ inputs.mode }}
+          platform-url: ${{ inputs.platform-url || vars.PLATFORM_URL }}
+          working-directory: ${{ inputs.working-directory }}
