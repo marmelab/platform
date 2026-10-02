@@ -7,7 +7,7 @@
   "scripts": {
     "preinstall": "npx only-allow pnpm",
     "clean": "rimraf node_modules .turbo tsconfig.tsbuildinfo",
-    "typecheck": "tsc --noEmit"
+    "typecheck:upstream": "tsc --noEmit"
   },
   "devDependencies": {
     "tsconfig": "workspace:"

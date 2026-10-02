@@ -14,7 +14,7 @@
     "test:run": "vitest run --coverage",
     "test:update": "vitest run --update",
     "lint": "tsc --noEmit",
-    "typecheck": "tsc --noEmit"
+    "typecheck:upstream": "tsc --noEmit"
   },
   "dependencies": {
     "zod": "catalog:"

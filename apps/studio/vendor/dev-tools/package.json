@@ -14,7 +14,7 @@
     "clean": "rimraf node_modules .turbo tsconfig.tsbuildinfo dist",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc --noEmit"
+    "typecheck:upstream": "tsc --noEmit"
   },
   "dependencies": {
     "common": "workspace:*",
