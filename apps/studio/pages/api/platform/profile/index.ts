@@ -6,6 +6,7 @@ import { STUDIO_AUTH_GOTRUE } from '@/lib/constants'
 import { findMemberByGotrueId, addOrgMember, getOrgMembers } from '@/lib/api/self-hosted/membersStore'
 import { gotrueVerifyJwt } from '@/lib/api/self-hosted/studioGoTrue'
 import { getStoredOrganizations } from '@/lib/api/self-hosted/organizationsStore'
+import { currentIdentity } from '@/platform/projects'
 
 export default (req: NextApiRequest, res: NextApiResponse) => apiWrapper(req, res, handler)
 
@@ -26,10 +27,11 @@ async function handler(req: NextApiRequest, res: NextApiResponse) {
 async function handleGet(req: NextApiRequest, res: NextApiResponse) {
   if (!STUDIO_AUTH_GOTRUE) {
     // Legacy self-hosted: return static mock (no real user identity needed)
+    const identity = currentIdentity()
     return res.status(200).json({
       id: 1,
-      primary_email: 'admin@localhost',
-      username: 'admin',
+      primary_email: identity?.user ?? 'admin@localhost',
+      username: identity?.user.split('@')[0] ?? 'admin',
       first_name: '',
       last_name: '',
       organizations: [
@@ -38,7 +40,7 @@ async function handleGet(req: NextApiRequest, res: NextApiResponse) {
           name: process.env.DEFAULT_ORGANIZATION_NAME || 'Default Organization',
           slug: 'default-org-slug',
           billing_email: '',
-          projects: [{ ...DEFAULT_PROJECT, connectionString: '' }],
+          projects: identity ? [] : [{ ...DEFAULT_PROJECT, connectionString: '' }],
         },
       ],
     })

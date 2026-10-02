@@ -3,6 +3,8 @@ import type { NextApiRequest, NextApiResponse } from 'next'
 
 import { IS_PLATFORM } from '../constants'
 import { apiAuthenticate } from './apiAuthenticate'
+import { PLATFORM_MODE } from '@/platform/identity'
+import { withPlatformRequest } from '@/platform/projects'
 import { ResponseError, ResponseFailure } from '@/types'
 
 export function isResponseOk<T>(response: T | ResponseFailure | undefined): response is T {
@@ -50,6 +52,7 @@ async function apiWrapper(
       claims = response
     }
 
+    if (PLATFORM_MODE) return await withPlatformRequest(req, res, () => handler(req, res, claims))
     return handler(req, res, claims)
   } catch (error) {
     return res.status(500).json({ error })

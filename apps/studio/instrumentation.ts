@@ -6,7 +6,7 @@ export async function register() {
     const { initLicense } = await import('./lib/api/self-hosted/licenseManager')
     const { startHealthPoller } = await import('./lib/api/self-hosted/healthPoller')
     initLicense()
-    startHealthPoller()
+    if (!process.env.PLATFORM_CONTROL_PLANE_URL) startHealthPoller()
   }
 
   if (process.env.NEXT_RUNTIME === 'edge') {

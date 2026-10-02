@@ -4,6 +4,8 @@ import path from 'node:path'
 
 import { DEFAULT_PROJECT } from '@/lib/constants/api'
 import { getStoredOrganizationBySlug } from './organizationsStore'
+import { PLATFORM_MODE } from '@/platform/identity'
+import { platformProjects } from '@/platform/projects'
 
 /**
  * On-disk project record.
@@ -90,6 +92,7 @@ const DATA_DIR =
 const PROJECTS_FILE = path.join(DATA_DIR, 'projects.json')
 
 function readFromDisk(): StoredProject[] {
+  if (PLATFORM_MODE) return platformProjects()
   try {
     if (!fs.existsSync(PROJECTS_FILE)) return []
     const projects: StoredProject[] = JSON.parse(fs.readFileSync(PROJECTS_FILE, 'utf-8'))
@@ -117,6 +120,7 @@ function readFromDisk(): StoredProject[] {
 }
 
 function writeToDisk(projects: StoredProject[]): void {
+  if (PLATFORM_MODE) throw new Error('Projects are managed by the platform control plane')
   fs.mkdirSync(DATA_DIR, { recursive: true })
   fs.writeFileSync(PROJECTS_FILE, JSON.stringify(projects, null, 2), 'utf-8')
 }
@@ -151,6 +155,7 @@ function makeDefaultEntry(): StoredProject {
  * additional projects persisted to disk.
  */
 export function getStoredProjects(): StoredProject[] {
+  if (PLATFORM_MODE) return readFromDisk()
   return [makeDefaultEntry(), ...readFromDisk()]
 }
 
