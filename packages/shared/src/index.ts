@@ -65,6 +65,12 @@ export const toolInputs = {
       .describe("collaborator: deploy, inspect, manage app users; owner: also members, stop, start, delete"),
   },
   remove_member: { app: slug, email: z.email() },
+  stop_app: { app: slug },
+  start_app: { app: slug },
+  delete_app: {
+    app: slug,
+    confirm: z.string().describe("Must repeat the app slug: deletion is irreversible, ask the user first"),
+  },
   get_logs: {
     app: slug,
     service: z.enum(["gotrue", "postgrest", "functions", "postgres"]).optional(),

@@ -105,7 +105,7 @@ describe("control plane M2 e2e", () => {
     const tools = (await admin.listTools()).tools.map((t) => t.name).sort();
     for (const name of ["apply_migrations", "create_app", "create_deployment", "execute_sql", "finalize_deployment",
       "get_app", "get_logs", "list_apps", "list_deployments", "list_members", "list_secrets", "rollback", "set_secrets",
-      "add_member", "remove_member", "whoami"]) {
+      "add_member", "remove_member", "stop_app", "start_app", "delete_app", "whoami"]) {
       assert.ok(tools.includes(name), `tool ${name} missing`);
     }
   });
@@ -518,5 +518,66 @@ describe("control plane M2 e2e", () => {
     const audited = psql(`select count(*) from audit_log l join apps a on a.id = l.app_id
       where a.slug = '${APP}' and l.action in ('add_member', 'remove_member')`);
     assert.equal(audited, "4");
+  });
+
+  const runningContainers = () =>
+    execFileSync("docker", ["ps", "-q", "--filter", `label=platform.app=${APP}`], { encoding: "utf8" }).trim();
+
+  test("11. stop_app / start_app: maintenance page, no API or functions, then back", async () => {
+    await refused(collab, "stop_app", { app: APP }, /only an owner/);
+    await refused(collab, "start_app", { app: APP }, /only an owner/);
+
+    assert.deepEqual(await call(owner, "stop_app", { app: APP }), { slug: APP, status: "stopped", changed: true });
+    assert.equal((await call(owner, "stop_app", { app: APP })).changed, false, "stop_app is idempotent");
+    assert.equal((await call(owner, "get_app", { app: APP })).status, "stopped");
+    assert.equal((await call(collab, "whoami")).apps.find((a: { slug: string }) => a.slug === APP).status, "stopped");
+    assert.equal(runningContainers(), "", "GoTrue and PostgREST are stopped");
+
+    const page = await getPage("/");
+    assert.equal(page.status, 503);
+    assert.match(page.text, /under maintenance/);
+    assert.match(page.headers.get("content-type") ?? "", /text\/html/);
+    assert.match((await getPage("/assets/app-v2.js")).text, /under maintenance/, "no static file is served");
+    for (const path of ["/rest/v1/todos", "/auth/v1/health", "/functions/v1/ping"]) {
+      const response = await fetch(`${APP_URL}${path}`, { headers: { apikey: app.anon_key } });
+      assert.equal(response.status, 503, path);
+      assert.equal((await response.json()).code, "APP_STOPPED", path);
+    }
+    // the functions warm-up would boot them: functions deployments wait for start_app
+    const created = await call(owner, "create_deployment", { app: APP, kind: "functions" });
+    const put = await fetch(created.upload_url, { method: "PUT", body: await pack(join(work, "project"), ["supabase"]) });
+    assert.equal(put.status, 200);
+    await refused(owner, "finalize_deployment", { deployment_id: created.deployment_id }, /is stopped: start_app/);
+
+    assert.deepEqual(await call(owner, "start_app", { app: APP }), { slug: APP, status: "running", changed: true });
+    assert.equal((await call(owner, "start_app", { app: APP })).changed, false, "start_app is idempotent");
+    assert.equal((await call(admin, "get_app", { app: APP })).status, "running");
+    assert.notEqual(runningContainers(), "");
+    assert.match((await getPage("/")).text, /Demo v2/);
+    const rest = await fetch(`${APP_URL}/rest/v1/todos?select=title`, { headers: { apikey: app.anon_key } });
+    assert.equal(rest.status, 200);
+    assert.deepEqual(await rest.json(), [], "anon sees no todo under RLS");
+    const ping = await fetch(`${APP_URL}/functions/v1/ping`);
+    assert.deepEqual(await ping.json(), { pong: true });
+    const finalized = await call(owner, "finalize_deployment", { deployment_id: created.deployment_id });
+    assert.equal(finalized.status, "live", "the upload kept while stopped can be published once started");
+
+    const audited = psql(`select string_agg(l.action, ',' order by l.id) from audit_log l join apps a on a.id = l.app_id
+      where a.slug = '${APP}' and l.action in ('stop_app', 'start_app')`);
+    assert.equal(audited, "stop_app,start_app");
+  });
+
+  test("12. delete_app: owner only, explicit confirmation", async () => {
+    await refused(collab, "delete_app", { app: APP, confirm: APP }, /only an owner/);
+    await refused(owner, "delete_app", { app: APP, confirm: "yes" }, new RegExp(`irreversible: pass confirm="${APP}"`));
+    assert.equal((await call(owner, "get_app", { app: APP })).status, "running", "a refused delete changes nothing");
+
+    assert.deepEqual(await call(owner, "delete_app", { app: APP, confirm: APP }), { slug: APP, deleted: true });
+    await refused(owner, "get_app", { app: APP }, /not found/);
+    assert.equal((await getPage("/")).status, 404, "Caddy no longer routes the app");
+    assert.equal(
+      psql(`select count(*) from audit_log where action = 'delete_app' and app_id is null and details->>'slug' = '${APP}'`),
+      "1",
+    );
   });
 });

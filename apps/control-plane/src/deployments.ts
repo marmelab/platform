@@ -242,6 +242,10 @@ export async function finalizeDeployment(user: User, deploymentId: string) {
   if (deployment.status !== "uploaded") {
     throw new UserError(`deployment is "${deployment.status}": upload the archive first (create_deployment gives the URL)`);
   }
+  // the warm-up boots the functions: they must not run while the app is stopped
+  if (kind === "functions" && app.status === "stopped") {
+    throw new UserError(`app "${app.slug}" is stopped: start_app before deploying functions`);
+  }
   const archive = uploadPath(deployment.id);
   const appRoot = rootFor(kind, app.slug);
   const staging = join(appRoot, `.staging-${deployment.id}`);

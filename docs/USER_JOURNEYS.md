@@ -114,7 +114,7 @@ Trigger: project over, or abandoned-app flag.
 3. `delete_app`: symmetric to provisioning.
 
 Channel: Claude Code + MCP (owner), or admin.
-Status: 🟡. Only the `cli.ts delete-app` admin command exists. The rest is ❌.
+Status: 🟡. The MCP tools `stop_app`, `start_app` and `delete_app` exist, for an owner of the app or an admin, and are audited. `stop_app` stops GoTrue and PostgREST and replaces the app's Caddy routes with a 503 maintenance response (page on `/`, JSON `APP_STOPPED` on `/auth/v1`, `/rest/v1`, `/functions/v1`), so functions no longer run; the database and Studio stay available. `start_app` re-runs the idempotent provisioning. `delete_app` requires `confirm: <slug>`. Admin CLI: `stop-app`, `start-app`, `delete-app`. The final backup (step 2, M7) is ❌: `delete_app` takes none. The abandoned-app flag is ❌.
 
 ## Admin journeys
 

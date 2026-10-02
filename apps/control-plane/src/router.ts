@@ -16,6 +16,8 @@ export interface StudioRoute {
 
 export interface Router {
   upsertApp(route: AppRoute): Promise<void>;
+  /** Replaces the app's routes with a 503 maintenance response (stopped app: no static files, API or functions). */
+  maintenanceApp(slug: string, host: string): Promise<void>;
   removeApp(slug: string): Promise<void>;
   upsertStudio(route: StudioRoute): Promise<void>;
 }
@@ -115,27 +117,56 @@ export class CaddyRouter implements Router {
     ];
   }
 
-  async upsertApp(route: AppRoute): Promise<void> {
-    const publicId = `app-${route.slug}`;
-    const internalId = `app-${route.slug}-internal`;
+  /** Replaces the public route (matched on the host) and the internal one (matched on /<slug>/*). */
+  private async replaceRoutes(slug: string, host: string, publicHandle: unknown[], internalHandle: unknown[]) {
+    const publicId = `app-${slug}`;
+    const internalId = `app-${slug}-internal`;
     await this.delete(publicId);
     await this.delete(internalId);
     await this.call("POST", "/id/apps/handle/0/routes", {
       "@id": publicId,
-      match: [{ host: [route.host] }],
+      match: [{ host: [host] }],
       terminal: true,
-      handle: [{ handler: "subroute", routes: [...this.apiRoutes(route), ...this.staticRoutes(route.slug)] }],
+      handle: publicHandle,
     });
     // Edge functions reach their own app through http://caddy:8180/<slug> (SUPABASE_URL)
     await this.call("POST", "/id/internal-apps/handle/0/routes", {
       "@id": internalId,
-      match: [{ path: [`/${route.slug}/*`] }],
+      match: [{ path: [`/${slug}/*`] }],
       terminal: true,
-      handle: [
+      handle: internalHandle,
+    });
+  }
+
+  async upsertApp(route: AppRoute): Promise<void> {
+    await this.replaceRoutes(
+      route.slug,
+      route.host,
+      [{ handler: "subroute", routes: [...this.apiRoutes(route), ...this.staticRoutes(route.slug)] }],
+      [
         { handler: "rewrite", strip_path_prefix: `/${route.slug}` },
         { handler: "subroute", routes: this.apiRoutes(route) },
       ],
+    );
+  }
+
+  async maintenanceApp(slug: string, host: string): Promise<void> {
+    const unavailable = (contentType: string, body: string) => ({
+      handler: "static_response",
+      status_code: 503,
+      headers: { "Content-Type": [contentType], "Cache-Control": ["no-store"], "Retry-After": ["3600"] },
+      body,
     });
+    const page = `<!doctype html><meta charset="utf-8"><title>${slug}: maintenance</title>` +
+      `<h1>${slug} is under maintenance</h1><p>This app is currently stopped. Please come back later.</p>\n`;
+    const api = unavailable("application/json", '{"code":"APP_STOPPED","message":"This app is stopped"}\n');
+    await this.replaceRoutes(slug, host, [{
+      handler: "subroute",
+      routes: [
+        { match: [{ path: ["/auth/v1/*", "/rest/v1/*", "/functions/v1/*"] }], handle: [api], terminal: true },
+        { handle: [unavailable("text/html; charset=utf-8", page)] },
+      ],
+    }], [api]);
   }
 
   /** Studio behind the control plane's forward auth (equivalent of `forward_auth ... copy_headers`). */
