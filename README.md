@@ -1,20 +1,22 @@
 # Platform
 
-Self-hosted hosting for the apps your team builds with Claude Code. Each app gets its own Supabase backend (Postgres database, Auth, REST API, Edge Functions) and its static frontend, all served from a single VM. Developers ("app builders") don't use a UI to deploy: they ask Claude Code to "deploy the app to the platform", through an MCP server and a Claude Code plugin. They inspect their apps in a multi-project Supabase Studio. Admins see every app.
+Self-hosted hosting for the apps your team builds with Claude Code. Each app gets its own Supabase backend (Postgres database, Auth, REST API, Edge Functions) and its static frontend, all served from a single VM. Developers ("app builders") don't use a UI to deploy: they ask Claude Code to "deploy the app to the platform", through an MCP server and a Claude Code plugin. They inspect their apps in a multi-project Supabase Studio. Admins see every app, in Studio and in an admin console.
 
-> **Status: prototype.** Milestones M0 to M3 of [PLAN_1.md](PLAN_1.md) are validated (see `spikes/*/REPORT.md`), plus Studio access for app builders. It runs locally; production deployment is not ready yet (see [Deploying](#deploying)).
+> **Status: prototype.** Milestones M0 to M3 of [PLAN_1.md](PLAN_1.md) are validated (see `spikes/*/REPORT.md`), plus Studio access for app builders and the first phase of the admin console (M4). It runs locally; production deployment is not ready yet (see [Deploying](#deploying)).
 
 More docs:
 - [docs/USER_JOURNEYS.md](docs/USER_JOURNEYS.md): personas, main journeys, product decisions;
 - [docs/TECH_DEBT.md](docs/TECH_DEBT.md): known debt and limitations;
-- [apps/control-plane/README.md](apps/control-plane/README.md): control plane, MCP tools, admin CLI;
+- [apps/control-plane/README.md](apps/control-plane/README.md): control plane, MCP tools, admin REST API, admin CLI;
+- [apps/admin/README.md](apps/admin/README.md): admin console (shadcn-admin-kit);
 - [plugin/README.md](plugin/README.md): Claude Code plugin.
 
 ## Repository layout
 
 ```
 apps/
-  control-plane/      Hono API + MCP server + provisioning (Docker, Caddy, Postgres)
+  control-plane/      Hono API + MCP server + admin API + provisioning (Docker, Caddy, Postgres)
+  admin/              admin console: shadcn-admin-kit SPA, served by the control plane on admin.<domain>
   edge-main-worker/   Deno main worker routing Edge Functions to the right app
   studio/             vendored supabase-studio-multi-head, patched for per-app access
 packages/
@@ -49,10 +51,10 @@ deploy/install.sh
 
 `install.sh` is safe to rerun. It:
 1. generates the stack secrets in `deploy/.env`;
-2. builds the Studio image on the first run (`STUDIO_BUILD=1 deploy/install.sh` forces a rebuild);
+2. builds the Studio image on the first run, and the control plane image (which includes the admin console) (`STUDIO_BUILD=1 deploy/install.sh` forces a rebuild);
 3. starts the `plat` docker compose project;
 4. initializes the Postgres cluster (template database, `platform` database);
-5. creates the first admin, and saves their personal access token (`PLATFORM_TOKEN`) and Studio password (`PLATFORM_ADMIN_PASSWORD`) in `deploy/.env.local`.
+5. creates the first admin, and saves their personal access token (`PLATFORM_TOKEN`) and password (`PLATFORM_ADMIN_PASSWORD`, for Studio and the admin console) in `deploy/.env.local`.
 
 Both files are gitignored.
 
@@ -75,6 +77,7 @@ docker compose -p plat -f deploy/docker-compose.yml start
 |---|---|
 | http://api.localhost:8100/mcp | MCP server (`Authorization: Bearer <PAT>`) |
 | http://studio.localhost:8100 | Studio (platform login) |
+| http://admin.localhost:8100 | Admin console, admins only (`PLATFORM_ADMIN_EMAIL` / `PLATFORM_ADMIN_PASSWORD` from `deploy/.env.local`); its REST API is under `/api` |
 | http://`<slug>`.localhost:8100 | Each app: frontend at `/`, Supabase APIs at `/auth/v1`, `/rest/v1`, `/functions/v1` |
 | `127.0.0.1:54350` | Postgres (`supabase_admin`, password `POSTGRES_PASSWORD` in `deploy/.env`) |
 | http://127.0.0.1:2030 | Caddy admin API |
@@ -83,7 +86,7 @@ docker compose -p plat -f deploy/docker-compose.yml start
 
 | User | Role | Credentials |
 |---|---|---|
-| `admin@example.com` | admin, sees every app | `PLATFORM_ADMIN_PASSWORD` (Studio) and `PLATFORM_TOKEN` (MCP) in `deploy/.env.local` |
+| `admin@example.com` | admin, sees every app | `PLATFORM_ADMIN_PASSWORD` (Studio and admin console) and `PLATFORM_TOKEN` (MCP, admin API) in `deploy/.env.local` |
 | `alice@example.com` (seed) | app builder, sees `todo-app` only | `alice-password` (Studio), `SEED_ALICE_TOKEN` (MCP) in `deploy/.env.local` |
 | `bob@example.com` (seed) | app builder, sees `notes-app` only | `bob-password` (Studio), `SEED_BOB_TOKEN` (MCP) in `deploy/.env.local` |
 | `demo-user@example.com` (seed) | app user of `todo-app` (3 todos) and `notes-app` (3 notes, 2 of them shared with `demo-user-2`) | `demo-password`, on http://todo-app.localhost:8100 and http://notes-app.localhost:8100 |
@@ -100,7 +103,11 @@ Seed accounts exist only after `deploy/install.sh --seed`. Their passwords are f
 - **As an app builder, in Studio**: sign in to http://studio.localhost:8100 as alice (only `todo-app` is listed) or bob (only `notes-app`). Users are under Auth > Users; the data is under Table editor (`todos` for `todo-app`; `notes`, `note_shares` and `profiles` for `notes-app`). The admin sees every app.
 - **As an app builder, with Claude Code**: set `PLATFORM_TOKEN` to `SEED_ALICE_TOKEN`, install the plugin (see [Deploy an app with Claude Code](#deploy-an-app-with-claude-code)), then ask for instance "show me the logs of todo-app" or "add a priority column to the todos and redeploy". With alice's token, `notes-app` is reported as not found.
 
-To create other app builders for manual testing (the CLI runs inside the control plane container):
+### Admin console
+
+Open http://admin.localhost:8100 and sign in with `PLATFORM_ADMIN_EMAIL` / `PLATFORM_ADMIN_PASSWORD` from `deploy/.env.local` (app builders are refused). It lists every app with its owners, linked repository, last release and flags (deployed outside CI, schema drift, accepted lints), and lets you stop, start or delete an app, roll back a deployment, manage its members, and manage platform accounts and tokens; every action is in the audit log. Screenshots: [apps/admin/screenshots](apps/admin/screenshots). Details: [apps/admin/README.md](apps/admin/README.md).
+
+To create other app builders for manual testing, use the admin console (Users, then Tokens), or the CLI inside the control plane container:
 
 ```bash
 docker exec plat-control-plane node src/cli.ts create-user carol@example.com developer   # prints a PAT
@@ -148,6 +155,7 @@ pnpm typecheck                                     # all workspace packages (Stu
 pnpm --filter @platform/control-plane test         # Studio access policy, unit
 pnpm --filter @platform/control-plane e2e          # MCP end to end: provisioning, migrations, deployments, isolation; CI API; platform-deploy
 pnpm --filter @platform/control-plane e2e:studio   # Studio: login, per-app filtering, bypass attempts
+pnpm e2e:admin                                     # admin REST API, then the admin console in Chromium (Playwright)
 node apps/control-plane/scripts/verify-notes-app.ts # seeded notes-app: sharing rules, as its app users (after --seed)
 (cd apps/edge-main-worker && deno test --allow-read --allow-write)
 ```
@@ -159,6 +167,6 @@ The end-to-end suites create throwaway apps and users and delete them at the end
 Not production ready yet. The stack runs on a single VM with docker compose, as it does locally, but a few pieces are still missing:
 - the domain is hardcoded to `*.localhost` (`deploy/caddy/caddy.json`, `install.sh`);
 - there is no TLS: on-demand TLS with an `ask` endpoint on the control plane is planned;
-- there are no backups, no centralized logs (Loki) and no admin UI.
+- there are no scheduled backups or restore, and no centralized logs (Loki); the admin console lacks the per-app load metrics.
 
 Target setup ([PLAN_1.md](PLAN_1.md) §9): a Linux VM with 16 GB of RAM or more, a wildcard DNS record `*.<domain>` pointing to it, ports 80 and 443 open, an SMTP relay and an optional S3 bucket for backups, then `install.sh`. Production blockers are tracked as P1 in [docs/TECH_DEBT.md](docs/TECH_DEBT.md).

@@ -45,7 +45,7 @@ Trigger: a team member wants to host their first app.
 5. They log into Studio with their credentials.
 
 Channel: admin, then Claude Code + MCP, and Studio.
-Status: 🟡. The `create-user` CLI exists, and local accounts with passwords are done (M0ter). Missing: the admin screen for accounts and tokens (M4), a secure way to hand over the PAT, and storing the token in the keychain (sensitive `userConfig`).
+Status: 🟡. Local accounts with passwords are done (M0ter). The admin console (M4 phase 1) creates the account (with a password) and issues the PAT, shown once; the `create-user` CLI also exists. Missing: a secure way to hand over the PAT (the admin copies it), and storing the token in the keychain (sensitive `userConfig`).
 
 ### B2. First deployment
 Trigger: "deploy the app to the platform" in a Vite + Supabase repo.
@@ -105,7 +105,7 @@ Trigger: a colleague needs to co-maintain the app.
 4. The app shows up in their `whoami` and in their Studio.
 
 Channel: Claude Code + MCP (owner), GitHub, and admin.
-Status: 🟡. The MCP tools (`list_members`, `add_member`, `remove_member`; owner or admin only for changes) and the `add-member` / `remove-member` admin CLI exist. The colleague's platform account must already exist (created by an admin). The admin screen (M4) is ❌.
+Status: 🟡. The MCP tools (`list_members`, `add_member`, `remove_member`; owner or admin only for changes), the `add-member` / `remove-member` admin CLI and the Members tab of the admin console (M4 phase 1: add, owner / collaborator, remove) exist. The colleague's platform account must already exist (created by an admin).
 
 ### B8. Stopping and deleting an app
 Trigger: project over, or abandoned-app flag.
@@ -114,7 +114,7 @@ Trigger: project over, or abandoned-app flag.
 3. `delete_app`: symmetric to provisioning.
 
 Channel: Claude Code + MCP (owner), or admin.
-Status: 🟡. The MCP tools `stop_app`, `start_app` and `delete_app` exist, for an owner of the app or an admin, and are audited. `stop_app` stops GoTrue and PostgREST and replaces the app's Caddy routes with a 503 maintenance response (page on `/`, JSON `APP_STOPPED` on `/auth/v1`, `/rest/v1`, `/functions/v1`), so functions no longer run. A stopped app is read-only: its database defaults to read-only transactions (Studio and `execute_sql` still read it, Studio writes fail), and the control plane refuses every write with `APP_STOPPED` (`execute_sql` with `write`, migrations except `dry_run`, secrets, deployments, rollbacks, releases, `link_repo`, the CI API); a guardrail, not a hard guarantee (accepted: a deliberate write by the owner role remains possible, see TECH_DEBT "Accepted trade-offs"). `start_app` makes it writable again and re-runs the idempotent provisioning. `delete_app` requires `confirm: <slug>` and first takes the final backup (step 2): a `pg_dump` of the database and a tarball of the deployed sites and functions, in the platform's `backups` volume; if the backup fails, nothing is deleted; the path is returned and audited. `backup: false` (CLI `--no-backup`) deletes without that backup, same rights and confirmation, when the user explicitly asks: the data is lost for good, and the audit entry records the skipped backup. Admin CLI: `stop-app`, `start-app`, `delete-app [--no-backup]`. Restoring a backup, retention and off-site copies (M7, TECH_DEBT CP-14) and the abandoned-app flag are ❌.
+Status: 🟡. The MCP tools `stop_app`, `start_app` and `delete_app` exist, for an owner of the app or an admin, and are audited. `stop_app` stops GoTrue and PostgREST and replaces the app's Caddy routes with a 503 maintenance response (page on `/`, JSON `APP_STOPPED` on `/auth/v1`, `/rest/v1`, `/functions/v1`), so functions no longer run. A stopped app is read-only: its database defaults to read-only transactions (Studio and `execute_sql` still read it, Studio writes fail), and the control plane refuses every write with `APP_STOPPED` (`execute_sql` with `write`, migrations except `dry_run`, secrets, deployments, rollbacks, releases, `link_repo`, the CI API); a guardrail, not a hard guarantee (accepted: a deliberate write by the owner role remains possible, see TECH_DEBT "Accepted trade-offs"). `start_app` makes it writable again and re-runs the idempotent provisioning. `delete_app` requires `confirm: <slug>` and first takes the final backup (step 2): a `pg_dump` of the database and a tarball of the deployed sites and functions, in the platform's `backups` volume; if the backup fails, nothing is deleted; the path is returned and audited. `backup: false` (CLI `--no-backup`) deletes without that backup, same rights and confirmation, when the user explicitly asks: the data is lost for good, and the audit entry records the skipped backup. Admin CLI: `stop-app`, `start-app`, `delete-app [--no-backup]`; admin console: Stop, Start and Delete (typed confirmation, final backup checkbox) on the app page. Restoring a backup, retention and off-site copies (M7, TECH_DEBT CP-14) and the abandoned-app flag are ❌.
 
 ## Admin journeys
 
@@ -135,7 +135,7 @@ Status: 🟡. `install.sh` works locally (and writes `DIRECT_DEPLOY=everyone`), 
 4. Disable the account.
 
 Channel: admin.
-Status: 🟡 CLI / ❌ M4.
+Status: 🟡. Admin console (M4 phase 1): accounts (create with a password, role, disable, new password, delete), tokens (create, value shown once, revoke, last use, expiry), audited; also through the admin REST API with an admin PAT. Missing ❌: the app quota (step 3, not enforced anywhere yet), token scopes.
 
 ### A3. Monitoring and alerts
 1. Dashboard: apps by status, VM resources, cluster size.
@@ -144,7 +144,7 @@ Status: 🟡 CLI / ❌ M4.
 4. Audit log.
 
 Channel: admin and email.
-Status: ❌ M4/M7. Part of the data already exists (`apps.status`, `audit_log`).
+Status: 🟡. Admin console dashboard (M4 phase 1): apps by status, flagged apps (deployed outside CI, accepted lints), failures of the last 7 days (failed releases and deployments, apps in error), accounts, Postgres cluster size, host memory, CPU load and volumes disk; audit log screen with filters (app, user, action, search). Missing ❌: email alerts, `BOOT_ERROR` and linter results (lints are only stored when accepted), failed backups (no scheduled backups, M7), per-app metrics (`app_metrics`).
 
 ### A4. Backups and restore
 Daily backup of each database to S3, with retention, failure tracking and restore into the same app.
@@ -159,7 +159,7 @@ Trigger: a team member leaves.
 3. For each one: transfer ownership to another builder, put it to sleep or delete it. On GitHub, give the new owner admin rights on the linked repo.
 
 Channel: admin and GitHub.
-Status: ❌ M4. The source code is in the company GitHub organization, linked from the app (A9), so nothing is lost when the builder leaves.
+Status: 🟡. Admin console (M4 phase 1): disable the account (its sessions end and its PATs stop working at once) and revoke its tokens (step 1); its apps on its user page (step 2); on each app page, add another owner then remove the former one, stop or delete the app (step 3). Deleting the account is refused while it is the last owner of an app. The source code is in the company GitHub organization, linked from the app (A9), so nothing is lost when the builder leaves.
 
 ### A6. Abandoned apps
 1. After N days without traffic or deployment, the app is flagged to the admin and the owner.
@@ -191,7 +191,7 @@ Trigger: the admin wants to know what runs on the platform, and who is responsib
 Channel: admin.
 Flags: deployed outside CI (A10), accepted lints, schema changed outside CI, abandoned.
 
-Status: ❌ M4. Status, owner, linked repo, releases (commit, run, author, source, admin exception) and their deployments already exist in the `platform` database, and so does the data of the "schema changed outside CI" flag: the DDL event trigger records every schema change in the app database (`_platform.schema_changes`), and `get_app` returns `schema_drift` (changes outside releases since the last succeeded release; `list_schema_changes` for the details). Missing: the admin view itself, and per-app metrics (Caddy per-host metrics, `pg_database_size`, Docker stats sampled by the control plane).
+Status: 🟡. Admin console (M4 phase 1), apps list: every app with search, status and flag filters, sort and pagination; name and URL, status, owners (name and email), GitHub repo link, last release (date, result, source CI / direct / admin exception, commit link, author, run link), database size, flags "deployed outside CI" (last release published with a PAT), "schema changed outside CI" (`schema_drift`), "accepted lints" (ERROR lints accepted by migrations), "no repo". App page: overview with "Open in Studio", releases with the GitHub diff since the previous release and their deployments, rollback, members, secret names, schema changes, logs (Docker, last hour), audit. Missing ❌: the load overview (requests and 5xx over 24 h, 7-day sparkline, container memory: `app_metrics` sampling, Caddy per-host metrics, Docker stats), the "abandoned" flag (A6), logs history (Loki).
 
 ### A10. Direct deployment (exception)
 Trigger: an emergency fix while CI is broken, an app whose repo cannot run CI, or a takeover (A5).
@@ -200,7 +200,7 @@ Trigger: an emergency fix while CI is broken, an app whose repo cannot run CI, o
 3. The deployment is audited and the app is flagged "deployed outside CI" in A9 until the next CI deployment.
 
 Channel: Claude Code + MCP (admin only).
-Status: 🟡. Control plane ✅: with `DIRECT_DEPLOY=admins`, only admins publish with a PAT; `begin_release(reason)` groups the publications, and the release is recorded as `source = direct`, `admin_exception = true`, with the reason and the admin, and audited. The deploy CLI ✅ runs a direct deployment with the admin's PAT (`--reason`, commit of the checkout; it only flags uncommitted changes in its summary). The `admin-deploy` skill ✅ checks the admin role, asks for the reason, refuses a dirty tree (untracked files included), a commit that is not on the remote or a checkout of another repository than the linked one (`preflight.sh`), then runs `platform-deploy deploy --reason` (verified with Claude Code: refused without a remote, then deployed). Missing ❌: the flag in the admin view (M4).
+Status: 🟡. Control plane ✅: with `DIRECT_DEPLOY=admins`, only admins publish with a PAT; `begin_release(reason)` groups the publications, and the release is recorded as `source = direct`, `admin_exception = true`, with the reason and the admin, and audited. The deploy CLI ✅ runs a direct deployment with the admin's PAT (`--reason`, commit of the checkout; it only flags uncommitted changes in its summary). The `admin-deploy` skill ✅ checks the admin role, asks for the reason, refuses a dirty tree (untracked files included), a commit that is not on the remote or a checkout of another repository than the linked one (`preflight.sh`), then runs `platform-deploy deploy --reason` (verified with Claude Code: refused without a remote, then deployed). The flag in the admin view ✅ (M4 phase 1): "admin exception" / "deployed outside CI" on the apps list and the app page, filterable, until the next CI release.
 
 ## App user journeys
 
