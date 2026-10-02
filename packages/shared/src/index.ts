@@ -3,6 +3,10 @@ import { z } from "zod";
 export const SLUG_RE = /^[a-z][a-z0-9-]{1,30}[a-z0-9]$/;
 export const FUNCTION_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 export const SECRET_NAME_RE = /^[A-Z_][A-Z0-9_]{0,63}$/;
+/** GitHub "owner/name". */
+export const GITHUB_REPO_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/[A-Za-z0-9._-]{1,100}$/;
+/** A branch name (not a full ref): no "refs/" prefix, no spaces or git-forbidden characters. */
+export const BRANCH_RE = /^(?!refs\/)(?!-)[^\s~^:?*[\\]{1,255}$/;
 
 export const slug = z.string().regex(SLUG_RE, "lowercase letters, digits and dashes (3-32 chars)");
 export const deploymentKind = z.enum(["frontend", "functions"]);
@@ -24,6 +28,14 @@ export const acceptedLint = z.union([
 ]);
 export type AcceptedLint = z.infer<typeof acceptedLint>;
 
+const releaseId = z.uuid()
+  .describe("Release from begin_release; omitted: the publication gets its own release (source direct)");
+export const releaseStatus = z.enum(["succeeded", "failed"]);
+export const releaseFinish = {
+  status: releaseStatus,
+  error: z.string().max(2000).optional().describe("Why the release failed"),
+};
+
 export const toolInputs = {
   get_app: { app: slug },
   create_app: {
@@ -37,13 +49,14 @@ export const toolInputs = {
       .describe("Apply, run the linter, then always roll back: nothing is committed"),
     accept_lints: z.array(acceptedLint).optional()
       .describe("ERROR lints to accept (audited). Only with the user's explicit consent"),
+    release_id: releaseId.optional(),
   },
   execute_sql: {
     app: slug,
     sql: z.string().min(1),
     write: z.boolean().default(false).describe("Allow writes (logged). Read-only mode accepts a single statement"),
   },
-  create_deployment: { app: slug, kind: deploymentKind },
+  create_deployment: { app: slug, kind: deploymentKind, release_id: releaseId.optional() },
   finalize_deployment: { deployment_id: z.uuid() },
   list_deployments: { app: slug, kind: deploymentKind.optional() },
   rollback: {
@@ -65,6 +78,21 @@ export const toolInputs = {
       .describe("collaborator: deploy, inspect, manage app users; owner: also members, stop, start, delete"),
   },
   remove_member: { app: slug, email: z.email() },
+  link_repo: {
+    app: slug,
+    repo: z.string().regex(GITHUB_REPO_RE, "owner/name").describe("GitHub repository, owner/name"),
+    repository_id: z.number().int().positive()
+      .describe("Numeric repository id, stable across renames: gh api repos/<owner>/<name> --jq .id"),
+    default_branch: z.string().regex(BRANCH_RE, "branch name, without refs/heads/")
+      .describe("Only this branch, when protected, can deploy from CI"),
+  },
+  begin_release: {
+    app: slug,
+    commit_sha: z.string().regex(/^[0-9a-f]{7,64}$/).optional().describe("Commit being deployed"),
+    reason: z.string().min(1).max(500).optional()
+      .describe("Why this is deployed outside CI (expected from admins when direct deployment is reserved to them)"),
+  },
+  finish_release: { release_id: z.uuid(), ...releaseFinish },
   stop_app: { app: slug },
   start_app: { app: slug },
   delete_app: {
@@ -80,6 +108,32 @@ export const toolInputs = {
   },
 };
 
+/** Bodies of the CI REST API (/ci/apps/:app/...), authenticated by a GitHub OIDC token. */
+export const ciInputs = {
+  apply_migrations: {
+    migrations: toolInputs.apply_migrations.migrations,
+    dry_run: toolInputs.apply_migrations.dry_run,
+    accept_lints: toolInputs.apply_migrations.accept_lints,
+  },
+  create_deployment: { kind: deploymentKind },
+  finish_release: releaseFinish,
+};
+
+export interface ReleaseInfo {
+  id: string;
+  source: "ci" | "direct";
+  status: "running" | "succeeded" | "failed";
+  commit_sha: string | null;
+  ci_run_url: string | null;
+  github_actor: string | null;
+  /** Platform account of a direct deployment. */
+  created_by: string | null;
+  admin_exception: boolean;
+  reason: string | null;
+  started_at: string;
+  finished_at: string | null;
+}
+
 export interface AppInfo {
   slug: string;
   name: string;
@@ -92,6 +146,11 @@ export interface AppInfo {
   functions_version: number | null;
   /** Deep link to the app in Studio (behind the platform login). */
   studio_url: string;
+  /** Linked GitHub repository (link_repo), null until linked. */
+  github_repo: string | null;
+  github_repo_id: number | null;
+  default_branch: string | null;
+  last_release: ReleaseInfo | null;
   created_at: string;
 }
 

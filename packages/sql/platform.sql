@@ -121,3 +121,39 @@ begin
       add constraint deployments_created_by_fkey foreign key (created_by) references users (id) on delete set null;
   end if;
 end $$;
+
+-- M3bis: GitHub repository linked to the app (link_repo), releases (one per CI run or direct deployment)
+alter table apps add column if not exists github_repo text;
+alter table apps add column if not exists github_repo_id bigint;
+alter table apps add column if not exists default_branch text;
+
+create table if not exists releases (
+  id uuid primary key default gen_random_uuid(),
+  app_id uuid not null references apps (id) on delete cascade,
+  -- ci: GitHub Actions run authenticated by OIDC; direct: PAT through MCP (admin exception when DIRECT_DEPLOY=admins)
+  source text not null check (source in ('ci', 'direct')),
+  status text not null default 'running' check (status in ('running', 'succeeded', 'failed')),
+  commit_sha text,
+  ref text,
+  -- "<run_id>/<run_attempt>": one release per CI run attempt
+  ci_run_id text,
+  ci_run_url text,
+  github_actor text,
+  created_by uuid references users (id) on delete set null,
+  admin_exception boolean not null default false,
+  reason text,
+  error text,
+  started_at timestamptz not null default now(),
+  finished_at timestamptz
+);
+create unique index if not exists releases_ci_run_key on releases (app_id, ci_run_id) where ci_run_id is not null;
+create index if not exists releases_app_started on releases (app_id, started_at desc);
+
+alter table deployments add column if not exists release_id uuid references releases (id) on delete set null;
+
+-- Platform settings set at runtime (CLI set-setting), overriding the control plane's environment
+create table if not exists settings (
+  key text primary key,
+  value text not null,
+  updated_at timestamptz not null default now()
+);

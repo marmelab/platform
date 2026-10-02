@@ -18,6 +18,7 @@ import { many, one, platform, runAll, withAdmin } from "./db.ts";
 import { currentTarget, switchCurrent, writeFileAtomic } from "./fsutil.ts";
 import { DockerOrchestrator, type Orchestrator } from "./orchestrator.ts";
 import { CaddyRouter, type Router } from "./router.ts";
+import { lastRelease } from "./releases.ts";
 import { MultiHeadStudio, type StudioRegistry } from "./studio/registry.ts";
 
 export const orchestrator: Orchestrator = new DockerOrchestrator();
@@ -35,6 +36,10 @@ export interface AppRow {
   db_name: string;
   secrets_enc: string;
   error: string | null;
+  github_repo: string | null;
+  /** bigint: returned as a string by pg. */
+  github_repo_id: string | null;
+  default_branch: string | null;
   created_at: Date;
 }
 
@@ -105,6 +110,10 @@ export async function appInfo(app: AppRow & { member_role: string }): Promise<Ap
     frontend_version: live("frontend"),
     functions_version: live("functions"),
     studio_url: studio.deepLink(app.slug),
+    github_repo: app.github_repo,
+    github_repo_id: app.github_repo_id === null ? null : Number(app.github_repo_id),
+    default_branch: app.default_branch,
+    last_release: await lastRelease(app),
     created_at: app.created_at.toISOString(),
   };
 }
@@ -307,6 +316,21 @@ export async function syncAll() {
     }
   }
   await studio.syncAll(apps).catch((error) => console.error("studio sync failed", error));
+}
+
+/** Links the app to its GitHub repository (owner or admin, checked by the caller). Audited. */
+export async function linkRepo(actor: User, app: AppRow, repo: string, repositoryId: number, defaultBranch: string) {
+  await platform.query(
+    "update apps set github_repo = $2, github_repo_id = $3, default_branch = $4, updated_at = now() where id = $1",
+    [app.id, repo, repositoryId, defaultBranch],
+  );
+  await audit(actor.id, app.id, "link_repo", {
+    from: app.github_repo_id === null
+      ? null
+      : { repo: app.github_repo, repository_id: Number(app.github_repo_id), default_branch: app.default_branch },
+    to: { repo, repository_id: repositoryId, default_branch: defaultBranch },
+  });
+  return { slug: app.slug, github_repo: repo, github_repo_id: repositoryId, default_branch: defaultBranch };
 }
 
 export async function pathExists(path: string) {

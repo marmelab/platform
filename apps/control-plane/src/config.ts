@@ -4,6 +4,9 @@ const env = (name: string, fallback?: string): string => {
   return value;
 };
 
+/** Optional setting: unset and empty mean "use the default". */
+const optional = (name: string): string | undefined => process.env[name] || undefined;
+
 export const config = {
   port: Number(env("PORT", "3000")),
   /** Internal listener (Caddy forward auth, Studio project config): never routed publicly. */
@@ -59,6 +62,17 @@ export const config = {
   sessionTtlSeconds: Number(env("SESSION_TTL_SECONDS", String(12 * 3600))),
   uploadTtlSeconds: Number(env("UPLOAD_TTL_SECONDS", "900")),
   maxUploadBytes: Number(env("MAX_UPLOAD_BYTES", String(200 * 1024 * 1024))),
+  /**
+   * Defaults of the platform settings (settings.ts): a row of the `settings` table overrides them at runtime.
+   * DIRECT_DEPLOY unset means "admins" (production); deploy/install.sh writes "everyone" for local installs.
+   */
+  defaults: {
+    directDeploy: optional("DIRECT_DEPLOY") ?? "admins",
+    ciAllowedWorkflows: optional("CI_ALLOWED_WORKFLOWS") ?? "",
+    oidcIssuer: optional("OIDC_ISSUER") ?? "https://token.actions.githubusercontent.com",
+    oidcAudience: optional("OIDC_AUDIENCE"),
+    oidcJwksUrl: optional("OIDC_JWKS_URL"),
+  },
 };
 
 if (config.masterKey.length !== 32) throw new Error("PLATFORM_MASTER_KEY must be 32 bytes hex");

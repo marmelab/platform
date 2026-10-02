@@ -9,15 +9,16 @@ import * as tar from "tar";
 import { type DeploymentKind, FUNCTION_NAME_RE } from "@platform/shared";
 import { type AppRow, appForUser, pathExists, UserError, writeEdgeConfig } from "./apps.ts";
 import { audit } from "./audit.ts";
-import type { User } from "./auth.ts";
+import type { Actor, User } from "./auth.ts";
 import { apiUrl, appUrl, config } from "./config.ts";
 import { randomToken, sha256 } from "./crypto.ts";
 import { many, one, platform } from "./db.ts";
 import { switchCurrent, writeFileAtomic } from "./fsutil.ts";
 
-interface DeploymentRow {
+export interface DeploymentRow {
   id: string;
   app_id: string;
+  release_id: string | null;
   kind: DeploymentKind | "migrations";
   version: number;
   status: string;
@@ -36,12 +37,12 @@ const rootFor = (kind: DeploymentKind, slug: string) =>
 const uploadPath = (deploymentId: string) => join(config.dataDir.uploads, `${deploymentId}.tar.gz`);
 const isMacMetadata = (path: string) => basename(path).startsWith("._") || path.split("/").includes("__MACOSX");
 
-export async function createDeployment(user: User, app: AppRow, kind: DeploymentKind) {
+export async function createDeployment(actor: Actor, app: AppRow, kind: DeploymentKind, releaseId: string | null = null) {
   const deployment = await one<DeploymentRow>(
-    `insert into deployments (app_id, kind, version, created_by)
-     values ($1, $2, (select coalesce(max(version), 0) + 1 from deployments where app_id = $1 and kind = $2), $3)
+    `insert into deployments (app_id, kind, version, created_by, release_id)
+     values ($1, $2, (select coalesce(max(version), 0) + 1 from deployments where app_id = $1 and kind = $2), $3, $4)
      returning *`,
-    [app.id, kind, user.id],
+    [app.id, kind, actor.id, releaseId],
   );
   const token = randomToken("up");
   const expiresAt = new Date(Date.now() + config.uploadTtlSeconds * 1000);
@@ -214,7 +215,7 @@ async function warmFunctions(slug: string, version: number, functions: string[])
   return Object.fromEntries(results.map((r) => [r.function, { boot_status: r.status, ms: r.ms }]));
 }
 
-async function loadDeployment(user: User, deploymentId: string) {
+export async function loadDeployment(user: User, deploymentId: string) {
   const deployment = await one<DeploymentRow & { slug: string }>(
     "select d.*, a.slug from deployments d join apps a on a.id = d.app_id where d.id = $1",
     [deploymentId],
@@ -236,8 +237,21 @@ async function markLive(appId: string, kind: string, deploymentId: string) {
   ]);
 }
 
-export async function finalizeDeployment(user: User, deploymentId: string) {
-  const { deployment, app } = await loadDeployment(user, deploymentId);
+/** Deployment of a given app (CI API: the app comes from the verified OIDC token). */
+export async function deploymentOfApp(app: AppRow, deploymentId: string) {
+  const deployment = await one<DeploymentRow>("select * from deployments where id = $1 and app_id = $2", [
+    deploymentId,
+    app.id,
+  ]);
+  if (!deployment) throw new UserError("deployment not found");
+  return deployment;
+}
+
+export async function setDeploymentRelease(deploymentId: string, releaseId: string) {
+  await platform.query("update deployments set release_id = $2 where id = $1", [deploymentId, releaseId]);
+}
+
+export async function finalizeDeployment(actor: Actor, deployment: DeploymentRow, app: AppRow) {
   const kind = deployment.kind as DeploymentKind;
   if (deployment.status !== "uploaded") {
     throw new UserError(`deployment is "${deployment.status}": upload the archive first (create_deployment gives the URL)`);
@@ -273,7 +287,12 @@ export async function finalizeDeployment(user: User, deploymentId: string) {
       deployment.id,
       JSON.stringify({ ...manifest, files: entries.length }),
     ]);
-    await audit(user.id, app.id, "finalize_deployment", { kind, version: deployment.version });
+    await audit(actor.id, app.id, "finalize_deployment", {
+      kind,
+      version: deployment.version,
+      release_id: deployment.release_id,
+      ...(actor.id ? {} : { actor: actor.email }),
+    });
     return {
       deployment_id: deployment.id,
       kind,
@@ -297,7 +316,7 @@ export async function finalizeDeployment(user: User, deploymentId: string) {
 
 export async function listDeployments(app: AppRow, kind?: string) {
   return many<DeploymentRow>(
-    `select id, kind, version, status, created_at, finalized_at, manifest, error from deployments
+    `select id, kind, version, status, release_id, created_at, finalized_at, manifest, error from deployments
       where app_id = $1 and ($2::text is null or kind = $2) order by created_at desc limit 50`,
     [app.id, kind ?? null],
   );
