@@ -3,13 +3,15 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { api } from "../providers";
+import { count, type Day, Sparkline } from "./charts";
 import { bytes, dateTime, StatusBadge } from "./fields";
 
 interface Stats {
   apps: { total: number; by_status: Record<string, number> };
   users: { total: number; admins: number; developers: number; disabled: number };
   tokens: { active: number };
-  flagged: { outside_ci: number; accepted_lints: number };
+  flagged: { outside_ci: number; accepted_lints: number; abandoned: number };
+  load: { requests_24h: number; errors_24h: number; memory: number; traffic_7d: Day[]; sampled_at: string | null };
   recent_failures: { at: string; app: string; kind: string; message: string | null }[];
   database: { cluster_bytes: number; app_databases_bytes: number };
   host: {
@@ -66,6 +68,29 @@ export const Dashboard = () => {
             <Link className="underline" to={`/apps?filter=${encodeURIComponent(JSON.stringify({ accepted_lints: true }))}`}>
               {stats.flagged.accepted_lints} with accepted lints
             </Link>
+          </div>
+          <div>
+            <Link className="underline" to={`/apps?filter=${encodeURIComponent(JSON.stringify({ abandoned: true }))}`}>
+              {stats.flagged.abandoned} abandoned
+            </Link>
+          </div>
+        </Stat>
+        <Stat title="Requests, 24 h (all apps)">
+          <div className="flex items-end justify-between gap-2">
+            <Big>{count(stats.load.requests_24h)}</Big>
+            <Sparkline days={stats.load.traffic_7d} label="All apps, requests per day" />
+          </div>
+          <div className="text-muted-foreground">
+            {count(stats.load.errors_24h)} 5xx responses
+            {stats.load.requests_24h ? ` (${((stats.load.errors_24h / stats.load.requests_24h) * 100).toFixed(1)}%)` : ""} ·
+            last 7 days on the right
+          </div>
+        </Stat>
+        <Stat title="App containers memory">
+          <Big>{bytes(stats.load.memory)}</Big>
+          <div className="text-muted-foreground">
+            GoTrue and PostgREST of every app (the shared edge runtime is not included)
+            {stats.load.sampled_at ? ` · sampled ${dateTime(stats.load.sampled_at)}` : ""}
           </div>
         </Stat>
         <Stat title="Accounts">

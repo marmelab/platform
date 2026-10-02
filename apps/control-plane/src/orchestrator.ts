@@ -36,6 +36,8 @@ export interface Orchestrator {
   status(app: string): Promise<ContainerStatus[]>;
   logs(container: string, sinceSeconds: number, tail: number): Promise<RawLogLine[]>;
   appContainers(app: string): Promise<ContainerStatus[]>;
+  /** Memory used by a running container (Docker's "MEM USAGE": usage minus inactive page cache), null otherwise. */
+  memoryUsage(container: string): Promise<number | null>;
   /** Runs a command in a platform container, its stdout written to a local file. Throws on a non-zero exit. */
   execToFile(container: string, cmd: string[], env: Record<string, string>, file: string): Promise<void>;
 }
@@ -129,6 +131,19 @@ export class DockerOrchestrator implements Orchestrator {
 
   status(app: string) {
     return this.appContainers(app);
+  }
+
+  async memoryUsage(container: string): Promise<number | null> {
+    // one-shot: no wait for a second CPU sample (Docker API >= 1.41)
+    type Stats = { memory_stats?: { usage?: number; stats?: Record<string, number> } };
+    const request = this.docker.getContainer(container)
+      .stats({ stream: false, "one-shot": true } as never) as unknown as Promise<Stats>;
+    const stats = await request.catch(() => null);
+    const memory = stats?.memory_stats;
+    if (!memory?.usage) return null;
+    // cgroup v2: inactive_file; cgroup v1: total_inactive_file (as the docker CLI)
+    const cache = memory.stats?.inactive_file ?? memory.stats?.total_inactive_file ?? 0;
+    return Math.max(0, memory.usage - (cache < memory.usage ? cache : 0));
   }
 
   async removeApp(app: string): Promise<void> {

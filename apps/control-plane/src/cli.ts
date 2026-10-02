@@ -13,6 +13,7 @@
 //   node src/cli.ts settings                       (effective platform settings)
 //   node src/cli.ts set-setting <key> <value>      (overrides the environment, e.g. direct_deploy admins)
 //   node src/cli.ts unset-setting <key>            (back to the environment's value)
+//   node src/cli.ts sample-metrics                 (samples app_metrics now, as the control plane does every minute)
 import { randomBytes } from "node:crypto";
 import { text } from "node:stream/consumers";
 import type { MemberRole } from "@platform/shared";
@@ -20,13 +21,14 @@ import { type AppRow, deleteApp, startApp, stopApp } from "./apps.ts";
 import { createToken, upsertUser } from "./auth.ts";
 import { one, platform } from "./db.ts";
 import { initCluster } from "./init.ts";
+import { sampleMetrics } from "./metrics.ts";
 import { addMember, removeMember } from "./members.ts";
 import { setPassword } from "./sessions.ts";
 import { getSettings, setSetting, unsetSetting } from "./settings.ts";
 
 const USAGE = "usage: cli.ts init | create-user <email> [admin|developer] [token-name] | delete-user <email> | " +
   "set-password <email> [--generate] | add-member <slug> <email> [owner|collaborator] | remove-member <slug> <email> | stop-app <slug> | start-app <slug> | delete-app <slug> [--no-backup] | " +
-  "settings | set-setting <key> <value> | unset-setting <key>";
+  "settings | set-setting <key> <value> | unset-setting <key> | sample-metrics";
 
 const [command, ...args] = process.argv.slice(2);
 
@@ -84,6 +86,8 @@ if (command === "init") {
 } else if (command === "unset-setting" && args[0]) {
   await unsetSetting(args[0]);
   console.log(`${args[0]} unset`);
+} else if (command === "sample-metrics") {
+  console.log(JSON.stringify(await sampleMetrics()));
 } else {
   console.error(USAGE);
   process.exitCode = 1;

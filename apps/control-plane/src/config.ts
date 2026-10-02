@@ -47,6 +47,13 @@ export const config = {
     /** Final backups taken by delete_app (B8): <backups>/<slug>-<timestamp>/. Restore and retention: M7. */
     backups: env("BACKUPS_DIR", "/data/backups"),
   },
+  /** Caddy's access log of the app hosts (metrics.ts): the file as Caddy writes it, and as the control plane reads it. */
+  accessLog: {
+    caddyPath: env("CADDY_ACCESS_LOG", "/var/log/caddy/access.log"),
+    path: env("ACCESS_LOG", "/data/caddy-logs/access.log"),
+  },
+  /** Seconds between two metrics samples (app_metrics). */
+  metricsIntervalSeconds: Number(env("METRICS_INTERVAL_SECONDS", "60")),
   /** Paths as seen by Caddy / the edge runtime (named volumes mounted elsewhere). */
   caddySitesRoot: env("CADDY_SITES_ROOT", "/sites"),
   edgeUpstream: env("EDGE_UPSTREAM", "edge:9000"),
@@ -83,6 +90,8 @@ export const config = {
     oidcIssuer: optional("OIDC_ISSUER") ?? "https://token.actions.githubusercontent.com",
     oidcAudience: optional("OIDC_AUDIENCE"),
     oidcJwksUrl: optional("OIDC_JWKS_URL"),
+    abandonedAfterDays: optional("ABANDONED_AFTER_DAYS") ?? "30",
+    metricsRetentionDays: optional("METRICS_RETENTION_DAYS") ?? "30",
   },
   /**
    * SEC-10: the test-only `oidc_jwks` setting (inline JWKS trusted by the CI API) is honoured only with

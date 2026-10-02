@@ -157,3 +157,28 @@ create table if not exists settings (
   value text not null,
   updated_at timestamptz not null default now()
 );
+
+-- M4 phase 2: per-app load, sampled every minute by the control plane (metrics.ts) into the current hour.
+-- requests and responses_5xx come from Caddy's access log (public app hosts), db_size_bytes from pg_database_size,
+-- memory_bytes from Docker (the app's GoTrue and PostgREST containers; the shared edge runtime is not counted).
+create table if not exists app_metrics (
+  app_id uuid not null references apps (id) on delete cascade,
+  hour timestamptz not null,
+  requests bigint not null default 0,
+  responses_5xx bigint not null default 0,
+  db_size_bytes bigint,
+  memory_bytes bigint,
+  primary key (app_id, hour)
+);
+create index if not exists app_metrics_hour on app_metrics (hour);
+-- last request seen in the access log (kept beyond the metrics retention, for the "abandoned" flag)
+alter table apps add column if not exists last_request_at timestamptz;
+
+-- Sampler state (one row): position in Caddy's access log, first sample (the abandoned flag waits for N days of data)
+create table if not exists metrics_state (
+  id integer primary key default 1 check (id = 1),
+  log_inode text,
+  log_offset bigint not null default 0,
+  started_at timestamptz not null default now(),
+  sampled_at timestamptz
+);

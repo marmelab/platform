@@ -28,6 +28,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { api } from "../providers";
+import { count, type Day, type Hour, HourlyChart, Sparkline } from "./charts";
 import { ActionButton } from "./actions";
 import { AuditTable } from "./audit";
 import {
@@ -65,6 +66,12 @@ export interface AppRecord extends RaRecord {
   last_release: Release | null;
   flags: Flags;
   db_size: number | null;
+  requests_24h: number;
+  errors_24h: number;
+  memory: number | null;
+  traffic_7d: Day[];
+  last_request_at: string | null;
+  last_activity_at: string;
   frontend_version: number | null;
   functions_version: number | null;
   created_at: string;
@@ -85,6 +92,7 @@ const FlagFilters = () => (
     <ToggleFilterButton className="w-auto border" label="Accepted lints" value={{ accepted_lints: true }} />
     <ToggleFilterButton className="w-auto border" label="Last release failed" value={{ last_release_failed: true }} />
     <ToggleFilterButton className="w-auto border" label="No repo" value={{ no_repo: true }} />
+    <ToggleFilterButton className="w-auto border" label="Abandoned" value={{ abandoned: true }} />
   </div>
 );
 
@@ -130,7 +138,31 @@ export const AppList = () => (
         render={(app) => <ReleaseSummary release={app.last_release} />}
       />
       <DataTable.Col label="Flags" disableSort render={(app) => <FlagBadges flags={app.flags} />} />
-      <DataTable.Col source="db_size" label="DB size" sortByOrder="DESC" render={(app) => bytes(app.db_size)} />
+      <DataTable.Col
+        source="requests_24h"
+        label="Requests 24 h"
+        sortByOrder="DESC"
+        render={(app) => (
+          <div className="flex flex-col gap-1 text-sm">
+            <span className="tabular-nums">
+              {count(app.requests_24h)}
+              <span className="text-muted-foreground"> · {count(app.errors_24h)} 5xx</span>
+            </span>
+            <Sparkline days={app.traffic_7d} label={`${app.slug} requests per day`} />
+          </div>
+        )}
+      />
+      <DataTable.Col
+        source="db_size"
+        label="DB / memory"
+        sortByOrder="DESC"
+        render={(app) => (
+          <div className="flex flex-col text-sm">
+            <span>{bytes(app.db_size)}</span>
+            <span className="text-muted-foreground" title="GoTrue and PostgREST containers">{bytes(app.memory)}</span>
+          </div>
+        )}
+      />
     </DataTable>
   </List>
 );
@@ -229,6 +261,46 @@ const AppActions = ({ app }: { app: AppRecord }) => (
   </div>
 );
 
+/** Load of the app (app_metrics): stat tiles and requests per hour over 7 days. */
+function Load({ app }: { app: AppRecord }) {
+  const [hours, setHours] = useState<Hour[] | null>(null);
+  const [sampledAt, setSampledAt] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    api<{ hours: Hour[]; sampled_at: string | null }>(`/apps/${app.slug}/metrics?days=7`).then((m) => {
+      setHours(m.hours);
+      setSampledAt(m.sampled_at);
+    }, (e: Error) => setError(e.message));
+  }, [app.slug, app.requests_24h]);
+  const rate = app.requests_24h ? ((app.errors_24h / app.requests_24h) * 100).toFixed(1) : null;
+  return (
+    <Card data-testid="app-load">
+      <CardHeader>
+        <CardTitle className="text-base">Load</CardTitle>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-4">
+        <div className="grid grid-cols-2 gap-4 md:grid-cols-5">
+          <Field label="Requests, 24 h">{count(app.requests_24h)}</Field>
+          <Field label="5xx responses, 24 h">
+            {count(app.errors_24h)}
+            {rate !== null && <span className="text-muted-foreground"> ({rate}%)</span>}
+          </Field>
+          <Field label="Database size">{bytes(app.db_size)}</Field>
+          <Field label="Memory (GoTrue + PostgREST)">{bytes(app.memory)}</Field>
+          <Field label="Last request">{dateTime(app.last_request_at)}</Field>
+        </div>
+        {error && <p className="text-destructive">{error}</p>}
+        {hours ? <HourlyChart hours={hours} /> : !error && <p className="text-sm">Loading…</p>}
+        <p className="text-xs text-muted-foreground">
+          Requests to the app's host (frontend, API, functions), from Caddy's access log; sampled every minute
+          {sampledAt ? `, last at ${dateTime(sampledAt)}` : ""}. Maintenance responses of a stopped app are not counted as
+          5xx.
+        </p>
+      </CardContent>
+    </Card>
+  );
+}
+
 const Overview = ({ app }: { app: AppRecord }) => (
   <div className="flex flex-col gap-6">
     <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
@@ -280,6 +352,7 @@ const Overview = ({ app }: { app: AppRecord }) => (
     <Field label="Last release">
       <ReleaseSummary release={app.last_release} />
     </Field>
+    <Load app={app} />
     <AppActions app={app} />
   </div>
 );

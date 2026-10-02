@@ -17,6 +17,10 @@ export interface Settings {
   oidcJwksUrl: string;
   /** TEST ONLY: inline JWKS (JSON) trusted instead of fetching oidcJwksUrl. Ignored without ALLOW_TEST_OIDC_JWKS=1. */
   oidcJwks: string | null;
+  /** An app without request nor release for this many days is flagged "abandoned" (A6). */
+  abandonedAfterDays: number;
+  /** app_metrics rows older than this are deleted by the sampler. */
+  metricsRetentionDays: number;
 }
 
 /** Keys accepted by set-setting, with their environment variable. */
@@ -27,7 +31,16 @@ export const SETTING_KEYS = {
   oidc_audience: "OIDC_AUDIENCE",
   oidc_jwks_url: "OIDC_JWKS_URL",
   oidc_jwks: "(none, test only: requires ALLOW_TEST_OIDC_JWKS=1)",
+  abandoned_after_days: "ABANDONED_AFTER_DAYS",
+  metrics_retention_days: "METRICS_RETENTION_DAYS",
 } as const;
+
+const DAYS = ["abandoned_after_days", "metrics_retention_days"];
+const days = (key: string, value: string) => {
+  const n = Number(value);
+  if (!Number.isInteger(n) || n < 1 || n > 3650) throw new Error(`${key} must be a whole number of days (1 to 3650)`);
+  return n;
+};
 export type SettingKey = keyof typeof SETTING_KEYS;
 
 export function validateSetting(key: string, value: string): asserts key is SettingKey {
@@ -35,6 +48,7 @@ export function validateSetting(key: string, value: string): asserts key is Sett
   if (key === "direct_deploy" && !["admins", "everyone"].includes(value)) {
     throw new Error("direct_deploy must be admins or everyone");
   }
+  if (DAYS.includes(key)) days(key, value);
   if (key === "oidc_jwks") {
     if (!config.allowTestOidcJwks) {
       throw new Error("oidc_jwks is test only: it requires ALLOW_TEST_OIDC_JWKS=1 on the control plane (local installs)");
@@ -62,6 +76,8 @@ export async function getSettings(): Promise<Settings> {
     oidcJwksUrl: rows.get("oidc_jwks_url") ?? d.oidcJwksUrl ?? `${issuer}/.well-known/jwks`,
     // SEC-10: a test value left behind is ignored unless the environment explicitly allows it
     oidcJwks: config.allowTestOidcJwks ? rows.get("oidc_jwks") ?? null : null,
+    abandonedAfterDays: days("abandoned_after_days", rows.get("abandoned_after_days") ?? d.abandonedAfterDays),
+    metricsRetentionDays: days("metrics_retention_days", rows.get("metrics_retention_days") ?? d.metricsRetentionDays),
   };
 }
 
