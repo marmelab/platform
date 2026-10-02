@@ -127,6 +127,8 @@ An app builder only sees, in Studio and through MCP, the apps they are a member 
 
 Claude creates the app, applies the migrations (the linter rejects unsafe ones), deploys the Edge Functions, builds and deploys the frontend, then prints the app URL (for instance http://todo-app.localhost:8100) and its Studio link.
 
+> This direct deployment from the builder's machine is the M3 prototype. The target is deployment by GitHub Actions only, with direct deployment reserved to admins (see [docs/USER_JOURNEYS.md](docs/USER_JOURNEYS.md) B2 and [PLAN_1.md](PLAN_1.md) §6, milestone M3bis).
+
 ## Tests
 
 The stack must be running, and `deploy/.env.local` must exist.
