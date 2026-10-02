@@ -2,6 +2,7 @@ import type { NextRequest } from 'next/server'
 import { NextResponse } from 'next/server'
 
 import { IS_PLATFORM } from '@/lib/constants'
+import { platformGuard } from '@/platform/guard'
 
 // [Joshen] Return 404 for all next.js API endpoints EXCEPT the ones we use in hosted:
 const HOSTED_SUPPORTED_API_URLS = [
@@ -88,6 +89,9 @@ export const config = {
 }
 
 export async function proxy(request: NextRequest) {
+  const denied = await platformGuard(request)
+  if (denied) return denied
+
   const { pathname } = request.nextUrl
 
   // --- Hosted: block unsupported API routes ---
