@@ -19,6 +19,8 @@ PLATFORM_TOKEN=plat_...
 
 After a code change: `docker compose -p plat -f deploy/docker-compose.yml up -d --build control-plane`.
 
+The per-app images (`GOTRUE_IMAGE`, `POSTGREST_IMAGE`) are pulled by the control plane when missing: in the background at startup, and before creating a container (concurrent provisionings share one pull). A failed pull (registry unreachable, Docker Hub rate limit) fails the provisioning with the registry's error.
+
 ## MCP
 
 - URL: `http://api.localhost:8100/mcp`, with the `Authorization: Bearer <PAT>` header.
