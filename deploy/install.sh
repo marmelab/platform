@@ -36,6 +36,8 @@ add_secret STUDIO_META_DEFAULT_PASSWORD 16
 # Local installs: builders may still deploy from their machine with their PAT (the e2e suites, the seed and the
 # deploy skill rely on it). Production installs should use DIRECT_DEPLOY=admins (publishing through CI only).
 grep -q '^DIRECT_DEPLOY=' .env || { echo "DIRECT_DEPLOY=everyone" >> .env; echo "DIRECT_DEPLOY=everyone written to deploy/.env"; }
+# Local installs only (SEC-10): the CI e2e suite makes the CI API trust its fake OIDC issuer (inline oidc_jwks setting).
+grep -q '^ALLOW_TEST_OIDC_JWKS=' .env || { echo "ALLOW_TEST_OIDC_JWKS=1" >> .env; echo "ALLOW_TEST_OIDC_JWKS=1 written to deploy/.env"; }
 umask 022
 
 if [ "${STUDIO_BUILD:-0}" = 1 ] || ! docker image inspect plat/studio:dev >/dev/null 2>&1; then

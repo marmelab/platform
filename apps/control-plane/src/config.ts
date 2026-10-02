@@ -40,6 +40,8 @@ export const config = {
     functions: env("FUNCTIONS_DIR", "/data/functions"),
     appsConfig: env("APPS_CONFIG_DIR", "/data/config/apps"),
     uploads: env("UPLOADS_DIR", "/data/uploads"),
+    /** Final backups taken by delete_app (B8): <backups>/<slug>-<timestamp>/. Restore and retention: M7. */
+    backups: env("BACKUPS_DIR", "/data/backups"),
   },
   /** Paths as seen by Caddy / the edge runtime (named volumes mounted elsewhere). */
   caddySitesRoot: env("CADDY_SITES_ROOT", "/sites"),
@@ -73,6 +75,11 @@ export const config = {
     oidcAudience: optional("OIDC_AUDIENCE"),
     oidcJwksUrl: optional("OIDC_JWKS_URL"),
   },
+  /**
+   * SEC-10: the test-only `oidc_jwks` setting (inline JWKS trusted by the CI API) is honoured only with
+   * ALLOW_TEST_OIDC_JWKS=1, written by deploy/install.sh for local installs. Never set it in production.
+   */
+  allowTestOidcJwks: optional("ALLOW_TEST_OIDC_JWKS") === "1",
 };
 
 if (config.masterKey.length !== 32) throw new Error("PLATFORM_MASTER_KEY must be 32 bytes hex");

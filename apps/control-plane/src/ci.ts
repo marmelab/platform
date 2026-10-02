@@ -9,7 +9,7 @@
 import { type Context, Hono } from "hono";
 import { z } from "zod";
 import { ciInputs } from "@platform/shared";
-import { type AppRow, appInfo, UserError } from "./apps.ts";
+import { AppStoppedError, type AppRow, appInfo, requireWritable, UserError } from "./apps.ts";
 import type { Actor } from "./auth.ts";
 import { one } from "./db.ts";
 import { createDeployment, deploymentOfApp, finalizeDeployment } from "./deployments.ts";
@@ -76,7 +76,7 @@ function requirePublish(ctx: CiContext) {
   if (ctx.mode === "check") {
     throw new CiError(403, `check mode (${ctx.checkReasons.join("; ")}): only get_app and migrations dry_run are allowed`);
   }
-  if (ctx.app.status === "stopped") throw new CiError(409, `app "${ctx.app.slug}" is stopped: start_app before deploying`);
+  requireWritable(ctx.app, "deploying");
 }
 
 /** The release opened by this run attempt (POST /release). */
@@ -95,6 +95,7 @@ async function body<T extends z.ZodRawShape>(c: Context, shape: T) {
 
 function errorResponse(c: Context, error: unknown) {
   if (error instanceof CiError) return c.json({ error: error.message }, error.status);
+  if (error instanceof AppStoppedError) return c.json({ error: error.message, code: error.code }, 409);
   if (error instanceof StructuredUserError) return c.json({ error: error.message, ...error.details }, 422);
   if (error instanceof UserError) return c.json({ error: error.message }, 400);
   if (error instanceof z.ZodError) return c.json({ error: "invalid request body", issues: error.issues }, 400);

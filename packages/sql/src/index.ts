@@ -113,6 +113,29 @@ export function appDatabaseSql(appId: string): string[] {
   ];
 }
 
+/**
+ * B8: a stopped app's database is read-only by default for every new session (run in "postgres"). A guardrail, not
+ * a security boundary: any session may still opt out with SET or BEGIN READ WRITE (TECH_DEBT CP-9).
+ */
+export function databaseReadOnlySql(appId: string, readOnly: boolean): string {
+  const r = appRoles(appId);
+  return readOnly
+    ? `alter database ${r.database} set default_transaction_read_only = on`
+    : `alter database ${r.database} reset default_transaction_read_only`;
+}
+
+/** Whether databaseReadOnlySql(appId, true) is in effect. Parameter: the database name. */
+export const databaseIsReadOnlySql = `select 1 from pg_db_role_setting s join pg_database d on d.oid = s.setdatabase
+  where d.datname = $1 and s.setrole = 0 and 'default_transaction_read_only=on' = any(s.setconfig)`;
+
+/**
+ * Terminates the sessions of the app's own roles in its database (Studio's pg-meta, GoTrue, PostgREST, edge
+ * functions), so that the database-level settings apply to their next session. The platform's admin sessions stay.
+ * Parameters: the database name and the role names.
+ */
+export const terminateAppSessionsSql = `select count(pg_terminate_backend(pid))::int as terminated from pg_stat_activity
+  where datname = $1 and usename = any($2::text[]) and pid <> pg_backend_pid()`;
+
 export function dropAppSql(appId: string): string[] {
   const r = appRoles(appId);
   return [

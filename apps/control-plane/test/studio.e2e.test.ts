@@ -368,6 +368,28 @@ describe("Studio for app builders", () => {
     }
   });
 
+  test("9d. a stopped app is read-only in Studio: reads work, SQL editor writes fail, start_app restores them", async () => {
+    const probe = `public.stopped_probe_${RUN}`;
+    const client = await connect();
+    try {
+      // alice's pg-meta connections (opened by the tests above) are terminated by stop_app
+      await tool(client, "stop_app", { app: A });
+      const read = await sql(alice, A, "select count(*)::int as n from public.todos");
+      assert.equal(read.status, 200, read.body);
+      const write = await sql(alice, A, `create table ${probe} (x int)`);
+      assert.notEqual(write.status, 200, write.body);
+      assert.match(write.body, /read-only transaction/);
+      const insert = await sql(alice, A, "insert into public.todos (title, user_id) select 'x', id from auth.users limit 1");
+      assert.match(insert.body, /read-only transaction/);
+      await tool(client, "start_app", { app: A });
+      const again = await sql(alice, A, `create table ${probe} (x int); drop table ${probe}`);
+      assert.equal(again.status, 200, again.body);
+    } finally {
+      await tool(client, "start_app", { app: A }).catch(() => {});
+      await client.close();
+    }
+  });
+
   test("10. logout ends the session", async () => {
     const out = await raw("POST", "/_platform/logout", { cookie: alice });
     assert.equal(out.status, 303);

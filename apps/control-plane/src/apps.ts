@@ -7,11 +7,15 @@ import {
   createDatabaseSql,
   databaseExistsSql,
   databaseGrantsSql,
+  databaseIsReadOnlySql,
+  databaseReadOnlySql,
   dropAppSql,
+  terminateAppSessionsSql,
 } from "@platform/sql";
 import { type AppInfo, SLUG_RE } from "@platform/shared";
 import { audit } from "./audit.ts";
 import type { User } from "./auth.ts";
+import { backupApp } from "./backups.ts";
 import { appHost, appUrl, config, internalAppUrl } from "./config.ts";
 import { decrypt, encrypt, randomHex, signJwt } from "./crypto.ts";
 import { many, one, platform, runAll, withAdmin } from "./db.ts";
@@ -26,6 +30,25 @@ export const router: Router = new CaddyRouter();
 export const studio: StudioRegistry = new MultiHeadStudio(router);
 
 export class UserError extends Error {}
+
+/** A write refused because the app is stopped (B8: a stopped app is read-only). */
+export class AppStoppedError extends UserError {
+  readonly code = "APP_STOPPED";
+}
+
+/**
+ * The single guard of every write the control plane makes on behalf of a user or CI: migrations (except dry_run),
+ * execute_sql with write, secrets, deployments, rollbacks, releases, repository link. Reads, logs, members,
+ * start_app and delete_app stay available on a stopped app.
+ */
+export function requireWritable(app: Pick<AppRow, "slug" | "status">, action: string) {
+  if (app.status === "stopped") {
+    throw new AppStoppedError(
+      `APP_STOPPED: app "${app.slug}" is stopped and read-only, ${action} is refused. An owner or an admin must ` +
+        "start_app first.",
+    );
+  }
+}
 
 export interface AppRow {
   id: string;
@@ -301,6 +324,8 @@ export async function syncAll() {
     try {
       await prepareDirectories(app.slug);
       await writeEdgeConfig(app);
+      // apps stopped before B8 made them read-only, or a stop/start interrupted half-way
+      await setDatabaseReadOnly(app.slug, app.status === "stopped");
       if (app.status === "stopped") {
         await router.maintenanceApp(app.slug, appHost(app.slug));
         continue;
@@ -320,6 +345,7 @@ export async function syncAll() {
 
 /** Links the app to its GitHub repository (owner or admin, checked by the caller). Audited. */
 export async function linkRepo(actor: User, app: AppRow, repo: string, repositoryId: number, defaultBranch: string) {
+  requireWritable(app, "link_repo");
   await platform.query(
     "update apps set github_repo = $2, github_repo_id = $3, default_branch = $4, updated_at = now() where id = $1",
     [app.id, repo, repositoryId, defaultBranch],
@@ -337,28 +363,65 @@ export async function pathExists(path: string) {
   return stat(path).then(() => true, () => false);
 }
 
-/** B8: maintenance page first (Caddy then serves no static file, API or function), then containers are stopped. */
+/**
+ * B8: database-level `default_transaction_read_only` for a stopped app. Idempotent. When it turns on (or with
+ * `terminate`), the sessions of the app's own roles are terminated so that their next session gets the setting.
+ */
+export async function setDatabaseReadOnly(slug: string, readOnly: boolean, terminate = false) {
+  const id = dbId(slug);
+  const roles = appRoles(id);
+  await withAdmin("postgres", async (c) => {
+    if ((await c.query(databaseExistsSql, [roles.database])).rowCount !== 1) return;
+    const current = (await c.query(databaseIsReadOnlySql, [roles.database])).rowCount === 1;
+    if (current !== readOnly) await c.query(databaseReadOnlySql(id, readOnly));
+    if (readOnly && (terminate || !current)) {
+      await c.query(terminateAppSessionsSql, [roles.database, [roles.owner, roles.authenticator, roles.authAdmin]]);
+    }
+  });
+}
+
+/**
+ * B8: maintenance page first (Caddy then serves no static file, API or function), then containers are stopped and
+ * the database becomes read-only (Studio and execute_sql still read it; the control plane refuses writes).
+ */
 export async function stopApp(actor: User | null, app: AppRow) {
-  if (app.status === "stopped") return { slug: app.slug, status: "stopped", changed: false };
+  if (app.status === "stopped") {
+    await setDatabaseReadOnly(app.slug, true);
+    return { slug: app.slug, status: "stopped", changed: false };
+  }
   await router.maintenanceApp(app.slug, appHost(app.slug));
   await orchestrator.stopApp(app.slug);
+  await setDatabaseReadOnly(app.slug, true, true);
   await platform.query("update apps set status = 'stopped', updated_at = now() where id = $1", [app.id]);
   await audit(actor?.id ?? null, app.id, "stop_app", { slug: app.slug });
   return { slug: app.slug, status: "stopped", changed: true };
 }
 
-/** Reverse of stopApp(): provision() is idempotent, restarts the containers and restores the routes. */
+/** Reverse of stopApp(): read-write again, then provision() (idempotent) restarts the containers and the routes. */
 export async function startApp(actor: User | null, app: AppRow) {
   const changed = app.status !== "running";
   if (changed) {
+    await setDatabaseReadOnly(app.slug, false);
     await provision(app);
     await audit(actor?.id ?? null, app.id, "start_app", { slug: app.slug, from: app.status });
   }
   return { slug: app.slug, status: "running", changed };
 }
 
-/** Symmetric of provision(): routes, containers, database and roles, files, rows. */
-export async function deleteApp(slug: string) {
+/**
+ * Symmetric of provision(): routes, containers, database and roles, files, rows. A final backup is taken first
+ * (backups.ts); if it fails, nothing is deleted. Audited, with the backup path (audit_log.app_id becomes null when
+ * the row goes away: the slug stays in the details).
+ */
+export async function deleteApp(actor: User | null, slug: string) {
+  const app = await one<AppRow>("select * from apps where slug = $1", [slug]);
+  const backup = await backupApp(slug, app);
+  await audit(actor?.id ?? null, app?.id ?? null, "delete_app", {
+    slug,
+    status: app?.status ?? null,
+    backup: backup?.path ?? null,
+    backup_files: backup?.files ?? null,
+  });
   await router.removeApp(slug);
   await studio.unregister(slug);
   await orchestrator.removeApp(slug);
@@ -367,15 +430,13 @@ export async function deleteApp(slug: string) {
   await rm(join(config.dataDir.sites, slug), { recursive: true, force: true });
   await rm(join(config.dataDir.functions, slug), { recursive: true, force: true });
   await platform.query("delete from apps where slug = $1", [slug]);
+  return { slug, deleted: true, backup: backup?.path ?? null };
 }
 
-/** B8 through MCP: destructive, so the caller must repeat the slug. The final backup (M7) is not taken yet. */
+/** B8 through MCP: destructive, so the caller must repeat the slug. */
 export async function deleteAppConfirmed(user: User, app: AppRow, confirm: string) {
   if (confirm !== app.slug) {
     throw new UserError(`deleting "${app.slug}" is irreversible: pass confirm="${app.slug}" with the user's explicit consent`);
   }
-  // audit_log.app_id is set to null when the row goes away: the slug stays in the details
-  await audit(user.id, app.id, "delete_app", { slug: app.slug, status: app.status });
-  await deleteApp(app.slug);
-  return { slug: app.slug, deleted: true };
+  return deleteApp(user, app.slug);
 }

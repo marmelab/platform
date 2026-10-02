@@ -1,5 +1,8 @@
 import Docker from "dockerode";
 import { createHash } from "node:crypto";
+import { createWriteStream } from "node:fs";
+import { PassThrough } from "node:stream";
+import { finished } from "node:stream/promises";
 import { config } from "./config.ts";
 
 export interface ServiceSpec {
@@ -33,6 +36,8 @@ export interface Orchestrator {
   status(app: string): Promise<ContainerStatus[]>;
   logs(container: string, sinceSeconds: number, tail: number): Promise<RawLogLine[]>;
   appContainers(app: string): Promise<ContainerStatus[]>;
+  /** Runs a command in a platform container, its stdout written to a local file. Throws on a non-zero exit. */
+  execToFile(container: string, cmd: string[], env: Record<string, string>, file: string): Promise<void>;
 }
 
 /** Splits Docker's multiplexed log stream (non-TTY) into timestamped lines. */
@@ -135,6 +140,28 @@ export class DockerOrchestrator implements Orchestrator {
   async stopApp(app: string): Promise<void> {
     for (const c of await this.appContainers(app)) {
       if (c.state === "running" || c.state === "restarting") await this.docker.getContainer(c.name).stop();
+    }
+  }
+
+  async execToFile(container: string, cmd: string[], env: Record<string, string>, file: string): Promise<void> {
+    const exec = await this.docker.getContainer(container).exec({
+      Cmd: cmd,
+      Env: Object.entries(env).map(([key, value]) => `${key}=${value}`),
+      AttachStdout: true,
+      AttachStderr: true,
+    });
+    const stream = await exec.start({ hijack: true, stdin: false });
+    const out = createWriteStream(file, { mode: 0o600 });
+    const err = new PassThrough();
+    const stderr: Buffer[] = [];
+    err.on("data", (chunk: Buffer) => stderr.push(chunk));
+    this.docker.modem.demuxStream(stream, out, err);
+    await finished(stream, { writable: false });
+    out.end();
+    await finished(out);
+    const { ExitCode } = await exec.inspect();
+    if (ExitCode !== 0) {
+      throw new Error(`${cmd[0]} exited with ${ExitCode}: ${Buffer.concat(stderr).toString("utf8").trim().slice(0, 2000)}`);
     }
   }
 

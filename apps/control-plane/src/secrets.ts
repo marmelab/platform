@@ -1,4 +1,4 @@
-import { type AppRow, UserError, writeEdgeConfig } from "./apps.ts";
+import { type AppRow, requireWritable, UserError, writeEdgeConfig } from "./apps.ts";
 import { audit } from "./audit.ts";
 import type { User } from "./auth.ts";
 import { encrypt } from "./crypto.ts";
@@ -7,6 +7,7 @@ import { many, platform } from "./db.ts";
 const RESERVED = /^(SUPABASE_|SB_|PLATFORM_|DENO_)/;
 
 export async function setSecrets(user: User, app: AppRow, secrets: Record<string, string | null>) {
+  requireWritable(app, "set_secrets");
   const reserved = Object.keys(secrets).filter((name) => RESERVED.test(name));
   if (reserved.length) throw new UserError(`reserved secret names: ${reserved.join(", ")}`);
   for (const [name, value] of Object.entries(secrets)) {

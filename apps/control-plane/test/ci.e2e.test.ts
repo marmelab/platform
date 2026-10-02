@@ -302,11 +302,14 @@ describe("CI deployment API (GitHub OIDC) and DIRECT_DEPLOY", () => {
     await call(owner, "stop_app", { app: APP });
     try {
       const token = await oidcToken({ run_id: "1003" });
-      await ciRefused("POST", "/release", token, 409, new RegExp(`app "${APP}" is stopped: start_app before deploying`));
-      await ciRefused("POST", "/deployments", token, 409, /is stopped/, { kind: "frontend" });
-      await ciRefused("POST", "/migrations", token, 409, /is stopped/, { migrations: [todos] });
+      await ciRefused("POST", "/release", token, 409, new RegExp(`APP_STOPPED: app "${APP}" is stopped and read-only`));
+      await ciRefused("POST", "/deployments", token, 409, /APP_STOPPED/, { kind: "frontend" });
+      await ciRefused("POST", "/migrations", token, 409, /APP_STOPPED/, { migrations: [todos] });
       assert.equal((await ci("GET", "", token)).body.status, "stopped");
       assert.equal((await ci("POST", "/migrations", token, { migrations: [todos], dry_run: true })).status, 200);
+      // the same guard on the MCP side
+      await refused(owner, "link_repo", { app: APP, repo: REPO, repository_id: REPO_ID, default_branch: "main" }, /APP_STOPPED/);
+      await refused(owner, "begin_release", { app: APP }, /APP_STOPPED/);
     } finally {
       await call(owner, "start_app", { app: APP });
     }

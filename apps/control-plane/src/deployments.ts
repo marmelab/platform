@@ -7,7 +7,7 @@ import type { ReadableStream as WebReadableStream } from "node:stream/web";
 import { parse as parseToml } from "smol-toml";
 import * as tar from "tar";
 import { type DeploymentKind, FUNCTION_NAME_RE } from "@platform/shared";
-import { type AppRow, appForUser, pathExists, UserError, writeEdgeConfig } from "./apps.ts";
+import { type AppRow, appForUser, pathExists, requireWritable, UserError, writeEdgeConfig } from "./apps.ts";
 import { audit } from "./audit.ts";
 import type { Actor, User } from "./auth.ts";
 import { apiUrl, appUrl, config } from "./config.ts";
@@ -38,6 +38,7 @@ const uploadPath = (deploymentId: string) => join(config.dataDir.uploads, `${dep
 const isMacMetadata = (path: string) => basename(path).startsWith("._") || path.split("/").includes("__MACOSX");
 
 export async function createDeployment(actor: Actor, app: AppRow, kind: DeploymentKind, releaseId: string | null = null) {
+  requireWritable(app, "create_deployment");
   const deployment = await one<DeploymentRow>(
     `insert into deployments (app_id, kind, version, created_by, release_id)
      values ($1, $2, (select coalesce(max(version), 0) + 1 from deployments where app_id = $1 and kind = $2), $3, $4)
@@ -256,10 +257,8 @@ export async function finalizeDeployment(actor: Actor, deployment: DeploymentRow
   if (deployment.status !== "uploaded") {
     throw new UserError(`deployment is "${deployment.status}": upload the archive first (create_deployment gives the URL)`);
   }
-  // the warm-up boots the functions: they must not run while the app is stopped
-  if (kind === "functions" && app.status === "stopped") {
-    throw new UserError(`app "${app.slug}" is stopped: start_app before deploying functions`);
-  }
+  // an upload done before stop_app waits for start_app (functions: the warm-up would also boot them)
+  requireWritable(app, "finalize_deployment");
   const archive = uploadPath(deployment.id);
   const appRoot = rootFor(kind, app.slug);
   const staging = join(appRoot, `.staging-${deployment.id}`);
@@ -323,6 +322,7 @@ export async function listDeployments(app: AppRow, kind?: string) {
 }
 
 export async function rollback(user: User, app: AppRow, kind: DeploymentKind, version?: number) {
+  requireWritable(app, "rollback");
   const live = await one<DeploymentRow>(
     "select * from deployments where app_id = $1 and kind = $2 and status = 'live'",
     [app.id, kind],
