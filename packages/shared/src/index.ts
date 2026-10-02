@@ -101,6 +101,12 @@ export const toolInputs = {
     backup: z.boolean().default(true)
       .describe("false skips the final backup: the data is then lost for good. Only if the user explicitly asks"),
   },
+  list_schema_changes: {
+    app: slug,
+    all: z.boolean().default(false)
+      .describe("false: changes outside releases since the last succeeded release; true: every recorded change"),
+    limit: z.number().int().positive().max(500).default(50),
+  },
   get_logs: {
     app: slug,
     service: z.enum(["gotrue", "postgrest", "functions", "postgres"]).optional(),
@@ -154,6 +160,11 @@ export interface AppInfo {
   default_branch: string | null;
   last_release: ReleaseInfo | null;
   created_at: string;
+  /**
+   * get_app only: DDL commands recorded outside a release since the last succeeded release (Studio, execute_sql with
+   * write...); null when it cannot be read.
+   */
+  schema_drift?: { count: number; last_at: string | null; since: string | null } | null;
 }
 
 export interface LintResult {

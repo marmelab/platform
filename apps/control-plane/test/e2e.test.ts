@@ -104,10 +104,12 @@ describe("control plane M2 e2e", () => {
     const me = await call(admin, "whoami");
     assert.equal(me.email, ADMIN_EMAIL);
     assert.equal(me.role, "admin");
+    assert.equal(me.direct_deploy, true, "admins always deploy directly");
+    assert.match(me.direct_deploy_setting, /^(admins|everyone)$/);
     const tools = (await admin.listTools()).tools.map((t) => t.name).sort();
     for (const name of ["apply_migrations", "create_app", "create_deployment", "execute_sql", "finalize_deployment",
       "get_app", "get_logs", "list_apps", "list_deployments", "list_members", "list_secrets", "rollback", "set_secrets",
-      "add_member", "remove_member", "stop_app", "start_app", "delete_app", "whoami"]) {
+      "add_member", "remove_member", "stop_app", "start_app", "delete_app", "list_schema_changes", "whoami"]) {
       assert.ok(tools.includes(name), `tool ${name} missing`);
     }
   });
@@ -258,6 +260,58 @@ describe("control plane M2 e2e", () => {
     assert.equal(escape.isError, true);
     const authid = await callRaw(admin, "execute_sql", { app: APP, sql: "select * from pg_catalog.pg_authid" });
     assert.equal(authid.isError, true, "owner role must not read pg_authid");
+  });
+
+  test("3c. schema changes outside releases: execute_sql flagged, migrations and GoTrue not", async () => {
+    // GoTrue's boot migrations (create_app) and the platform's provisioning are not recorded; the migrations of
+    // test 3 are, as part of their release (rejected and dry-run batches were rolled back with their records)
+    const clean = await call(admin, "get_app", { app: APP });
+    assert.deepEqual({ count: clean.schema_drift.count, last_at: clean.schema_drift.last_at }, { count: 0, last_at: null });
+    const recorded = (await call(admin, "list_schema_changes", { app: APP, all: true, limit: 500 })).changes;
+    assert.ok(recorded.length > 0, "migrations are recorded");
+    for (const change of recorded) {
+      assert.equal(change.in_release, true, JSON.stringify(change));
+      assert.match(change.release_id, /^[0-9a-f-]{36}$/);
+      assert.equal(change.role, `app_${APP.replace(/-/g, "_")}_owner`);
+      assert.equal(change.application_name, "platform-migrations");
+    }
+    assert.ok(recorded.some((c: { object_identity: string }) => c.object_identity === "public.todos"));
+    assert.ok(!recorded.some((c: { object_identity: string | null }) => c.object_identity?.startsWith("public.lint_probe")),
+      "a rejected batch leaves no record");
+
+    // a schema change through execute_sql (owner role, outside any release) is flagged
+    await call(admin, "execute_sql", { app: APP, sql: "create index todos_title_idx on public.todos (title)", write: true });
+    const drift = (await call(admin, "get_app", { app: APP })).schema_drift;
+    assert.equal(drift.count, 1, JSON.stringify(drift));
+    assert.ok(drift.last_at);
+    const [outside] = (await call(admin, "list_schema_changes", { app: APP })).changes;
+    assert.equal(outside.command_tag, "CREATE INDEX");
+    assert.equal(outside.object_identity, "public.todos_title_idx");
+    assert.equal(outside.application_name, "platform-execute-sql");
+    assert.equal(outside.in_release, false);
+
+    // the owner role cannot switch the recording off nor rewrite it
+    for (const sql of [
+      "alter event trigger platform_record_ddl disable",
+      "drop event trigger platform_record_drop",
+      "drop schema _platform cascade",
+      "delete from _platform.schema_changes",
+      "set session_replication_role = replica",
+    ]) {
+      const result = await callRaw(admin, "execute_sql", { app: APP, sql, write: true });
+      assert.equal(result.isError, true, sql);
+      assert.match(result.content[0]!.text, /must be owner|permission denied/, sql);
+    }
+
+    // a migration through a release is not flagged, and the count restarts from that release
+    const migration = { version: `${RUN}6`, name: "drop_title_index", sql: "drop index public.todos_title_idx;" };
+    assert.deepEqual((await call(admin, "apply_migrations", { app: APP, migrations: [migration] })).applied, [migration.version]);
+    assert.equal((await call(admin, "get_app", { app: APP })).schema_drift.count, 0);
+    const all = (await call(admin, "list_schema_changes", { app: APP, all: true })).changes;
+    assert.equal(all[0].command_tag, "DROP INDEX");
+    assert.equal(all[0].in_release, true);
+    assert.equal(all[1].command_tag, "CREATE INDEX");
+    assert.equal(all[1].in_release, false);
   });
 
   test("4. deploy functions (tar + upload + finalize) and secrets", async () => {

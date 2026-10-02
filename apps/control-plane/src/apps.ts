@@ -10,6 +10,7 @@ import {
   databaseIsReadOnlySql,
   databaseReadOnlySql,
   dropAppSql,
+  schemaChangesSql,
   terminateAppSessionsSql,
 } from "@platform/sql";
 import { type AppInfo, SLUG_RE } from "@platform/shared";
@@ -191,7 +192,17 @@ async function provisionDatabase(slug: string, secrets: AppSecrets) {
     if (!exists) await c.query(createDatabaseSql(id));
     await runAll(c, databaseGrantsSql(id));
   });
-  await withAdmin(roles.database, (c) => runAll(c, appDatabaseSql(id)));
+  await withAdmin(roles.database, async (c) => {
+    await runAll(c, appDatabaseSql(id));
+    await c.query(schemaChangesSql());
+  });
+}
+
+/** DDL event trigger (PLAN_1 §7) for apps created before it was in the template. Idempotent. */
+async function ensureSchemaChanges(slug: string) {
+  const roles = appRoles(dbId(slug));
+  const exists = await withAdmin("postgres", async (c) => (await c.query(databaseExistsSql, [roles.database])).rowCount === 1);
+  if (exists) await withAdmin(roles.database, (c) => c.query(schemaChangesSql()));
 }
 
 async function startServices(slug: string, secrets: AppSecrets) {
@@ -324,6 +335,7 @@ export async function syncAll() {
     try {
       await prepareDirectories(app.slug);
       await writeEdgeConfig(app);
+      await ensureSchemaChanges(app.slug);
       // apps stopped before B8 made them read-only, or a stop/start interrupted half-way
       await setDatabaseReadOnly(app.slug, app.status === "stopped");
       if (app.status === "stopped") {
