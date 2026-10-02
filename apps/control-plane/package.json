@@ -6,7 +6,9 @@
   "scripts": {
     "start": "node src/index.ts",
     "typecheck": "tsc --noEmit",
-    "e2e": "node --test --test-concurrency=1 test/e2e.test.ts"
+    "e2e": "node --test --test-concurrency=1 test/e2e.test.ts",
+    "test": "node --test test/studio-policy.test.ts",
+    "e2e:studio": "node --test --test-concurrency=1 test/studio.e2e.test.ts"
   },
   "dependencies": {
     "@hono/node-server": "^2.1.3",

@@ -4,10 +4,12 @@ import type { ReadableStream as WebReadableStream } from "node:stream/web";
 import { authenticate } from "./auth.ts";
 import { receiveUpload } from "./deployments.ts";
 import { buildMcpServer } from "./mcp.ts";
+import { studioPublicRoutes } from "./studio/routes.ts";
 
 export const app = new Hono();
 
 app.get("/health", (c) => c.json({ ok: true }));
+app.route("/", studioPublicRoutes);
 
 app.all("/mcp", async (c) => {
   const user = await authenticate(c.req.header("authorization"));

@@ -1,6 +1,14 @@
-import { bootstrapSql, platformSql, TEMPLATE_DB, templateSql } from "@platform/sql";
+import {
+  bootstrapSql,
+  platformSql,
+  STUDIO_META_DEFAULT,
+  studioMetaDefaultDatabaseSql,
+  studioMetaDefaultRoleSql,
+  TEMPLATE_DB,
+  templateSql,
+} from "@platform/sql";
 import { config } from "./config.ts";
-import { withAdmin } from "./db.ts";
+import { runAll, withAdmin } from "./db.ts";
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -52,9 +60,21 @@ async function ensurePlatformDb() {
   await withAdmin(db, (c) => c.query(platformSql()));
 }
 
+/** Empty database + unprivileged role for the shared postgres-meta's default connection (Studio). */
+async function ensureStudioMetaDefault() {
+  await withAdmin("template1", async (c) => {
+    await runAll(c, studioMetaDefaultRoleSql(config.studio.metaDefaultPassword));
+    const exists = (await c.query("select 1 from pg_database where datname = $1", [STUDIO_META_DEFAULT])).rowCount === 1;
+    if (!exists) await c.query(`create database ${STUDIO_META_DEFAULT}`);
+    await runAll(c, studioMetaDefaultDatabaseSql());
+  });
+  await withAdmin(STUDIO_META_DEFAULT, (c) => c.query("revoke all on schema public from public"));
+}
+
 export async function initCluster() {
   await waitForPostgres();
   await withAdmin("postgres", (c) => c.query(bootstrapSql()));
   await ensureTemplate();
   await ensurePlatformDb();
+  await ensureStudioMetaDefault();
 }

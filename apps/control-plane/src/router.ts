@@ -7,10 +7,21 @@ export interface AppRoute {
   postgrest: string;
 }
 
+export interface StudioRoute {
+  host: string;
+  upstream: string;
+  forwardAuth: string;
+  controlPlane: string;
+}
+
 export interface Router {
   upsertApp(route: AppRoute): Promise<void>;
   removeApp(slug: string): Promise<void>;
+  upsertStudio(route: StudioRoute): Promise<void>;
 }
+
+/** Headers set from the forward auth response; any value sent by the client is dropped first. */
+const IDENTITY_HEADERS = ["X-Platform-User", "X-Platform-Role", "X-Platform-Apps", "X-Platform-Signature"];
 
 // undici sends Sec-Fetch-Mode, which makes Caddy enforce the Origin check: send an allowed one.
 /** Caddy admin JSON API. Bootstrap config: routes "apps" (public) and "internal-apps" (edge -> API). */
@@ -124,6 +135,47 @@ export class CaddyRouter implements Router {
         { handler: "rewrite", strip_path_prefix: `/${route.slug}` },
         { handler: "subroute", routes: this.apiRoutes(route) },
       ],
+    });
+  }
+
+  /** Studio behind the control plane's forward auth (equivalent of `forward_auth ... copy_headers`). */
+  async upsertStudio(route: StudioRoute): Promise<void> {
+    const copyIdentity = IDENTITY_HEADERS.map((name) => ({
+      match: [{ not: [{ vars: { [`{http.reverse_proxy.header.${name}}`]: [""] } }] }],
+      handle: [{ handler: "headers", request: { set: { [name]: [`{http.reverse_proxy.header.${name}}`] } } }],
+    }));
+    await this.delete("studio");
+    await this.call("POST", "/id/apps/handle/0/routes", {
+      "@id": "studio",
+      match: [{ host: [route.host] }],
+      terminal: true,
+      handle: [{
+        handler: "subroute",
+        routes: [
+          { handle: [{ handler: "headers", request: { delete: IDENTITY_HEADERS } }] },
+          {
+            match: [{ path: ["/_platform/*"] }],
+            handle: [{ handler: "reverse_proxy", upstreams: [{ dial: route.controlPlane }] }],
+            terminal: true,
+          },
+          {
+            handle: [
+              {
+                handler: "reverse_proxy",
+                upstreams: [{ dial: route.forwardAuth }],
+                rewrite: { method: "GET", uri: "/studio/verify" },
+                headers: {
+                  request: {
+                    set: { "X-Forwarded-Method": ["{http.request.method}"], "X-Forwarded-Uri": ["{http.request.uri}"] },
+                  },
+                },
+                handle_response: [{ match: { status_code: [2] }, routes: [{ handle: [{ handler: "vars" }] }, ...copyIdentity] }],
+              },
+              { handler: "reverse_proxy", upstreams: [{ dial: route.upstream }] },
+            ],
+          },
+        ],
+      }],
     });
   }
 

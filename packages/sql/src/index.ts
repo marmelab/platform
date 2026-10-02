@@ -122,3 +122,46 @@ export function dropAppSql(appId: string): string[] {
     `drop role if exists ${r.owner}`,
   ];
 }
+
+/**
+ * Studio connects as the owner role (SQL editor, table editor, Auth > Users). Like Supabase's "postgres" it needs
+ * BYPASSRLS (auth.* tables have RLS enabled without policies), read access to every auth table and the RLS roles
+ * for impersonation (SET ROLE, without inheriting their privileges). Cluster-level, run in "postgres".
+ */
+export function studioClusterSql(appId: string): string[] {
+  const r = appRoles(appId);
+  return [
+    `alter role ${r.owner} bypassrls`,
+    `grant anon, authenticated, service_role to ${r.owner} with inherit false, set true`,
+  ];
+}
+
+/** Run inside the app database as supabase_admin. Re-runnable. */
+export function studioDatabaseSql(appId: string): string[] {
+  const r = appRoles(appId);
+  return [
+    `grant usage on schema graphql, graphql_public to ${r.owner}`,
+    `grant select on all tables in schema auth to ${r.owner}`,
+    `alter default privileges for role ${r.authAdmin} in schema auth grant select on tables to ${r.owner}`,
+    `grant trigger on auth.users to ${r.owner}`,
+  ];
+}
+
+export const STUDIO_META_DEFAULT = "studio_meta_default";
+
+/**
+ * Default connection of the shared postgres-meta (used when a request carries no x-connection-encrypted header):
+ * an empty database and a role without any privilege, so that a request without a project reaches nothing.
+ */
+export function studioMetaDefaultRoleSql(password: string): string[] {
+  const role = STUDIO_META_DEFAULT;
+  return [
+    ensureRole(role),
+    `alter role ${role} with login noinherit nocreaterole nocreatedb nobypassrls connection limit 5 password ${secret(password)}`,
+  ];
+}
+
+export function studioMetaDefaultDatabaseSql(): string[] {
+  const db = STUDIO_META_DEFAULT;
+  return [`revoke all on database ${db} from public`, `grant connect on database ${db} to ${db}`];
+}

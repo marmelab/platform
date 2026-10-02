@@ -18,9 +18,11 @@ import { many, one, platform, runAll, withAdmin } from "./db.ts";
 import { currentTarget, switchCurrent, writeFileAtomic } from "./fsutil.ts";
 import { DockerOrchestrator, type Orchestrator } from "./orchestrator.ts";
 import { CaddyRouter, type Router } from "./router.ts";
+import { MultiHeadStudio, type StudioRegistry } from "./studio/registry.ts";
 
 export const orchestrator: Orchestrator = new DockerOrchestrator();
 export const router: Router = new CaddyRouter();
+export const studio: StudioRegistry = new MultiHeadStudio(router);
 
 export class UserError extends Error {}
 
@@ -102,6 +104,7 @@ export async function appInfo(app: AppRow & { member_role: string }): Promise<Ap
     role: app.member_role,
     frontend_version: live("frontend"),
     functions_version: live("functions"),
+    studio_url: studio.deepLink(app.slug),
     created_at: app.created_at.toISOString(),
   };
 }
@@ -232,6 +235,7 @@ export async function provision(app: AppRow) {
   const secrets = appSecrets(app);
   try {
     await provisionDatabase(app.slug, secrets);
+    await studio.register(app);
     await startServices(app.slug, secrets);
     await prepareDirectories(app.slug);
     await writeEdgeConfig(app);
@@ -255,7 +259,7 @@ export async function provision(app: AppRow) {
 
 export async function createApp(user: User, name: string, requestedSlug?: string) {
   const slug = requestedSlug ?? slugify(name);
-  if (!SLUG_RE.test(slug) || ["api", "admin", "studio", "www"].includes(slug)) {
+  if (!SLUG_RE.test(slug) || ["api", "admin", "studio", "www", "default"].includes(slug)) {
     throw new UserError(`invalid slug "${slug}": provide a slug matching ${SLUG_RE}`);
   }
   let app = await one<AppRow>("select * from apps where slug = $1", [slug]);
@@ -297,6 +301,7 @@ export async function syncAll() {
       console.error(`sync ${app.slug} failed`, error);
     }
   }
+  await studio.syncAll(apps).catch((error) => console.error("studio sync failed", error));
 }
 
 export async function pathExists(path: string) {
@@ -306,6 +311,7 @@ export async function pathExists(path: string) {
 /** Symmetric of provision(): routes, containers, database and roles, files, rows. */
 export async function deleteApp(slug: string) {
   await router.removeApp(slug);
+  await studio.unregister(slug);
   await orchestrator.removeApp(slug);
   await withAdmin("postgres", (c) => runAll(c, dropAppSql(dbId(slug))));
   await rm(join(config.dataDir.appsConfig, `${slug}.json`), { force: true });

@@ -6,6 +6,8 @@ const env = (name: string, fallback?: string): string => {
 
 export const config = {
   port: Number(env("PORT", "3000")),
+  /** Internal listener (Caddy forward auth, Studio project config): never routed publicly. */
+  internalPort: Number(env("INTERNAL_PORT", "3001")),
   pg: {
     host: env("PGHOST", "db"),
     port: Number(env("PGPORT", "5432")),
@@ -43,6 +45,18 @@ export const config = {
   edgeAdminToken: env("PLATFORM_EDGE_ADMIN_TOKEN"),
   /** First boot of a function may download its npm: dependencies. */
   warmTimeoutMs: Number(env("WARM_TIMEOUT_MS", "60000")),
+  studio: {
+    host: env("STUDIO_HOST", "studio.localhost"),
+    upstream: env("STUDIO_UPSTREAM", "studio:3000"),
+    forwardAuth: env("STUDIO_FORWARD_AUTH", "control-plane:3001"),
+    /** HMAC key of the X-Platform-* headers trusted by Studio. */
+    headerSecret: env("PLATFORM_STUDIO_HEADER_SECRET"),
+    /** Bearer token Studio uses to read project configs from the internal listener. */
+    configToken: env("PLATFORM_STUDIO_CONFIG_TOKEN"),
+    /** Password of the unprivileged role behind postgres-meta's default connection. */
+    metaDefaultPassword: env("STUDIO_META_DEFAULT_PASSWORD"),
+  },
+  sessionTtlSeconds: Number(env("SESSION_TTL_SECONDS", String(12 * 3600))),
   uploadTtlSeconds: Number(env("UPLOAD_TTL_SECONDS", "900")),
   maxUploadBytes: Number(env("MAX_UPLOAD_BYTES", String(200 * 1024 * 1024))),
 };
@@ -54,4 +68,5 @@ const portSuffix = () => (["80", "443", ""].includes(config.publicPort) ? "" : `
 export const appHost = (slug: string) => `${slug}.${config.appsDomain}`;
 export const appUrl = (slug: string) => `${config.publicScheme}://${appHost(slug)}${portSuffix()}`;
 export const apiUrl = () => `${config.publicScheme}://${config.apiHost}${portSuffix()}`;
+export const studioUrl = (path = "") => `${config.publicScheme}://${config.studio.host}${portSuffix()}${path}`;
 export const internalAppUrl = (slug: string) => `${config.internalGateway}/${slug}`;

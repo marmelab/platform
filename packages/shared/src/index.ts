@@ -74,6 +74,8 @@ export interface AppInfo {
   role: string;
   frontend_version: number | null;
   functions_version: number | null;
+  /** Deep link to the app in Studio (behind the platform login). */
+  studio_url: string;
   created_at: string;
 }
 
