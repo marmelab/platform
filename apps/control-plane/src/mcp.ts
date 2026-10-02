@@ -299,15 +299,16 @@ export function buildMcpServer(user: User): McpServer {
     {
       description: "Irreversibly delete the app (owner or admin only): database, users, files, functions, secrets, " +
         "deployments and members. A final backup (database dump and deployed files, kept on the platform host) is " +
-        "taken first and its path returned; if it fails, nothing is deleted. Only with the user's explicit consent; " +
-        "confirm must repeat the slug.",
+        "taken first and its path returned; if it fails, nothing is deleted. backup: false skips that backup: the " +
+        "data is then lost for good, with no way to restore it (only when the user explicitly asks for it). Only " +
+        "with the user's explicit consent; confirm must repeat the slug.",
       inputSchema: t.delete_app,
     },
-    ({ app, confirm }) =>
+    ({ app, confirm, backup }) =>
       run(async () => {
         const target = await appForUser(user, app);
         requireOwner(user, target, "delete the app");
-        return deleteAppConfirmed(user, target, confirm);
+        return deleteAppConfirmed(user, target, confirm, backup);
       }),
   );
 

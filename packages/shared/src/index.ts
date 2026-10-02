@@ -98,6 +98,8 @@ export const toolInputs = {
   delete_app: {
     app: slug,
     confirm: z.string().describe("Must repeat the app slug: deletion is irreversible, ask the user first"),
+    backup: z.boolean().default(true)
+      .describe("false skips the final backup: the data is then lost for good. Only if the user explicitly asks"),
   },
   get_logs: {
     app: slug,

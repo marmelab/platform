@@ -38,8 +38,9 @@ export async function cleanup(apps: string[], users: string[]) {
   if (KEEP) {
     console.log(`E2E_KEEP=1: kept ${apps.join(", ")}`);
   } else {
-    for (const slug of apps) attempt(() => cli(["delete-app", slug]));
-    // delete-app always takes a final backup (B8): remove the run's own, they would pile up in the backups volume
+    // without the final backup (B8): test data, nothing to keep
+    for (const slug of apps) attempt(() => cli(["delete-app", slug, "--no-backup"]));
+    // backups the tests took themselves (e2e test 12): remove them, they would pile up in the backups volume
     for (const slug of apps.filter((s) => /^[a-z][a-z0-9-]*$/.test(s))) {
       attempt(() => execFileSync("docker", ["exec", "plat-control-plane", "sh", "-c", `rm -rf /data/backups/${slug}-*`]));
     }

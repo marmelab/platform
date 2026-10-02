@@ -23,6 +23,8 @@ const MCP_URL = env.PLATFORM_URL ?? "http://api.localhost:8100/mcp";
 const ADMIN_EMAIL = env.PLATFORM_ADMIN_EMAIL ?? "admin@example.com";
 const APP = `e2e-${runId()}`;
 const APP_URL = `http://${APP}.localhost:8100`;
+/** Deleted with backup: false (test 13). */
+const NO_BACKUP_APP = `${APP}-nb`;
 const RUN = Date.now();
 const OUTSIDER = `${APP}-outsider@example.com`;
 const OWNER = `${APP}-owner@example.com`;
@@ -95,7 +97,7 @@ describe("control plane M2 e2e", () => {
 
   after(async () => {
     for (const client of [admin, owner, collab]) await client?.close();
-    await cleanup([APP], [OUTSIDER, OWNER, COLLAB]);
+    await cleanup([APP, NO_BACKUP_APP], [OUTSIDER, OWNER, COLLAB]);
   });
 
   test("1. whoami", async () => {
@@ -617,5 +619,24 @@ describe("control plane M2 e2e", () => {
     assert.match(inCp("tar", "-tzf", `${deleted.backup}/sites.tar.gz`).toString(), new RegExp(`^${APP}/current`, "m"));
     assert.match(inCp("tar", "-tzf", `${deleted.backup}/functions.tar.gz`).toString(), /\/ping\//);
     assert.equal(JSON.parse(inCp("cat", `${deleted.backup}/manifest.json`).toString()).slug, APP);
+  });
+
+  test("13. delete_app with backup: false: nothing kept, audited as skipped", async () => {
+    await call(admin, "create_app", { name: "No backup", slug: NO_BACKUP_APP });
+    await call(admin, "execute_sql", { app: NO_BACKUP_APP, sql: "create table public.gone (id int)", write: true });
+    await refused(admin, "delete_app", { app: NO_BACKUP_APP, confirm: "yes", backup: false },
+      new RegExp(`irreversible: pass confirm="${NO_BACKUP_APP}"`));
+
+    const deleted = await call(admin, "delete_app", { app: NO_BACKUP_APP, confirm: NO_BACKUP_APP, backup: false });
+    assert.deepEqual(deleted, { slug: NO_BACKUP_APP, deleted: true, backup: null, backup_skipped: true });
+    await refused(admin, "get_app", { app: NO_BACKUP_APP }, /not found/);
+    const backups = execFileSync("docker", ["exec", "plat-control-plane", "sh", "-c",
+      `ls -d /data/backups/${NO_BACKUP_APP}-* 2>/dev/null || true`], { encoding: "utf8" });
+    assert.equal(backups.trim(), "", "no backup directory");
+    assert.equal(
+      psql(`select concat_ws(',', details->>'backup', details->>'backup_skipped') from audit_log
+        where action = 'delete_app' and app_id is null and details->>'slug' = '${NO_BACKUP_APP}'`),
+      "true",
+    );
   });
 });
