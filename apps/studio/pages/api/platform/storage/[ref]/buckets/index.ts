@@ -1,9 +1,7 @@
-import { createClient } from '@supabase/supabase-js'
 import { NextApiRequest, NextApiResponse } from 'next'
 
 import apiWrapper from '@/lib/api/apiWrapper'
-
-const supabase = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_KEY!)
+import { projectAdminClient } from '@/platform/projectApi'
 
 export default (req: NextApiRequest, res: NextApiResponse) => apiWrapper(req, res, handler)
 
@@ -23,6 +21,7 @@ async function handler(req: NextApiRequest, res: NextApiResponse) {
 }
 
 const handleGet = async (req: NextApiRequest, res: NextApiResponse) => {
+  const supabase = projectAdminClient(req)
   const { limit, offset, search, sortColumn, sortOrder } = parseStoragePaginationParams(req)
 
   const { data, error } = await supabase.storage.listBuckets({
@@ -40,6 +39,7 @@ const handleGet = async (req: NextApiRequest, res: NextApiResponse) => {
 }
 
 const handlePost = async (req: NextApiRequest, res: NextApiResponse) => {
+  const supabase = projectAdminClient(req)
   const {
     id,
     public: isPublicBucket,

@@ -1,9 +1,7 @@
-import { createClient } from '@supabase/supabase-js'
 import { NextApiRequest, NextApiResponse } from 'next'
 
 import apiWrapper from '@/lib/api/apiWrapper'
-
-const supabase = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_KEY!)
+import { projectAdminClient } from '@/platform/projectApi'
 
 export default (req: NextApiRequest, res: NextApiResponse) => apiWrapper(req, res, handler)
 
@@ -22,6 +20,7 @@ async function handler(req: NextApiRequest, res: NextApiResponse) {
 }
 
 const handlePatch = async (req: NextApiRequest, res: NextApiResponse) => {
+  const supabase = projectAdminClient(req)
   const { id } = req.query
   const { ban_duration } = req.body
   const { data, error } = await supabase.auth.admin.updateUserById(id as string, { ban_duration })
@@ -31,6 +30,7 @@ const handlePatch = async (req: NextApiRequest, res: NextApiResponse) => {
 }
 
 const handleDelete = async (req: NextApiRequest, res: NextApiResponse) => {
+  const supabase = projectAdminClient(req)
   const { id } = req.query
   const { data, error } = await supabase.auth.admin.deleteUser(id as string)
 

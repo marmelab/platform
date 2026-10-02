@@ -3,6 +3,7 @@ import { NextApiRequest, NextApiResponse } from 'next'
 import { fetchPost } from '@/data/fetchers'
 import { constructHeaders } from '@/lib/api/apiHelpers'
 import apiWrapper from '@/lib/api/apiWrapper'
+import { projectApi } from '@/platform/projectApi'
 
 export default (req: NextApiRequest, res: NextApiResponse) => apiWrapper(req, res, handler)
 
@@ -19,12 +20,13 @@ async function handler(req: NextApiRequest, res: NextApiResponse) {
 }
 
 const handlePost = async (req: NextApiRequest, res: NextApiResponse) => {
+  const { url: apiUrl, serviceKey } = projectApi(req)
   const headers = constructHeaders({
     'Content-Type': 'application/json',
     Accept: 'application/json',
-    Authorization: `Bearer ${process.env.SUPABASE_SERVICE_KEY}`,
+    Authorization: `Bearer ${serviceKey}`,
   })
-  const url = `${process.env.SUPABASE_URL}/auth/v1/invite`
+  const url = `${apiUrl}/auth/v1/invite`
   const payload = { email: req.body.email }
 
   const response = await fetchPost(url, payload, { headers })
