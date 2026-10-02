@@ -87,6 +87,14 @@ docker compose -p plat -f deploy/docker-compose.yml start
 
 Seed accounts exist only after `deploy/install.sh --seed`. Their passwords are fixed development credentials for the local stack only.
 
+### Trying the seeded apps
+
+`todo-app` and `notes-app` are the same example ([examples/todo-app](examples/todo-app)) deployed twice: they look identical, but each is a separate instance with its own database and its own user accounts.
+
+- **As an app user**: open http://todo-app.localhost:8100 or http://notes-app.localhost:8100 and sign in as `demo-user@example.com` / `demo-password`. You can add, check and delete todos; the "x of y done" counter comes from the `summary` Edge Function. You can also sign up with a new account (email confirmation is automatic until SMTP is configured): it won't see `demo-user`'s todos (RLS), and it won't exist in the other app.
+- **As an app builder, in Studio**: sign in to http://studio.localhost:8100 as alice (only `todo-app` is listed) or bob (only `notes-app`). Users are under Auth > Users, todos under Table editor > `todos`. The admin sees every app.
+- **As an app builder, with Claude Code**: set `PLATFORM_TOKEN` to `SEED_ALICE_TOKEN`, install the plugin (see [Deploy an app with Claude Code](#deploy-an-app-with-claude-code)), then ask for instance "show me the logs of todo-app" or "add a priority column to the todos and redeploy". With alice's token, `notes-app` is reported as not found.
+
 To create other app builders for manual testing (the CLI runs inside the control plane container):
 
 ```bash
