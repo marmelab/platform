@@ -12,7 +12,7 @@ const MAX_ROWS = 200;
  * Connects to the app database as app_<id>_owner (never as postgres / supabase_admin). The application name shows up
  * in the schema changes recorded by the DDL event trigger (schema-changes.ts).
  */
-function withOwner<T>(app: AppRow, fn: (client: pg.Client) => Promise<T>, applicationName = "platform") {
+export function withOwner<T>(app: AppRow, fn: (client: pg.Client) => Promise<T>, applicationName = "platform") {
   const roles = appRoles(dbId(app.slug));
   return withClient(
     { database: roles.database, user: roles.owner, password: appSecrets(app).passwords.owner, applicationName },

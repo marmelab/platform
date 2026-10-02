@@ -110,7 +110,8 @@ describe("control plane M2 e2e", () => {
     const tools = (await admin.listTools()).tools.map((t) => t.name).sort();
     for (const name of ["apply_migrations", "create_app", "create_deployment", "execute_sql", "finalize_deployment",
       "get_app", "get_logs", "list_apps", "list_deployments", "list_members", "list_secrets", "rollback", "set_secrets",
-      "add_member", "remove_member", "stop_app", "start_app", "delete_app", "list_schema_changes", "whoami"]) {
+      "add_member", "remove_member", "stop_app", "start_app", "delete_app", "list_schema_changes", "whoami",
+      "list_auth_users", "invite_user", "delete_user", "ban_user", "unban_user"]) {
       assert.ok(tools.includes(name), `tool ${name} missing`);
     }
   });
@@ -533,6 +534,10 @@ describe("control plane M2 e2e", () => {
         ["create_deployment", { app: APP, kind: "frontend" }],
         ["get_logs", { app: APP }],
         ["create_app", { name: "Demo", slug: APP }],
+        ["list_auth_users", { app: APP }],
+        ["invite_user", { app: APP, email: `intruder-${RUN}@example.com` }],
+        ["delete_user", { app: APP, email: `alice-${RUN}@example.com` }],
+        ["ban_user", { app: APP, email: `alice-${RUN}@example.com` }],
       ] as const) {
         const result = await callRaw(outsider, name, args);
         assert.equal(result.isError, true, `${name} should fail for a non-member`);
@@ -575,6 +580,82 @@ describe("control plane M2 e2e", () => {
     const audited = psql(`select count(*) from audit_log l join apps a on a.id = l.app_id
       where a.slug = '${APP}' and l.action in ('add_member', 'remove_member')`);
     assert.equal(audited, "4");
+  });
+
+  test("10b. app users (B5): list, invite, ban, delete, by any member", async () => {
+    const alice = `alice-${RUN}@example.com`;
+    const guest = `guest-${RUN}@example.com`;
+    const listed = await call(collab, "list_auth_users", { app: APP });
+    const signedUp = listed.users.find((u: { email: string }) => u.email === alice);
+    assert.ok(signedUp, `test 6 user listed: ${JSON.stringify(listed)}`);
+    assert.equal(signedUp.confirmed, true);
+    assert.equal(signedUp.banned, false);
+    assert.ok(signedUp.last_sign_in_at);
+    assert.doesNotMatch(JSON.stringify(listed), /encrypted_password|password|token/);
+
+    // no SMTP: the user is created and the invite link returned to the caller
+    const invited = await call(collab, "invite_user", { app: APP, email: guest });
+    assert.equal(invited.email_sent, false);
+    assert.equal(invited.user.email, guest);
+    assert.equal(invited.user.confirmed, false);
+    assert.ok(invited.user.invited_at);
+    assert.ok(invited.invite_link.startsWith(`${APP_URL}/auth/v1/verify?`), "public invite link");
+    assert.match(invited.invite_link, /type=invite/);
+    // a pending invitation can be sent again (new link, the previous one no longer works); a registered user cannot
+    const again = await call(owner, "invite_user", { app: APP, email: guest });
+    assert.equal(again.user.id, invited.user.id);
+    assert.notEqual(again.invite_link, invited.invite_link);
+    await refused(owner, "invite_user", { app: APP, email: alice }, /already been registered/);
+    const filtered = await call(admin, "list_auth_users", { app: APP, filter: `GUEST-${RUN}` });
+    assert.deepEqual(filtered.users.map((u: { id: string }) => u.id), [invited.user.id], "case-insensitive filter");
+    assert.equal(filtered.total, 1);
+    assert.equal((await call(owner, "list_auth_users", { app: APP, filter: "%" })).total, 0, "LIKE wildcards are escaped");
+    const total = listed.total + 1;
+    const last = await call(owner, "list_auth_users", { app: APP, page: total, per_page: 1 });
+    assert.equal(last.total, total);
+    assert.equal(last.users.length, 1);
+    assert.equal((await call(owner, "list_auth_users", { app: APP, page: total + 1, per_page: 1 })).users.length, 0);
+
+    // opening the link confirms the address and signs the person in on the app
+    const accepted = await fetch(again.invite_link, { redirect: "manual" });
+    assert.equal(accepted.status, 303);
+    const location = accepted.headers.get("location") ?? "";
+    assert.ok(location.startsWith(APP_URL) && location.includes("access_token="), "redirected to the app with a session");
+    assert.equal((await call(collab, "list_auth_users", { app: APP, filter: guest })).users[0].confirmed, true);
+
+    const options = { auth: { persistSession: false, autoRefreshToken: false } };
+    const signIn = () =>
+      createClient(APP_URL, app.anon_key, options).auth.signInWithPassword({ email: alice, password: "password-123" });
+    const banned = await call(collab, "ban_user", { app: APP, email: alice });
+    assert.equal(banned.banned, true);
+    assert.match((await signIn()).error?.message ?? "", /banned/i);
+    const unbanned = await call(collab, "unban_user", { app: APP, user_id: banned.id });
+    assert.equal(unbanned.banned, false);
+    assert.ifError((await signIn()).error);
+
+    await refused(collab, "delete_user", { app: APP }, /either user_id or email/);
+    await refused(collab, "delete_user", { app: APP, user_id: invited.user.id, email: guest }, /either user_id or email/);
+    assert.deepEqual(await call(collab, "delete_user", { app: APP, email: guest }), {
+      deleted: true,
+      id: invited.user.id,
+      email: guest,
+    });
+    await refused(collab, "delete_user", { app: APP, user_id: invited.user.id }, /no user/);
+    assert.equal((await call(collab, "list_auth_users", { app: APP })).total, listed.total);
+
+    // audited with the acting member, never with the invite link
+    const actions = "('invite_user', 'delete_user', 'ban_user', 'unban_user')";
+    const audited = psql(`select string_agg(l.action || ':' || (l.details->>'email') || ':' || u.email, ',' order by l.id)
+      from audit_log l join apps a on a.id = l.app_id join users u on u.id = l.user_id
+      where a.slug = '${APP}' and l.action in ${actions}`);
+    assert.equal(
+      audited,
+      [`invite_user:${guest}:${COLLAB}`, `invite_user:${guest}:${OWNER}`, `ban_user:${alice}:${COLLAB}`,
+        `unban_user:${alice}:${COLLAB}`, `delete_user:${guest}:${COLLAB}`].join(","),
+    );
+    const details = psql(`select string_agg(l.details::text, ' ') from audit_log l join apps a on a.id = l.app_id
+      where a.slug = '${APP}' and l.action in ${actions}`);
+    assert.doesNotMatch(details, /verify|token|http/);
   });
 
   const runningContainers = () =>
@@ -621,6 +702,13 @@ describe("control plane M2 e2e", () => {
     await refused(owner, "create_deployment", { app: APP, kind: "frontend" }, stopped);
     await refused(owner, "finalize_deployment", { deployment_id: created.deployment_id }, stopped);
     await refused(owner, "rollback", { app: APP, kind: "frontend" }, stopped);
+    const alice = `alice-${RUN}@example.com`;
+    await refused(collab, "invite_user", { app: APP, email: `late-${RUN}@example.com` }, stopped);
+    await refused(collab, "delete_user", { app: APP, email: alice }, stopped);
+    await refused(collab, "ban_user", { app: APP, email: alice }, stopped);
+    await refused(collab, "unban_user", { app: APP, email: alice }, stopped);
+    const appUsers = await call(collab, "list_auth_users", { app: APP, filter: alice });
+    assert.equal(appUsers.users[0]?.email, alice, "app users are still listed, from the read-only database");
     assert.ok((await call(collab, "list_secrets", { app: APP })).length > 0, "reads stay available");
     assert.ok((await call(collab, "list_deployments", { app: APP })).length > 0);
     assert.equal(psql(`select count(*) from pg_tables where tablename = 'stopped_probe'`, database), "0");
