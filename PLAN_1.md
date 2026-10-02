@@ -284,7 +284,7 @@ Skill `admin-deploy`, pour une urgence (CI en panne), une app sans CI ou une rep
 
 - **CI comme seul chemin de publication** : contrôles de sécurité de l'entreprise et revue de code avant tout déploiement, garantis par les claims OIDC (`repository_id`, `ref_protected`, `job_workflow_ref`, §5.1). Le code déployé est toujours un commit du repo lié, consultable par l'admin sur GitHub.
 - **Linter** après chaque `apply_migrations` : tables du schéma `public` sans RLS, policies `USING (true)` sur des tables sensibles, fonctions `SECURITY DEFINER` exposées, etc. On s'appuie sur **splinter**, le linter open source de Supabase. Résultat visible dans le retour MCP, sur la PR et dans l'admin.
-- **Contournements restants** : l'éditeur SQL de Studio et `execute_sql(write=true)` agissent avec le rôle owner et peuvent modifier le schéma hors CI. Proposition : un event trigger DDL qui journalise les changements faits hors release, signalés dans l'admin.
+- **Changements de schéma hors CI : acceptés et détectés.** L'éditeur SQL de Studio et `execute_sql(write=true)` agissent avec le rôle owner et peuvent modifier le schéma hors CI. On les garde (corrections de données, urgences), mais un event trigger DDL (dans `template_supabase`) journalise tout changement fait hors d'une release, et l'app est signalée dans l'admin.
 - La clé `service_role` n'est jamais renvoyée par `get_app` (seulement injectée dans les edge functions).
 - `execute_sql` en écriture : flag explicite et journalisation dans `audit_log`.
 - Isolation réseau : seuls Caddy et le control plane sont exposés, les conteneurs d'app sont sur un réseau interne.
@@ -300,7 +300,7 @@ Auth de l'admin : comptes locaux en V1, SSO entreprise (OIDC) ensuite.
 - **Dashboard** : nombre d'apps par statut, RAM/CPU/disque de la VM, taille du cluster Postgres, alertes (apps en erreur, linter, backups ratés).
 - **Utilisateurs** : CRUD, rôle, activation.
 - **Tokens** : création (valeur affichée une seule fois), révocation, dernière utilisation, scopes.
-- **Apps** : liste de **toutes les apps**, filtrable et triable : nom et URL, statut, propriétaire (nom et email), **lien vers le repo GitHub**, dernier déploiement (date, commit, auteur, lien du run, source CI ou admin, résultat), **aperçu de la charge** (requêtes et 5xx sur 24 h avec sparkline 7 jours, taille DB, mémoire des conteneurs, depuis `app_metrics`), drapeaux (déployée hors CI, lints acceptés, abandonnée). La fiche app comprend :
+- **Apps** : liste de **toutes les apps**, filtrable et triable : nom et URL, statut, propriétaire (nom et email), **lien vers le repo GitHub**, dernier déploiement (date, commit, auteur, lien du run, source CI ou admin, résultat), **aperçu de la charge** (requêtes et 5xx sur 24 h avec sparkline 7 jours, taille DB, mémoire des conteneurs, depuis `app_metrics`), drapeaux (déployée hors CI, schéma modifié hors CI, lints acceptés, abandonnée). La fiche app comprend :
   - statut des services, actions **Stop / Start / Supprimer** ;
   - releases (commit, run de CI, diff GitHub depuis la précédente) et leurs déploiements (front, fonctions, migrations) avec **rollback** ;
   - edge functions, secrets (noms seulement) ;
@@ -346,7 +346,7 @@ examples/todo-app/    # app de test end-to-end (Vite + supabase-js + 1 edge func
 | M1 | **Spike Edge Functions multi-tenant** | Main worker qui route 2 apps, env isolées, `verify_jwt`, import `npm:` |
 | M2 | **Control plane + MCP minimal** | `create_app`, `get_app`, `apply_migrations`, `create/finalize_deployment` (front + fonctions), `get_logs` |
 | M3 | **Plugin Claude Code** | Sur `examples/todo-app`, « déploie l'app sur la plateforme » fonctionne de bout en bout depuis un repo vierge (déploiement direct depuis le poste, remplacé par M3bis) |
-| M3bis | **Déploiement par la CI** | OIDC GitHub vérifié par le control plane (repo, branche protégée, workflow autorisé), `platform-deploy`, workflow réutilisable (modes check et deploy), skill `deploy` réécrite (repo, `link_repo`, secrets, workflow), skill `admin-deploy`, releases avec commit et run ; outils de publication retirés aux PAT de builder. Critère : sur `examples/todo-app`, « déploie l'app sur la plateforme » depuis un repo vierge aboutit à un déploiement par GitHub Actions, et un push d'un workflow modifié pour sauter les contrôles est refusé |
+| M3bis | **Déploiement par la CI** | OIDC GitHub vérifié par le control plane (repo, branche protégée, workflow autorisé), `platform-deploy`, workflow réutilisable (modes check et deploy), skill `deploy` réécrite (repo, `link_repo`, secrets, workflow), skill `admin-deploy`, releases avec commit et run, event trigger DDL qui signale les changements de schéma hors release ; outils de publication retirés aux PAT de builder. Critère : sur `examples/todo-app`, « déploie l'app sur la plateforme » depuis un repo vierge aboutit à un déploiement par GitHub Actions, et un push d'un workflow modifié pour sauter les contrôles est refusé |
 | M4 | **Admin shadcn-admin-kit** | Users, tokens, vue de toutes les apps (propriétaire, repo, dernier déploiement, charge), stop/start/delete, releases, rollback, logs |
 | M5 | **Storage + Realtime multi-tenant** | Upload de fichiers et abonnement realtime fonctionnels sur 2 apps |
 | M6 | **Auth avancée** | SMTP, SSO plateforme (OIDC puis SAML), politique de signup |

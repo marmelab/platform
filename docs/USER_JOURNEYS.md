@@ -31,6 +31,7 @@ Legend: ✅ done · 🟡 partial · ❌ missing. Milestones refer to [PLAN_1.md]
 | Shared deploy workflow | The admin maintains one reusable workflow (in the same repo as the plugin marketplace) that runs the company checks, builds the frontend and deploys. App repos only call it, so the checks cannot be skipped by editing the app repo. |
 | Pull requests | The same reusable workflow runs on PRs in check mode: company checks, build, and a migrations dry run with the security linter. Nothing is published. |
 | Accepted lints | Declared in `.platform.json` (`acceptedLints`), so that accepting a lint goes through code review. Still audited on the platform. |
+| Schema changes outside CI | Accepted and detected. Studio's SQL editor and `execute_sql(write=true)` run as the app's owner role and can change the schema without review; they stay available (data fixes, emergencies), but a DDL event trigger records every schema change not made by a deployment, and the app is flagged in A9. |
 | Direct deployment | Reserved to admins (`admin-deploy` skill), for emergencies or apps without CI. It requires a reason, is audited, and the app is flagged in the admin view until the next CI deployment. |
 
 ## App builder journeys
@@ -188,7 +189,9 @@ Trigger: the admin wants to know what runs on the platform, and who is responsib
 2. From a row: the app page (A3, deployments, logs), the repo on GitHub, the commit diff since the previous deployment, Studio.
 
 Channel: admin.
-Status: ❌ M4. Status, owner and deployments already exist in the `platform` database; missing: the repo link and commit on deployments (B2), per-app metrics (Caddy per-host metrics, `pg_database_size`, Docker stats sampled by the control plane).
+Flags: deployed outside CI (A10), accepted lints, schema changed outside CI, abandoned.
+
+Status: ❌ M4. Status, owner and deployments already exist in the `platform` database; missing: the DDL event trigger, the repo link and commit on deployments (B2), per-app metrics (Caddy per-host metrics, `pg_database_size`, Docker stats sampled by the control plane).
 
 ### A10. Direct deployment (exception)
 Trigger: an emergency fix while CI is broken, an app whose repo cannot run CI, or a takeover (A5).
@@ -220,7 +223,6 @@ Status: ❌ M6.
 ## Open questions
 
 1. **Thresholds**: default app quota per builder, and number of days before an app is flagged as abandoned.
-2. **Schema changes outside CI**: Studio's SQL editor and `execute_sql(write=true)` run as the app's owner role and can still change the schema without review. Options: accept and detect (a DDL event trigger records changes not made by a CI deployment, flagged in A9), or restrict builders to DML in production. Proposal: accept and detect.
-3. **Reaching the platform from CI**: if the platform is only reachable inside the company network, GitHub-hosted runners cannot deploy; the client then needs self-hosted runners. To check with each client before installation.
-4. **Without OIDC** (old GitHub Enterprise Server, other forges): fallback to a per-app deploy token stored as a GitHub environment secret restricted to the default branch, which the skill would create. Not planned for V1.
-5. **Existing apps** deployed directly (the M3 model): the owner links a repo and sets up CI with the `deploy` skill; until then, they are flagged in A9.
+2. **Reaching the platform from CI**: if the platform is only reachable inside the company network, GitHub-hosted runners cannot deploy; the client then needs self-hosted runners. To check with each client before installation.
+3. **Without OIDC** (old GitHub Enterprise Server, other forges): fallback to a per-app deploy token stored as a GitHub environment secret restricted to the default branch, which the skill would create. Not planned for V1.
+4. **Existing apps** deployed directly (the M3 model): the owner links a repo and sets up CI with the `deploy` skill; until then, they are flagged in A9.
