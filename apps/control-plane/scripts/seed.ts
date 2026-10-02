@@ -1,7 +1,8 @@
 // Local dev seed, run by `deploy/install.sh --seed` once the stack is up. Idempotent.
 // Creates the app builders alice and bob (developer role, fixed local passwords, a PAT each saved in
 // deploy/.env.local), then deploys one example app per builder through the real API (MCP with the builder's
-// PAT, pre-signed upload, finalize), and signs up demo-user in each app with a few rows.
+// PAT, pre-signed upload, finalize), and signs up app users with a few rows: demo-user in todo-app, demo-user and
+// demo-user-2 in notes-app, with notes shared between them.
 // An app that already exists is redeployed (migrations already applied are skipped, new frontend and
 // functions versions). A slug already taken by someone else is skipped with a warning: memberships are never changed.
 import { execFileSync } from "node:child_process";
@@ -13,22 +14,28 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 const ROOT = new URL("../../../", import.meta.url);
 const ENV_LOCAL = new URL("deploy/.env.local", ROOT);
 const SCRIPTS = fileURLToPath(new URL("plugin/skills/deploy/scripts/", ROOT));
-const EXAMPLE = fileURLToPath(new URL("examples/todo-app/", ROOT));
 const STUDIO_URL = "http://studio.localhost:8100";
 const DEMO_USER = { email: "demo-user@example.com", password: "demo-password" };
+const DEMO_USER_2 = { email: "demo-user-2@example.com", password: "demo-password" };
+
+interface App {
+  url: string;
+  supabase_url: string;
+  anon_key: string;
+}
 
 const builders = [
   {
     key: "ALICE",
     email: "alice@example.com",
     password: process.env.SEED_ALICE_PASSWORD || "alice-password",
-    app: { slug: "todo-app", name: "Todo app", rows: ["Buy oat milk", "Book the dentist", "Water the plants"] },
+    app: { slug: "todo-app", name: "Todo app", example: "todo-app", seed: seedTodos },
   },
   {
     key: "BOB",
     email: "bob@example.com",
     password: process.env.SEED_BOB_PASSWORD || "bob-password",
-    app: { slug: "notes-app", name: "Notes app", rows: ["Ideas for the team offsite", "Read the RLS docs"] },
+    app: { slug: "notes-app", name: "Notes app", example: "notes-app", seed: seedNotes },
   },
 ];
 
@@ -74,9 +81,10 @@ function saveEnv() {
   writeFileSync(ENV_LOCAL, [...env].map(([k, v]) => `${k}=${v}\n`).join(""));
 }
 
-async function deploy(client: Client, slug: string, name: string) {
+async function deploy(client: Client, slug: string, name: string, example: string) {
+  const cwd = fileURLToPath(new URL(`examples/${example}/`, ROOT));
   const sh = (script: string, args: string[]) =>
-    execFileSync(`${SCRIPTS}${script}`, args, { cwd: EXAMPLE, encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] });
+    execFileSync(`${SCRIPTS}${script}`, args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] });
   const app = await tool(client, "create_app", { name, slug });
   const migrations = await tool(client, "apply_migrations", { app: slug, migrations: JSON.parse(sh("migrations.sh", [])) });
   console.log(`  migrations: ${migrations.status} (applied ${migrations.applied.length}, skipped ${migrations.skipped.length})`);
@@ -87,30 +95,80 @@ async function deploy(client: Client, slug: string, name: string) {
     const done = await tool(client, "finalize_deployment", { deployment_id });
     console.log(`  ${kind}: version ${done.version ?? "?"} ${done.status ?? ""}`.trimEnd());
   }
-  return app as { url: string; supabase_url: string; anon_key: string };
+  return app as App;
 }
 
-async function seedAppUser(app: { supabase_url: string; anon_key: string }, rows: string[]) {
+async function signIn(app: App, user: { email: string; password: string }) {
   const auth = (path: string) =>
     fetch(`${app.supabase_url}/auth/v1/${path}`, {
       method: "POST",
       headers: { apikey: app.anon_key, "content-type": "application/json" },
-      body: JSON.stringify(DEMO_USER),
+      body: JSON.stringify(user),
     });
   let session = await auth("token?grant_type=password");
   if (session.status === 400) session = await auth("signup");
-  if (!session.ok) throw new Error(`demo-user sign in: ${session.status} ${await session.text()}`);
+  if (!session.ok) throw new Error(`${user.email} sign in: ${session.status} ${await session.text()}`);
   const { access_token } = await session.json() as { access_token: string };
-  const rest = (init: RequestInit = {}) =>
-    fetch(`${app.supabase_url}/rest/v1/todos`, {
+  return async <T>(path: string, init: RequestInit = {}): Promise<T> => {
+    const res = await fetch(`${app.supabase_url}${path}`, {
       ...init,
-      headers: { apikey: app.anon_key, authorization: `Bearer ${access_token}`, "content-type": "application/json" },
+      headers: {
+        apikey: app.anon_key,
+        authorization: `Bearer ${access_token}`,
+        "content-type": "application/json",
+        prefer: "return=representation",
+      },
     });
-  const existing = await rest();
-  if (!existing.ok) throw new Error(`read todos: ${existing.status} ${await existing.text()}`);
-  if ((await existing.json() as unknown[]).length > 0) return;
-  const insert = await rest({ method: "POST", body: JSON.stringify(rows.map((title) => ({ title }))) });
-  if (!insert.ok) throw new Error(`insert todos: ${insert.status} ${await insert.text()}`);
+    if (!res.ok) throw new Error(`${init.method ?? "GET"} ${path} as ${user.email}: ${res.status} ${await res.text()}`);
+    return res.json() as Promise<T>;
+  };
+}
+
+async function seedTodos(app: App) {
+  const api = await signIn(app, DEMO_USER);
+  if ((await api<unknown[]>("/rest/v1/todos?select=id")).length > 0) return;
+  const rows = ["Buy oat milk", "Book the dentist", "Water the plants"].map((title) => ({ title }));
+  await api("/rest/v1/todos", { method: "POST", body: JSON.stringify(rows) });
+}
+
+const NOTES = [
+  {
+    title: "Team offsite ideas",
+    content: "# Team offsite\n\n- Half day of **hack time**\n- Walk by the lake\n- Retro on the last quarter\n\nBudget to confirm with *finance*.",
+    share: "read",
+  },
+  {
+    title: "Release checklist",
+    content: "## Before the release\n\n- Run `pnpm typecheck`\n- Update the changelog\n- Tag the release\n\nAnyone sharing this note can tick items off.",
+    share: "edit",
+  },
+  {
+    title: "Personal reminders",
+    content: "Renew the passport.\n\nThis note is private: nobody else can see it.",
+    share: null,
+  },
+] as const;
+
+async function seedNotes(app: App) {
+  const api = await signIn(app, DEMO_USER);
+  await signIn(app, DEMO_USER_2);
+  const existing = await api<{ id: string; title: string }[]>("/rest/v1/notes?select=id,title");
+  for (const note of NOTES) {
+    let id = existing.find((n) => n.title === note.title)?.id;
+    if (!id) {
+      const [created] = await api<{ id: string }[]>("/rest/v1/notes?select=id", {
+        method: "POST",
+        body: JSON.stringify({ title: note.title, content: note.content }),
+      });
+      id = created!.id;
+    }
+    if (note.share) {
+      await api("/functions/v1/share-note", {
+        method: "POST",
+        body: JSON.stringify({ note_id: id, email: DEMO_USER_2.email, permission: note.share }),
+      });
+    }
+  }
 }
 
 const summary: string[] = [];
@@ -128,11 +186,11 @@ for (const builder of builders) {
 
   const client = await connect(env.get(tokenKey)!);
   try {
-    const { slug, name, rows } = builder.app;
-    console.log(`  deploying ${slug}`);
+    const { slug, name, example, seed } = builder.app;
+    console.log(`  deploying ${slug} (examples/${example})`);
     try {
-      const app = await deploy(client, slug, name);
-      await seedAppUser(app, rows);
+      const app = await deploy(client, slug, name, example);
+      await seed(app);
       summary.push(`  ${slug.padEnd(10)} ${app.url}  (owner ${builder.email})`);
     } catch (error) {
       if (!String(error).includes("already taken")) throw error;
@@ -157,5 +215,5 @@ MCP:     ${mcpUrl}
 Admin:   ${env.get("PLATFORM_ADMIN_EMAIL")} (password PLATFORM_ADMIN_PASSWORD in deploy/.env.local)
 App builders (Studio login, developer role):
   ${builders.map((b) => `${b.email} / ${b.password}  -> ${b.app.slug}`).join("\n  ")}
-App user (sign in on each app): ${DEMO_USER.email} / ${DEMO_USER.password}
+App users: ${DEMO_USER.email} / ${DEMO_USER.password} (todo-app and notes-app), ${DEMO_USER_2.email} / ${DEMO_USER_2.password} (notes-app)
 Personal access tokens: SEED_ALICE_TOKEN and SEED_BOB_TOKEN in deploy/.env.local`);
