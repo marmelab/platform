@@ -13,6 +13,7 @@ import { appRoles, databaseExistsSql } from "@platform/sql";
 import { type AppRow, dbId, orchestrator, pathExists } from "./apps.ts";
 import { config } from "./config.ts";
 import { withAdmin } from "./db.ts";
+import { ROUTING_MARKERS } from "./router.ts";
 
 export interface Backup {
   path: string;
@@ -43,7 +44,14 @@ export async function backupApp(slug: string, app?: AppRow): Promise<Backup | nu
     }
     for (const [name, root] of [["sites", config.dataDir.sites], ["functions", config.dataDir.functions]] as const) {
       if (!(await pathExists(join(root, slug)))) continue;
-      await tar.c({ gzip: true, cwd: root, file: join(path, `${name}.tar.gz`), portable: true }, [slug]);
+      const markers = new Set(ROUTING_MARKERS.map((marker) => `${slug}/${marker}`));
+      await tar.c({
+        gzip: true,
+        cwd: root,
+        file: join(path, `${name}.tar.gz`),
+        portable: true,
+        filter: (entry) => !markers.has(entry),
+      }, [slug]);
     }
     for (const name of ["database.dump", "sites.tar.gz", "functions.tar.gz"]) {
       const size = await stat(join(path, name)).then((s) => s.size, () => null);

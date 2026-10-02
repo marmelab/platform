@@ -18,7 +18,29 @@ export const psql = (sql: string, database = "platform") =>
     encoding: "utf8",
   }).trim();
 
-const CADDY_ADMIN = "http://127.0.0.1:2030";
+
+/**
+ * Waits until the control plane answers through Caddy. `docker compose up` returns as soon as the container starts,
+ * but the control plane only listens once its startup sync is done (Caddy answers 502 meanwhile): a suite started
+ * right after a rebuild would otherwise fail in its `before` hook. Not a retry: it only waits for readiness.
+ */
+export async function waitForControlPlane(mcpUrl: string, timeoutMs = 90_000) {
+  const health = new URL("/health", mcpUrl);
+  const deadline = Date.now() + timeoutMs;
+  let last = "";
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetch(health, { signal: AbortSignal.timeout(2000) });
+      await response.body?.cancel();
+      if (response.ok) return;
+      last = `HTTP ${response.status}`;
+    } catch (error) {
+      last = String(error);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  throw new Error(`control plane not ready at ${health}: ${last}`);
+}
 const list = (values: string[]) => values.map((v) => `'${v.replaceAll("'", "''")}'`).join(", ") || "null";
 
 /** Deletes the run's apps and users, then checks that nothing is left behind. */
@@ -59,9 +81,9 @@ export async function cleanup(apps: string[], users: string[]) {
     const roles = appRoles(slug.replace(/-/g, "_"));
     const containers = execFileSync("docker", ["ps", "-aq", "--filter", `label=platform.app=${slug}`], { encoding: "utf8" });
     assert.equal(containers.trim(), "", `containers left for ${slug}`);
-    for (const id of [`app-${slug}`, `app-${slug}-internal`]) {
-      assert.equal((await fetch(`${CADDY_ADMIN}/id/${id}`, { headers: { origin: CADDY_ADMIN } })).status, 404, `Caddy route ${id} left`);
-    }
+    // routing: the app is served while its sites directory holds a marker (router.ts)
+    const sites = execFileSync("docker", ["exec", "plat-control-plane", "ls", "-A", "/data/sites"], { encoding: "utf8" });
+    assert.ok(!sites.split("\n").includes(slug), `sites directory (routing marker) left for ${slug}`);
     assert.equal(psql(`select count(*) from pg_database where datname = '${roles.database}'`), "0", `${roles.database} left`);
     assert.equal(
       psql(`select count(*) from pg_roles where rolname in (${list([roles.owner, roles.authenticator, roles.authAdmin])})`),

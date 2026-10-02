@@ -12,7 +12,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { cleanup, cli, psql, runId } from "./disposable.ts";
+import { cleanup, cli, psql, runId, waitForControlPlane } from "./disposable.ts";
 
 const ROOT = new URL("../../../", import.meta.url);
 const env = Object.fromEntries(
@@ -69,6 +69,7 @@ describe("plugin skills: direct path of deploy, and admin-deploy, on examples/to
   let directDeploy = false;
 
   before(async () => {
+    await waitForControlPlane(MCP_URL);
     admin = await connect(env.PLATFORM_TOKEN!);
     directDeploy = (await call(admin, "whoami")).direct_deploy_setting === "everyone";
     if (!directDeploy) return;

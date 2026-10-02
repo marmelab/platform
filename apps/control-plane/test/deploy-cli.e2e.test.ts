@@ -19,7 +19,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
 import { appRoles } from "@platform/sql";
-import { cleanup, cli, psql, runId } from "./disposable.ts";
+import { cleanup, cli, psql, runId, waitForControlPlane } from "./disposable.ts";
 
 const ROOT = new URL("../../../", import.meta.url);
 const env = Object.fromEntries(
@@ -206,6 +206,7 @@ describe("platform-deploy (packages/deploy-cli): direct and CI deployments of ex
   let user: Awaited<ReturnType<typeof appUser>>;
 
   before(async () => {
+    await waitForControlPlane(MCP_URL);
     saved = settingsSnapshot();
     const jwk = { ...(await exportJWK(keys.publicKey)), kid: KID, alg: "RS256", use: "sig" };
     cli(["set-setting", "oidc_issuer", ISSUER]);

@@ -9,7 +9,7 @@ import { request } from "node:http";
 import { setTimeout as sleep } from "node:timers/promises";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { cleanup, cli, runId } from "./disposable.ts";
+import { cleanup, cli, runId, waitForControlPlane } from "./disposable.ts";
 
 const ROOT = new URL("../../../", import.meta.url);
 const readEnv = (file: string) =>
@@ -107,6 +107,7 @@ describe("Studio for app builders", () => {
   let projects: { ref: string; service_key: string; internal_url: string }[] = [];
 
   before(async () => {
+    await waitForControlPlane(local.PLATFORM_URL ?? "http://api.localhost:8100/mcp");
     const client = await connect();
     try {
       for (const slug of [A, B]) await tool(client, "create_app", { name: slug, slug });
