@@ -3,11 +3,11 @@ import { Hono } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { appsForUser, studio } from "../apps.ts";
 import type { User } from "../auth.ts";
-import { config } from "../config.ts";
+import { config, studioUrl } from "../config.ts";
 import { TooManyAttempts } from "../login-limit.ts";
 import { createSession, logout, SESSION_COOKIE, throttledCredentials, userForSession } from "../sessions.ts";
 import { loginPage, refusedPage } from "./pages.ts";
-import { studioAccess } from "./policy.ts";
+import { crossSiteRefusal, studioAccess } from "./policy.ts";
 
 
 const secure = () => config.publicScheme === "https";
@@ -37,6 +37,18 @@ studioPublicRoutes.use("/_platform/*", async (c, next) => {
   if (!fromStudioHost(c.req.header("host"))) return c.notFound();
   c.header("Cache-Control", "no-store");
   c.header("X-Frame-Options", "DENY");
+  // login CSRF and forced logout: the forms are posted by Studio's own pages
+  const refusal = crossSiteRefusal({
+    method: c.req.method,
+    uri: c.req.path,
+    origin: c.req.header("origin"),
+    fetchSite: c.req.header("sec-fetch-site"),
+    studioOrigin: studioUrl(),
+  });
+  if (refusal) {
+    console.warn(`studio ${c.req.method} ${c.req.path} refused: ${refusal}`);
+    return c.text(`${refusal}\n`, 403);
+  }
   await next();
 });
 
@@ -80,6 +92,17 @@ export const studioInternalRoutes = new Hono();
 studioInternalRoutes.get("/studio/verify", async (c) => {
   const method = c.req.header("x-forwarded-method") ?? "GET";
   const uri = c.req.header("x-forwarded-uri") ?? "/";
+  const refusal = crossSiteRefusal({
+    method,
+    uri,
+    origin: c.req.header("origin"),
+    fetchSite: c.req.header("sec-fetch-site"),
+    studioOrigin: studioUrl(),
+  });
+  if (refusal) {
+    console.warn(`studio 403 ${method} ${uri}: ${refusal}`);
+    return c.json({ error: { message: refusal } }, 403);
+  }
   const user = await userForSession(getCookie(c, SESSION_COOKIE));
   const isPage = method === "GET" && (c.req.header("accept") ?? "").includes("text/html") && !uri.startsWith("/api/");
   if (!user) {

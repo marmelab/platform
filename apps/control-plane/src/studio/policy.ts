@@ -85,3 +85,35 @@ export function studioAccess(method: string, uri: string, user: StudioUser): Acc
   }
   return deny(403, "not available on this platform");
 }
+
+const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+
+/**
+ * CSRF guard of Studio's cookie requests (TECH_DEBT SEC-3). Every `<app>.<domain>` is same-site with Studio, so the
+ * session cookie (SameSite=Lax) is sent with requests made by an app's frontend; only the origin tells them apart.
+ * - state-changing methods (Studio's API: pg-meta queries are POSTs, auth admin, logout, login) must carry
+ *   `Origin: <studio origin>`, which browsers send on every non-GET request, same-origin included;
+ * - API reads must not come from another site or origin (`Sec-Fetch-Site`, sent by browsers on every request);
+ * - page navigations are not checked: links to Studio from the admin console or an app stay usable.
+ * Returns the refusal reason, or null when the request may proceed. Non-browser clients (no Sec-Fetch-Site) only need
+ * the Origin header on writes.
+ */
+export function crossSiteRefusal(request: {
+  method: string;
+  uri: string;
+  origin: string | undefined;
+  fetchSite: string | undefined;
+  studioOrigin: string;
+}): string | null {
+  const method = request.method.toUpperCase();
+  const site = request.fetchSite?.toLowerCase();
+  const foreignSite = site !== undefined && site !== "same-origin" && site !== "none";
+  if (!SAFE_METHODS.has(method)) {
+    if (request.origin !== request.studioOrigin) return "cross-origin request refused (missing or foreign Origin)";
+    if (foreignSite) return "cross-site request refused";
+    return null;
+  }
+  const path = request.uri.split("?")[0] ?? "";
+  if (path.startsWith("/api/") && foreignSite) return "cross-site request refused";
+  return null;
+}
