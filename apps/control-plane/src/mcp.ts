@@ -34,7 +34,7 @@ import {
 } from "./releases.ts";
 import { listSchemaChanges, schemaDrift } from "./schema-changes.ts";
 import { listSecrets, setSecrets } from "./secrets.ts";
-import { getSettings } from "./settings.ts";
+import { callerWorkflow, getSettings } from "./settings.ts";
 import { applyMigrations, executeSql, StructuredUserError } from "./sql.ts";
 
 async function run(fn: () => Promise<unknown>): Promise<CallToolResult> {
@@ -59,12 +59,14 @@ export function buildMcpServer(user: User): McpServer {
   server.registerTool(
     "whoami",
     {
-      description: "Current user, the apps they can access, and direct_deploy: whether this user may publish " +
-        "directly with their token (otherwise deployments go through the app's GitHub Actions CI)",
+      description: "Current user, the apps they can access, direct_deploy (whether this user may publish directly " +
+        "with their token; otherwise deployments go through the app's GitHub Actions CI) and ci (the reusable " +
+        "workflow an app repository calls, and the company GitHub organization; null when CI is not set up)",
     },
     () =>
       run(async () => {
-        const { directDeploy } = await getSettings();
+        const settings = await getSettings();
+        const { directDeploy } = settings;
         return {
           email: user.email,
           name: user.name,
@@ -73,6 +75,7 @@ export function buildMcpServer(user: User): McpServer {
           // DIRECT_DEPLOY: admins always publish directly (the audited exception when the setting is "admins")
           direct_deploy: user.role === "admin" || directDeploy === "everyone",
           direct_deploy_setting: directDeploy,
+          ci: callerWorkflow(settings),
           apps: (await appsForUser(user)).map((a) => ({
             slug: a.slug,
             name: a.name,

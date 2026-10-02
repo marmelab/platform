@@ -77,3 +77,18 @@ export async function setSetting(key: string, value: string) {
 export async function unsetSetting(key: string) {
   await platform.query("delete from settings where key = $1", [key]);
 }
+
+/**
+ * The `uses:` of an app repository's caller workflow (ci/examples/platform.yml), from the first allowed reusable
+ * workflow: `org/platform/.github/workflows/deploy.yml@refs/heads/main` gives `...deploy.yml@main`. An entry without a
+ * ref gives `@main`. Null when the CI API accepts no workflow (CI deployment not set up on this platform).
+ */
+export function callerWorkflow(settings: Settings): { uses: string; github_org: string } | null {
+  const entry = settings.ciAllowedWorkflows[0];
+  if (!entry) return null;
+  const [path, ref] = entry.split("@") as [string, string | undefined];
+  return {
+    uses: `${path}@${ref ? ref.replace(/^refs\/(heads|tags)\//, "") : "main"}`,
+    github_org: path.split("/")[0]!,
+  };
+}

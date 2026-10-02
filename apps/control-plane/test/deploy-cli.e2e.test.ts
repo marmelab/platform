@@ -300,6 +300,12 @@ describe("platform-deploy (packages/deploy-cli): direct and CI deployments of ex
     assert.equal((await fetch(APP_URL)).status, 200);
     assert.match(result.summary, /GitHub OIDC \(CI\)/);
     assert.match(result.summary, /deployed/);
+    // the migrations of both releases (direct, then CI) are not schema changes outside a release
+    assert.equal((await call(admin, "get_app", { app: APP })).schema_drift.count, 0);
+    const changes = (await call(admin, "list_schema_changes", { app: APP, all: true })).changes;
+    assert.ok(changes.some((c: { command_tag: string; object_identity: string }) =>
+      c.command_tag === "ALTER TABLE" && c.object_identity === "public.todos"), JSON.stringify(changes));
+    assert.ok(changes.every((c: { in_release: boolean }) => c.in_release), JSON.stringify(changes));
   });
 
   test("3. lints: check reports them, deploy rejects them, acceptedLints lets them through", async () => {

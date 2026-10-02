@@ -1,5 +1,5 @@
 // The app repository: .platform.json, migrations, functions, frontend build and bundles.
-// Same conventions as the `deploy` skill's scripts (plugin/skills/deploy/scripts).
+// The `deploy` and `admin-deploy` skills of the plugin run this CLI for direct deployments.
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -14,16 +14,20 @@ export interface PlatformConfig {
 const SLUG_RE = /^[a-z][a-z0-9-]{1,30}[a-z0-9]$/;
 
 /** `.platform.json`: `{ "app": "<slug>", "acceptedLints": ["lint", { "name": "lint", "object": "public.t" }] }`. */
-export function readConfig(dir: string): PlatformConfig {
+export function readConfig(dir: string, appOverride?: string): PlatformConfig {
   const file = join(dir, ".platform.json");
-  if (!existsSync(file)) throw new Error(`${file} not found: it names the platform app ({ "app": "<slug>" })`);
+  if (appOverride !== undefined && !SLUG_RE.test(appOverride)) throw new Error(`--app: "${appOverride}" is not an app slug`);
+  if (!existsSync(file)) {
+    if (appOverride) return { app: appOverride, acceptedLints: [] };
+    throw new Error(`${file} not found: it names the platform app ({ "app": "<slug>" })`);
+  }
   let raw: any;
   try {
     raw = JSON.parse(readFileSync(file, "utf8"));
   } catch (error) {
     throw new Error(`${file}: invalid JSON (${(error as Error).message})`);
   }
-  if (typeof raw?.app !== "string" || !SLUG_RE.test(raw.app)) throw new Error(`${file}: "app" must be an app slug`);
+  if (!appOverride && (typeof raw?.app !== "string" || !SLUG_RE.test(raw.app))) throw new Error(`${file}: "app" must be an app slug`);
   const accepted = raw.acceptedLints ?? [];
   const valid = (a: any) =>
     (typeof a === "string" && a.length > 0) ||
@@ -31,7 +35,7 @@ export function readConfig(dir: string): PlatformConfig {
   if (!Array.isArray(accepted) || !accepted.every(valid)) {
     throw new Error(`${file}: "acceptedLints" must be an array of lint names or { "name", "object" } objects`);
   }
-  return { app: raw.app, acceptedLints: accepted };
+  return { app: appOverride ?? raw.app, acceptedLints: accepted };
 }
 
 /** Same rule as the platform: a lint name accepts it on every object, {name, object} on that object only. */
