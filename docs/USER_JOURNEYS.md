@@ -144,7 +144,7 @@ Status: 🟡. Admin console (M4 phase 1): accounts (create with a password, role
 4. Audit log.
 
 Channel: admin and email.
-Status: 🟡. Admin console dashboard (M4 phase 1): apps by status, flagged apps (deployed outside CI, accepted lints), failures of the last 7 days (failed releases and deployments, apps in error), accounts, Postgres cluster size, host memory, CPU load and volumes disk; audit log screen with filters (app, user, action, search). Missing ❌: email alerts, `BOOT_ERROR` and linter results (lints are only stored when accepted), failed backups (no scheduled backups, M7), per-app metrics (`app_metrics`).
+Status: 🟡. Admin console dashboard (M4 phase 1): apps by status, flagged apps (deployed outside CI, accepted lints), failures of the last 7 days (failed releases and deployments, apps in error), accounts, Postgres cluster size, host memory, CPU load and volumes disk; audit log screen with filters (app, user, action, search). Per-app load (M4 phase 2): requests and 5xx of every app over 24 h with a 7-day sparkline, memory of the app containers, and abandoned apps on the dashboard; per-app load in the apps list and an hourly chart on the app page (`app_metrics`, sampled every minute from Caddy's access log, `pg_database_size` and Docker stats). Missing ❌: email alerts, `BOOT_ERROR` and linter results (lints are only stored when accepted), failed backups (no scheduled backups, M7), alerts on error rates.
 
 ### A4. Backups and restore
 Daily backup of each database to S3, with retention, failure tracking and restore into the same app.
@@ -166,7 +166,7 @@ Status: 🟡. Admin console (M4 phase 1): disable the account (its sessions end 
 2. The admin decides: put it to sleep, or delete it after a final backup.
 
 Channel: admin and email.
-Status: ❌.
+Status: 🟡. Admin console (M4 phase 2): an app whose last request, last release and creation are all older than the `abandoned_after_days` setting (30 days by default) is flagged "abandoned" in the apps list (with a filter) and counted on the dashboard (step 1, admin side); the app page has Stop and Delete with the final backup (step 2). Requests come from Caddy's access log (`apps.last_request_at`), and no app is flagged before the metrics have been collected for N days. Missing ❌: the email to the owner (M6).
 
 ### A7. Platform company SSO
 The admin configures the company's OIDC and SAML providers once. Builders then enable them on their apps (B6).
@@ -191,7 +191,7 @@ Trigger: the admin wants to know what runs on the platform, and who is responsib
 Channel: admin.
 Flags: deployed outside CI (A10), accepted lints, schema changed outside CI, abandoned.
 
-Status: 🟡. Admin console (M4 phase 1), apps list: every app with search, status and flag filters, sort and pagination; name and URL, status, owners (name and email), GitHub repo link, last release (date, result, source CI / direct / admin exception, commit link, author, run link), database size, flags "deployed outside CI" (last release published with a PAT), "schema changed outside CI" (`schema_drift`), "accepted lints" (ERROR lints accepted by migrations), "no repo". App page: overview with "Open in Studio", releases with the GitHub diff since the previous release and their deployments, rollback, members, secret names, schema changes, logs (Docker, last hour), audit. Missing ❌: the load overview (requests and 5xx over 24 h, 7-day sparkline, container memory: `app_metrics` sampling, Caddy per-host metrics, Docker stats), the "abandoned" flag (A6), logs history (Loki).
+Status: 🟡. Admin console (M4 phase 1), apps list: every app with search, status and flag filters, sort and pagination; name and URL, status, owners (name and email), GitHub repo link, last release (date, result, source CI / direct / admin exception, commit link, author, run link), database size, flags "deployed outside CI" (last release published with a PAT), "schema changed outside CI" (`schema_drift`), "accepted lints" (ERROR lints accepted by migrations), "no repo". App page: overview with "Open in Studio", releases with the GitHub diff since the previous release and their deployments, rollback, members, secret names, schema changes, logs (Docker, last hour), audit. Load overview (M4 phase 2): requests and 5xx over 24 h with a 7-day sparkline, database size and memory of the app's containers in the list (sortable), the "abandoned" flag (A6), and on the app page a Load section with the hourly chart over 7 days (`app_metrics`, see the control plane README, "Load metrics"). Missing ❌: logs history (Loki).
 
 ### A10. Direct deployment (exception)
 Trigger: an emergency fix while CI is broken, an app whose repo cannot run CI, or a takeover (A5).

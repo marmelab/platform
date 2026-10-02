@@ -152,10 +152,10 @@ The stack must be running, and `deploy/.env.local` must exist.
 
 ```bash
 pnpm typecheck                                     # all workspace packages (Studio's upstream typecheck excluded)
-pnpm --filter @platform/control-plane test         # Studio access policy, unit
+pnpm --filter @platform/control-plane test         # unit: Studio access policy and CSRF guard, login throttling, access log reader
 pnpm --filter @platform/control-plane e2e          # MCP end to end: provisioning, migrations, deployments, isolation; CI API; platform-deploy
-pnpm --filter @platform/control-plane e2e:studio   # Studio: login, per-app filtering, bypass attempts
-pnpm e2e:admin                                     # admin REST API, then the admin console in Chromium (Playwright)
+pnpm --filter @platform/control-plane e2e:studio   # Studio: login and throttling, CSRF, per-app filtering, bypass attempts
+pnpm e2e:admin                                     # admin REST API, load metrics, then the admin console in Chromium (Playwright)
 node apps/control-plane/scripts/verify-notes-app.ts # seeded notes-app: sharing rules, as its app users (after --seed)
 (cd apps/edge-main-worker && deno test --allow-read --allow-write)
 ```
@@ -167,6 +167,6 @@ The end-to-end suites create throwaway apps and users and delete them at the end
 Not production ready yet. The stack runs on a single VM with docker compose, as it does locally, but a few pieces are still missing:
 - the domain is hardcoded to `*.localhost` (`deploy/caddy/caddy.json`, `install.sh`);
 - there is no TLS: on-demand TLS with an `ask` endpoint on the control plane is planned;
-- there are no scheduled backups or restore, and no centralized logs (Loki); the admin console lacks the per-app load metrics.
+- there are no scheduled backups or restore, and no centralized logs (Loki).
 
 Target setup ([PLAN_1.md](PLAN_1.md) §9): a Linux VM with 16 GB of RAM or more, a wildcard DNS record `*.<domain>` pointing to it, ports 80 and 443 open, an SMTP relay and an optional S3 bucket for backups, then `install.sh`. Production blockers are tracked as P1 in [docs/TECH_DEBT.md](docs/TECH_DEBT.md).
