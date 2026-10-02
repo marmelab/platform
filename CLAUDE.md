@@ -3,10 +3,12 @@
 Reference plan: [PLAN_1.md](PLAN_1.md). Milestone reports: `spikes/*/REPORT.md`.
 
 Main user journeys and the related product decisions: [docs/USER_JOURNEYS.md](docs/USER_JOURNEYS.md).
+Tech debt and known limitations: [docs/TECH_DEBT.md](docs/TECH_DEBT.md).
 
 ## Conventions
 
 - Documentation (`docs/`, READMEs, this file) is written in English.
+- When you accept or pay off tech debt, update `docs/TECH_DEBT.md`.
 
 ## Personas
 
