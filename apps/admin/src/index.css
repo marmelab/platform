@@ -151,3 +151,14 @@
     --sidebar-ring: 217.2 91.2% 59.8%;
   }
 }
+
+/* Load charts (resources/charts.tsx): categorical slots 1 (requests) and 2 (5xx) of the dataviz reference palette,
+   validated together on both surfaces. */
+:root {
+  --viz-requests: #2a78d6;
+  --viz-errors: #eb6834;
+}
+.dark {
+  --viz-requests: #3987e5;
+  --viz-errors: #d95926;
+}

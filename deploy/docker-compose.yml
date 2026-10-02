@@ -42,6 +42,8 @@ services:
       - caddy-config:/config
       - caddy-data:/data
       - sites:/sites:ro
+      # access log of the app hosts (JSON, rotated by Caddy), read by the control plane's metrics sampler
+      - caddy-logs:/var/log/caddy
     labels:
       platform.service: caddy
 
@@ -105,6 +107,9 @@ services:
       # Test only (SEC-10): honour the inline oidc_jwks setting. install.sh writes 1 for local installs; never in
       # production.
       ALLOW_TEST_OIDC_JWKS: ${ALLOW_TEST_OIDC_JWKS:-}
+      # A6: an app without request nor release for this many days is flagged "abandoned"; app_metrics retention
+      ABANDONED_AFTER_DAYS: ${ABANDONED_AFTER_DAYS:-}
+      METRICS_RETENTION_DAYS: ${METRICS_RETENTION_DAYS:-}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - sites:/data/sites
@@ -113,6 +118,8 @@ services:
       - uploads:/data/uploads
       # final backups taken by delete_app (<slug>-<timestamp>/): restore, retention and off-site copy are M7
       - backups:/data/backups
+      # Caddy's access log (requests and 5xx per app, app_metrics)
+      - caddy-logs:/data/caddy-logs:ro
     labels:
       platform.service: control-plane
 
@@ -173,6 +180,7 @@ volumes:
   uploads:
   backups:
   deno-cache:
+  caddy-logs:
 
 networks:
   default:

@@ -19,7 +19,14 @@ export interface Router {
   upsertStudio(route: StudioRoute): Promise<void>;
   /** admin.<domain> -> the control plane (admin SPA and API, M4). */
   upsertAdmin(route: { host: string; upstream: string }): Promise<void>;
+  /** JSON access log of the public server (app hosts only), read by the metrics sampler (metrics.ts). Idempotent. */
+  ensureAccessLog(options: { file: string; skipHosts: string[] }): Promise<void>;
 }
+
+/** Caddy logger of the app hosts' requests (`http.log.access.<name>`). */
+export const ACCESS_LOGGER = "platform_access";
+/** Field added to the access log entries of a stopped app's maintenance responses (not counted as errors). */
+export const MAINTENANCE_FIELD = "platform_maintenance";
 
 /** Headers set from the forward auth response; any value sent by the client is dropped first. */
 const IDENTITY_HEADERS = ["X-Platform-User", "X-Platform-Role", "X-Platform-Apps", "X-Platform-Signature"];
@@ -88,9 +95,66 @@ export class CaddyRouter implements Router {
   private routesInstalled = false;
 
   private change(change: RouteChange, removeLegacy = false): Promise<void> {
-    const next = this.queue.then(() => this.apply(change, removeLegacy));
+    return this.serialized(() => this.apply(change, removeLegacy));
+  }
+
+  /** Config changes run one at a time in this process. */
+  private serialized<T>(fn: () => Promise<T>): Promise<T> {
+    const next = this.queue.then(fn);
     this.queue = next.catch(() => undefined);
     return next;
+  }
+
+  /** Sets the config value at `path` (POST creates or replaces an object) unless it is already `value`. */
+  private async setConfig(path: string, value: unknown) {
+    const url = `${config.caddyAdmin}/config/${path}`;
+    const origin = config.caddyAdmin;
+    const current = await fetch(url, { headers: { origin } });
+    if (!current.ok) throw new Error(`caddy GET ${path}: ${current.status} ${await current.text()}`);
+    // through JSON, as Caddy stores it
+    if (isDeepStrictEqual(await current.json(), JSON.parse(JSON.stringify(value)))) return false;
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json", origin },
+      body: JSON.stringify(value),
+    });
+    if (!response.ok) throw new Error(`caddy POST ${path}: ${response.status} ${await response.text()}`);
+    return true;
+  }
+
+  /**
+   * The public server logs every request, except the platform hosts (API, admin, Studio), into a JSON file rotated by
+   * Caddy (20 MB, 5 files kept, not compressed: the sampler finishes reading a rotated file by its inode). Only what the
+   * metrics need is kept: no headers (cookies, apikey, Authorization), no URI (tokens in query strings), no client IP.
+   * Two config changes (two reloads) on the first start after an upgrade, none afterwards.
+   */
+  ensureAccessLog({ file, skipHosts }: { file: string; skipHosts: string[] }): Promise<void> {
+    return this.serialized(async () => {
+      const current = await fetch(`${config.caddyAdmin}/config/logging`, { headers: { origin: config.caddyAdmin } });
+      if (!current.ok) throw new Error(`caddy GET logging: ${current.status} ${await current.text()}`);
+      const logging = ((await current.json()) ?? {}) as { logs?: Record<string, { exclude?: string[] }> };
+      const logs = { ...logging.logs };
+      const name = `http.log.access.${ACCESS_LOGGER}`;
+      const drop = ["request>headers", "request>uri", "request>remote_ip", "request>remote_port", "request>client_ip",
+        "request>tls", "resp_headers", "user_id"];
+      logs[ACCESS_LOGGER] = {
+        writer: { output: "file", filename: file, roll_size_mb: 20, roll_keep: 5, roll_gzip: false, mode: "0640" },
+        encoder: {
+          format: "filter",
+          wrap: { format: "json" },
+          fields: Object.fromEntries(drop.map((field) => [field, { filter: "delete" }])),
+        },
+        include: [name],
+      } as never;
+      // the access entries go to the file only, not also to Caddy's stderr
+      const exclude = new Set([...(logs.default?.exclude ?? []), name]);
+      logs.default = { ...logs.default, exclude: [...exclude].sort() };
+      await this.setConfig("logging", { ...logging, logs });
+      await this.setConfig("apps/http/servers/public/logs", {
+        default_logger_name: ACCESS_LOGGER,
+        skip_hosts: [...skipHosts].sort(),
+      });
+    });
   }
 
   private async apply(change: RouteChange, removeLegacy: boolean, attempts = 5) {
@@ -235,7 +299,7 @@ export class CaddyRouter implements Router {
           handle: [{
             handler: "subroute",
             routes: [
-              this.whenMarker(STOPPED, [{
+              this.whenMarker(STOPPED, [{ handler: "log_append", key: MAINTENANCE_FIELD, value: "1" }, {
                 handler: "subroute",
                 routes: [
                   { match: [{ path: ["/auth/v1/*", "/rest/v1/*", "/functions/v1/*"] }], handle: [api], terminal: true },

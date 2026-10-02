@@ -14,6 +14,7 @@ import { randomToken, sha256 } from "../crypto.ts";
 import { many, one, platform, transaction } from "../db.ts";
 import { rollback } from "../deployments.ts";
 import { getLogs } from "../logs.ts";
+import { sampleMetrics } from "../metrics.ts";
 import { addMember, removeMember } from "../members.ts";
 import { githubServerUrl } from "../oidc.ts";
 import { listSchemaChanges, schemaDrift } from "../schema-changes.ts";
@@ -269,6 +270,27 @@ interface AppListRow extends Record<string, unknown> {
   owners: { id: string; email: string; name: string | null }[];
   last_release: LastRelease | null;
   accepted_lints: number;
+  last_request_at: Date | null;
+  created_at: Date;
+  requests_24h: string;
+  errors_24h: string;
+  memory: string | null;
+  traffic_7d: { day: string; requests: number; errors: number }[];
+}
+
+/** What the abandoned flag (A6) is computed from: the setting, and the first metrics sample. */
+interface Activity {
+  abandonedAfterDays: number;
+  /** Requests are only known since the first sample: an older app is not judged on a period without data. */
+  metricsSince: Date;
+}
+
+async function activityContext(): Promise<Activity> {
+  const [settings, state] = await Promise.all([
+    getSettings(),
+    one<{ started_at: Date }>("select started_at from metrics_state where id = 1"),
+  ]);
+  return { abandonedAfterDays: settings.abandonedAfterDays, metricsSince: state?.started_at ?? new Date() };
 }
 
 const APPS_SQL = `
@@ -286,7 +308,21 @@ const APPS_SQL = `
       where d.app_id = a.id and d.kind = 'migrations' and jsonb_typeof(d.manifest->'accepted_lints') = 'array') as accepted_lints,
     (select max(d.version) from deployments d where d.app_id = a.id and d.kind = 'frontend' and d.status = 'live') as frontend_version,
     (select max(d.version) from deployments d where d.app_id = a.id and d.kind = 'functions' and d.status = 'live') as functions_version,
-    (select pg_database_size(db.datname) from pg_database db where db.datname = a.db_name) as db_size
+    (select pg_database_size(db.datname) from pg_database db where db.datname = a.db_name) as db_size,
+    a.last_request_at,
+    -- load (app_metrics, metrics.ts): the last 24 hourly rows (current hour included), the latest memory sample
+    (select coalesce(sum(m.requests), 0)::text from app_metrics m
+      where m.app_id = a.id and m.hour >= date_trunc('hour', now()) - interval '23 hours') as requests_24h,
+    (select coalesce(sum(m.responses_5xx), 0)::text from app_metrics m
+      where m.app_id = a.id and m.hour >= date_trunc('hour', now()) - interval '23 hours') as errors_24h,
+    (select m.memory_bytes::text from app_metrics m where m.app_id = a.id and m.memory_bytes is not null
+      order by m.hour desc limit 1) as memory,
+    -- 7 UTC days, oldest first, zeros included
+    (select json_agg(json_build_object('day', d.day, 'requests', coalesce(x.requests, 0), 'errors', coalesce(x.errors, 0))
+        order by d.day)
+       from generate_series(date_trunc('day', now()) - interval '6 days', date_trunc('day', now()), interval '1 day') d(day)
+       left join lateral (select sum(m.requests)::int as requests, sum(m.responses_5xx)::int as errors from app_metrics m
+         where m.app_id = a.id and m.hour >= d.day and m.hour < d.day + interval '1 day') x on true) as traffic_7d
   from apps a where a.status <> 'deleted'`;
 
 /** GitHub links of a repository: github.com, or the GHES host derived from the OIDC issuer (as the CI run URLs). */
@@ -294,12 +330,22 @@ async function githubBase() {
   return githubServerUrl((await getSettings()).oidcIssuer);
 }
 
-function decorateApp(row: AppListRow, github: string) {
+function decorateApp(row: AppListRow, github: string, activity: Activity) {
   const release = row.last_release;
   const repoUrl = row.github_repo ? `${github}/${row.github_repo}` : null;
+  // A6: the last request, the last release, the app's creation, or the start of the metrics, whichever is latest
+  const lastActivity = new Date(Math.max(
+    ...[row.last_request_at, release?.started_at, row.created_at, activity.metricsSince]
+      .filter((d) => d !== null && d !== undefined).map((d) => new Date(d as string | Date).getTime()),
+  ));
+  const abandoned = Date.now() - lastActivity.getTime() > activity.abandonedAfterDays * 86_400_000;
   return {
     ...row,
     db_size: row.db_size === null || row.db_size === undefined ? null : Number(row.db_size),
+    requests_24h: Number(row.requests_24h),
+    errors_24h: Number(row.errors_24h),
+    memory: row.memory === null ? null : Number(row.memory),
+    last_activity_at: lastActivity.toISOString(),
     url: appUrl(row.slug),
     studio_url: studio.deepLink(row.slug),
     github_url: repoUrl,
@@ -320,6 +366,8 @@ function decorateApp(row: AppListRow, github: string) {
       no_repo: !row.github_repo,
       /** Filled for the returned page only (it reads every app database). */
       schema_drift: null as number | null,
+      /** No request and no release for `abandoned_after_days` (A6). */
+      abandoned,
     },
   };
 }
@@ -335,8 +383,8 @@ async function withDrift(app: AppRecord) {
 }
 
 async function appRecords() {
-  const github = await githubBase();
-  return (await many<AppListRow>(APPS_SQL)).map((row) => decorateApp(row, github));
+  const [github, activity] = await Promise.all([githubBase(), activityContext()]);
+  return (await many<AppListRow>(APPS_SQL)).map((row) => decorateApp(row, github, activity));
 }
 
 const flag = (name: keyof AppRecord["flags"]) => (app: AppRecord, value: unknown) =>
@@ -360,8 +408,10 @@ adminApi.get("/apps", async (c) => {
     accepted_lints: flag("accepted_lints"),
     schema_drift: flag("schema_drift"),
     last_release_failed: flag("last_release_failed"),
+    abandoned: flag("abandoned"),
     flagged: (a, value) =>
-      (a.flags.outside_ci || a.flags.accepted_lints > 0 || a.flags.error || a.flags.last_release_failed) === truthy(value),
+      (a.flags.outside_ci || a.flags.accepted_lints > 0 || a.flags.error || a.flags.last_release_failed ||
+        a.flags.abandoned) === truthy(value),
   }, { field: "slug", order: "ASC" });
   return page(c, "apps", driftFilter ? rows : await Promise.all(rows.map(withDrift)), total, params.range);
 });
@@ -373,10 +423,10 @@ async function appRow(slug: string) {
 }
 
 async function appRecord(slug: string) {
-  const github = await githubBase();
+  const [github, activity] = await Promise.all([githubBase(), activityContext()]);
   const row = await one<AppListRow>(`${APPS_SQL} and a.slug = $1`, [slug]);
   if (!row) throw new HttpError(404, `app "${slug}" not found`);
-  const app = await withDrift(decorateApp(row, github));
+  const app = await withDrift(decorateApp(row, github, activity));
   const services = await orchestrator.appContainers(slug).catch(() => []);
   return { ...app, services };
 }
@@ -407,6 +457,26 @@ adminApi.post("/apps/:slug/rollback", async (c) => {
   const input = await body(c, z.object({ kind: deploymentKind, version: z.number().int().positive().optional() }));
   return c.json(await rollback(c.get("admin"), await appRow(c.req.param("slug")), input.kind, input.version));
 });
+
+/** Hourly load of the app over `days` (1 to 30, default 7), oldest first, hours without a row included. */
+adminApi.get("/apps/:slug/metrics", async (c) => {
+  const app = await appRow(c.req.param("slug"));
+  const days = Math.min(Math.max(Number(c.req.query("days")) || 7, 1), 30);
+  const rows = await many<Record<string, unknown>>(
+    `select h.hour, coalesce(m.requests, 0)::int as requests, coalesce(m.responses_5xx, 0)::int as responses_5xx,
+        m.db_size_bytes::float8 as db_size_bytes, m.memory_bytes::float8 as memory_bytes
+       from generate_series(date_trunc('hour', now()) - make_interval(hours => $2 * 24 - 1), date_trunc('hour', now()),
+         interval '1 hour') h(hour)
+       left join app_metrics m on m.app_id = $1 and m.hour = h.hour
+      order by h.hour`,
+    [app.id, days],
+  );
+  const state = await one<{ sampled_at: Date | null }>("select sampled_at from metrics_state where id = 1");
+  return c.json({ app: app.slug, days, sampled_at: state?.sampled_at ?? null, hours: rows });
+});
+
+/** Samples app_metrics now (as the control plane does every minute): the console's refresh, and the e2e suites. */
+adminApi.post("/metrics/sample", async (c) => c.json(await sampleMetrics()));
 
 adminApi.get("/apps/:slug/logs", async (c) => {
   const app = await appRow(c.req.param("slug"));
@@ -674,11 +744,31 @@ adminApi.get("/dashboard", async (c) => {
     ),
   ]);
   const disk = await statfs(config.dataDir.sites).catch(() => null);
+  // load of every app (app_metrics): totals and the 7-day series summed over the apps
+  const records = await appRecords();
+  const days = new Map<string, { day: string; requests: number; errors: number }>();
+  for (const app of records) {
+    for (const d of app.traffic_7d ?? []) {
+      const day = days.get(d.day) ?? { day: d.day, requests: 0, errors: 0 };
+      day.requests += d.requests;
+      day.errors += d.errors;
+      days.set(d.day, day);
+    }
+  }
+  const sampled = await one<{ sampled_at: Date | null }>("select sampled_at from metrics_state where id = 1");
   return c.json({
     apps: { total: apps.reduce((n, a) => n + a.count, 0), by_status: Object.fromEntries(apps.map((a) => [a.status, a.count])) },
     users,
     tokens,
-    flagged,
+    flagged: { ...flagged, abandoned: records.filter((a) => a.flags.abandoned).length },
+    load: {
+      requests_24h: records.reduce((n, a) => n + a.requests_24h, 0),
+      errors_24h: records.reduce((n, a) => n + a.errors_24h, 0),
+      /** GoTrue and PostgREST containers of every app (the shared edge runtime is not included) */
+      memory: records.reduce((n, a) => n + (a.memory ?? 0), 0),
+      traffic_7d: [...days.values()].sort((a, b) => a.day.localeCompare(b.day)),
+      sampled_at: sampled?.sampled_at ?? null,
+    },
     recent_failures: failures,
     database: { cluster_bytes: Number(cluster?.size ?? 0), app_databases_bytes: Number(cluster?.app_databases ?? 0) },
     // as seen from the control plane container: the host's memory and CPUs, the disk of the Docker volumes

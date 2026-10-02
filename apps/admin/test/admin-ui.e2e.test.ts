@@ -7,7 +7,7 @@ import { mkdirSync, readFileSync } from "node:fs";
 import { chromium, type Browser, type Page } from "playwright";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { cleanup, runId, waitForControlPlane } from "../../control-plane/test/disposable.ts";
+import { cleanup, psql, runId, waitForControlPlane } from "../../control-plane/test/disposable.ts";
 
 const ROOT = new URL("../../../", import.meta.url);
 const env = Object.fromEntries(
@@ -50,13 +50,15 @@ async function mcp(token: string, calls: [string, Record<string, unknown>][]) {
   return results;
 }
 
-async function shot(page: Page, name: string) {
+async function shot(page: Page, name: string, fullPage = false) {
   if (!SCREENSHOTS) return;
   mkdirSync(SCREENSHOTS, { recursive: true });
-  // notifications of earlier actions would hide part of the screen
-  await page.evaluate(() => document.querySelectorAll("[data-sonner-toast]").forEach((t) => t.remove()));
+  // notifications of earlier actions would hide part of the screen: hidden, not removed (React still owns the nodes,
+  // and removing them made the next re-render of the toaster crash the page)
+  await page.evaluate(() =>
+    document.querySelectorAll<HTMLElement>("[data-sonner-toast]").forEach((t) => (t.style.visibility = "hidden")));
   await page.waitForTimeout(300);
-  await page.screenshot({ path: new URL(`${name}.png`, SCREENSHOTS).pathname });
+  await page.screenshot({ path: new URL(`${name}.png`, SCREENSHOTS).pathname, fullPage });
 }
 
 describe("admin SPA smoke test", () => {
@@ -76,8 +78,21 @@ describe("admin SPA smoke test", () => {
       ["finish_release", { release_id: release.release_id, status: "succeeded" }],
       ["set_secrets", { app: APP, secrets: { STRIPE_KEY: "secret-value" } }],
     ]);
+    // load: 12 real requests to the app's host, counted from Caddy's access log by a forced sample, on top of a
+    // synthetic history of the past 7 days (hourly rows written directly, so that the charts have something to show)
+    psql(`insert into app_metrics (app_id, hour, requests, responses_5xx)
+      select a.id, h, (40 + 30 * sin(extract(epoch from h) / 20000))::int, (case when extract(hour from h) = 14 then 3 else 0 end)
+        from apps a, generate_series(date_trunc('hour', now()) - interval '167 hours', date_trunc('hour', now()) - interval '1 hour',
+          interval '1 hour') h
+       where a.slug = '${APP}'`);
+    for (let i = 0; i < 12; i++) await (await fetch(`http://${APP}.localhost:8100/`)).body?.cancel();
+    for (let i = 0; i < 20; i++) {
+      await api("POST", "/metrics/sample", {});
+      if ((await api("GET", `/apps/${APP}`)).requests_24h >= 12) break;
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
     browser = await chromium.launch();
-    page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+    page = await browser.newPage({ viewport: { width: 1680, height: 900 } });
   });
 
   after(async () => {
@@ -94,6 +109,7 @@ describe("admin SPA smoke test", () => {
     await page.getByRole("button", { name: "Sign in" }).click();
     await page.getByRole("heading", { name: "Dashboard" }).waitFor();
     await page.getByText("Postgres cluster").waitFor();
+    await page.getByText("Requests, 24 h (all apps)").waitFor();
     await shot(page, "02-dashboard");
   });
 
@@ -106,6 +122,11 @@ describe("admin SPA smoke test", () => {
     await row.getByText(BUILDER, { exact: true }).waitFor();
     await row.getByText("deployed outside CI").waitFor();
     await row.getByText("bbbbbbb").waitFor();
+    // load columns: requests of the last 24 h (synthetic history + the 12 real ones) and the 7-day sparkline
+    const record = await api("GET", `/apps/${APP}`);
+    assert.ok(record.requests_24h >= 12);
+    await row.getByText(new Intl.NumberFormat("en-US").format(record.requests_24h)).first().waitFor();
+    await row.getByRole("img", { name: new RegExp(`${APP} requests per day`) }).waitFor();
     await page.getByPlaceholder("Search slug, name, owner, repo").fill("");
     await page.getByRole("row").filter({ hasText: APP }).waitFor();
     await shot(page, "03-apps-list");
@@ -118,7 +139,12 @@ describe("admin SPA smoke test", () => {
     const studio = page.getByRole("link", { name: "Open in Studio" });
     assert.equal(await studio.getAttribute("href"), `http://studio.localhost:8100/project/${APP}`);
     await page.getByText("gotrue: running").waitFor();
-    await shot(page, "04-app-overview");
+    const load = page.getByTestId("app-load");
+    await load.getByRole("img", { name: /Requests per hour/ }).waitFor();
+    await load.getByText("Table view").click();
+    await load.getByRole("cell").first().waitFor();
+    await load.getByText("Table view").click();
+    await shot(page, "04-app-overview", true);
 
     await page.getByRole("button", { name: "Stop" }).click();
     await page.getByRole("button", { name: "Confirm" }).click();

@@ -325,6 +325,10 @@ export async function createApp(user: User, name: string, requestedSlug?: string
 
 /** Re-applies routes and edge configs for every app (Caddy restarted, volumes recreated...). */
 export async function syncAll() {
+  await router.ensureAccessLog({
+    file: config.accessLog.caddyPath,
+    skipHosts: [config.apiHost, config.adminHost, config.studio.host],
+  }).catch((error) => console.error("access log setup failed", error));
   const apps = await many<AppRow>("select * from apps where status in ('running', 'error', 'stopped')");
   for (const app of apps) {
     try {
