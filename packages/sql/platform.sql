@@ -58,7 +58,7 @@ create table if not exists deployments (
   version integer not null,
   status text not null default 'pending'
     check (status in ('pending', 'uploaded', 'live', 'ready', 'failed')),
-  created_by uuid references users (id),
+  created_by uuid references users (id) on delete set null,
   created_at timestamptz not null default now(),
   finalized_at timestamptz,
   manifest jsonb,
@@ -78,7 +78,7 @@ create table if not exists uploads (
 
 create table if not exists audit_log (
   id bigint generated always as identity primary key,
-  user_id uuid references users (id),
+  user_id uuid references users (id) on delete set null,
   app_id uuid references apps (id) on delete set null,
   action text not null,
   details jsonb,
@@ -108,3 +108,16 @@ begin
   end if;
 end $$;
 alter table app_members alter column role set default 'collaborator';
+
+-- Deleting a user keeps their deployments and audit entries, without the author
+do $$
+begin
+  if exists (select 1 from pg_constraint where conname = 'audit_log_user_id_fkey' and confdeltype <> 'n') then
+    alter table audit_log drop constraint audit_log_user_id_fkey,
+      add constraint audit_log_user_id_fkey foreign key (user_id) references users (id) on delete set null;
+  end if;
+  if exists (select 1 from pg_constraint where conname = 'deployments_created_by_fkey' and confdeltype <> 'n') then
+    alter table deployments drop constraint deployments_created_by_fkey,
+      add constraint deployments_created_by_fkey foreign key (created_by) references users (id) on delete set null;
+  end if;
+end $$;

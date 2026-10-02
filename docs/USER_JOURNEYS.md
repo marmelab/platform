@@ -92,7 +92,7 @@ Trigger: a colleague needs to co-maintain the app.
 3. The app shows up in their `whoami` and in their Studio.
 
 Channel: Claude Code + MCP (owner), and admin.
-Status: 🟡. The `add-member` admin CLI exists. The MCP tools (`add_member`, `remove_member`) and the admin screen (M4) are ❌.
+Status: 🟡. The MCP tools (`list_members`, `add_member`, `remove_member`; owner or admin only for changes) and the `add-member` / `remove-member` admin CLI exist. The colleague's platform account must already exist (created by an admin). The admin screen (M4) is ❌.
 
 ### B8. Stopping and deleting an app
 Trigger: project over, or abandoned-app flag.
