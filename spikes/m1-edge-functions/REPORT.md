@@ -7,7 +7,7 @@ La conception tient. Trois points restent à surveiller : la RAM par worker (env
 ## 1. Ce qui a été construit
 
 ```
-packages/edge-main-worker/        # main worker réutilisable (§10 du plan)
+apps/edge-main-worker/        # main worker réutilisable (§10 du plan)
   index.ts        routeur : gateway token → app → fonction → JWT → user worker
   config.ts       lecture des JSON d'app / manifestes, cache invalidé par (inode, mtime, taille)
   resolve.ts      validation app/fonction, résolution de current via realpath, anti-évasion

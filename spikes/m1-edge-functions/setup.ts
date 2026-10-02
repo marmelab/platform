@@ -1,6 +1,6 @@
 // Plays the control plane: generates app configs, versioned function dirs and the Caddyfile under runtime/.
 // Usage: deno run -A setup.ts [appCount=2]
-import { signHs256 } from "../../packages/edge-main-worker/jwt.ts";
+import { signHs256 } from "../../apps/edge-main-worker/jwt.ts";
 
 const here = new URL(".", import.meta.url).pathname;
 const runtime = `${here}runtime`;

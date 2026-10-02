@@ -1,4 +1,4 @@
-import { signHs256 } from "../../packages/edge-main-worker/jwt.ts";
+import { signHs256 } from "../../apps/edge-main-worker/jwt.ts";
 
 export const here = new URL(".", import.meta.url).pathname;
 export const runtime = `${here}runtime`;

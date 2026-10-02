@@ -10,5 +10,5 @@ docker compose -p m1 up -d controlplane
 docker compose -p m1 exec -T controlplane sh -euc \
   'rm -rf /functions/* /config/apps/*; cp -a /src/functions/. /functions/; cp /src/config/apps/*.json /config/apps/'
 docker compose -p m1 up -d --force-recreate edge caddy
-deno test -A ../../packages/edge-main-worker/main_test.ts
+deno test -A ../../apps/edge-main-worker/main_test.ts
 deno test -A test.ts

@@ -18,7 +18,7 @@ Résultats :
 - **Les acquis de M0 et M1 ont été repris sans surprise.**
   - De M0 : le template, les rôles par app, `REASSIGN OWNED`, `GHCRTS=-N2` et les routes Caddy par l'API admin.
   - De M1 : le format `/config/apps/<app>.json`, `functions.json`, le gateway token et les volumes nommés.
-  - Le main worker de `packages/edge-main-worker` est utilisé **tel quel**.
+  - Le main worker de `apps/edge-main-worker` est utilisé **tel quel**.
 
 La stack `plat` reste démarrée avec l'app `demo` (table `todos` sous RLS, fonctions `hello` et `ping`, front « Demo v2 »), prête pour M3.
 
@@ -29,7 +29,7 @@ package.json, pnpm-workspace.yaml, tsconfig.base.json
 packages/shared/      schémas zod des entrées d'outils MCP + types (AppInfo, LintResult, LogLine)
 packages/sql/         bootstrap.sql, template.sql (repris de M0), platform.sql (modèle de données),
                       lints.sql (linter), src/index.ts (SQL de provisioning par app, rôle owner inclus)
-packages/edge-main-worker/   inchangé (M1)
+apps/edge-main-worker/   inchangé (M1)
 apps/control-plane/
   Dockerfile          node:24, pnpm install --prod, exécution directe des .ts (type stripping)
   src/config.ts       env, URLs publiques et internes

@@ -59,7 +59,7 @@ services:
       PLATFORM_WARM_TIMEOUT_MS: "45000"
       DENO_DIR: /deno-cache
     volumes:
-      - ../packages/edge-main-worker:/main:ro
+      - ../apps/edge-main-worker:/main:ro
       - functions:/functions:ro
       - apps-config:/config/apps:ro
       - deno-cache:/deno-cache

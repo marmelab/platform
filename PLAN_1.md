@@ -276,8 +276,8 @@ Auth de l'admin : comptes locaux en V1, SSO entreprise (OIDC) ensuite.
 apps/
   control-plane/      # Hono + MCP + orchestrateur + jobs
   admin/              # shadcn-admin-kit
-packages/
   edge-main-worker/   # main worker Deno pour l'edge runtime
+packages/
   shared/             # types, schémas zod partagés API/MCP/admin
   sql/                # template_supabase, rôles, linter
 plugin/               # plugin Claude Code (skill + .mcp.json)
