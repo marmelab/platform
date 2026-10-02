@@ -23,7 +23,7 @@ After a code change: `docker compose -p plat -f deploy/docker-compose.yml up -d 
 
 - URL: `http://api.localhost:8100/mcp`, with the `Authorization: Bearer <PAT>` header.
 - Claude Code: `claude mcp add --transport http platform http://api.localhost:8100/mcp --header "Authorization: Bearer $PLATFORM_TOKEN"`
-- Tools: `whoami`, `list_apps`, `get_app`, `create_app`, `apply_migrations`, `execute_sql`, `create_deployment`, `finalize_deployment`, `list_deployments`, `rollback`, `set_secrets`, `list_secrets`, `get_logs`.
+- Tools: `whoami`, `list_apps`, `get_app`, `create_app`, `apply_migrations`, `execute_sql`, `create_deployment`, `finalize_deployment`, `list_deployments`, `rollback`, `set_secrets`, `list_secrets`, `list_members`, `add_member`, `remove_member`, `get_logs`.
 - Archives don't go through MCP: `create_deployment` returns a `PUT http://api.localhost:8100/uploads/<token>` URL (single use, 15 min) and a ready-to-use `tar` + `curl` command.
 
 ## Apps
@@ -51,7 +51,7 @@ docker exec plat-control-plane node src/cli.ts init                             
 
 App roles: a `collaborator` deploys, inspects the app and manages its users; an `owner` can also manage members, stop, start and delete the app; platform admins can do everything on every app. Memberships created with the former `developer` role are renamed `collaborator` by the idempotent schema migration run at startup.
 
-Membership changes apply to open Studio sessions and PATs on their next request: Studio forward auth and MCP read the user's apps from the database on every request. `remove-member` is recorded in `audit_log` (`remove_member`, no user since the CLI acts as the operator).
+Membership changes apply to open Studio sessions and PATs on their next request: Studio forward auth and MCP read the user's apps from the database on every request. Member changes are recorded in `audit_log` (`add_member`, `remove_member`), with the acting user for MCP calls and no user for the CLI, which acts as the operator. `add_member` and `remove_member` (MCP and CLI) refuse any change that would leave the app without an owner; through MCP, only an owner of the app or an admin can call them, and the target account must already exist.
 
 ## Tests
 

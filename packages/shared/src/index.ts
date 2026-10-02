@@ -7,6 +7,8 @@ export const SECRET_NAME_RE = /^[A-Z_][A-Z0-9_]{0,63}$/;
 export const slug = z.string().regex(SLUG_RE, "lowercase letters, digits and dashes (3-32 chars)");
 export const deploymentKind = z.enum(["frontend", "functions"]);
 export type DeploymentKind = z.infer<typeof deploymentKind>;
+export const memberRole = z.enum(["owner", "collaborator"]);
+export type MemberRole = z.infer<typeof memberRole>;
 
 export const migration = z.object({
   version: z.string().regex(/^\d{1,20}$/, "numeric version, e.g. 20260101120000"),
@@ -55,6 +57,14 @@ export const toolInputs = {
       .describe("NAME -> value; null deletes the secret"),
   },
   list_secrets: { app: slug },
+  list_members: { app: slug },
+  add_member: {
+    app: slug,
+    email: z.email().describe("Email of an existing platform account"),
+    role: memberRole.default("collaborator")
+      .describe("collaborator: deploy, inspect, manage app users; owner: also members, stop, start, delete"),
+  },
+  remove_member: { app: slug, email: z.email() },
   get_logs: {
     app: slug,
     service: z.enum(["gotrue", "postgrest", "functions", "postgres"]).optional(),
