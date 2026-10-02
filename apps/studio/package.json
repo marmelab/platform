@@ -2,7 +2,6 @@
   "name": "studio",
   "version": "0.0.9",
   "private": true,
-  "packageManager": "pnpm@10.24.0",
   "scripts": {
     "preinstall": "npx only-allow pnpm",
     "dev": "next dev -p ${STUDIO_PORT:-8082}",
@@ -201,7 +200,6 @@
     "postcss": "^8.5.10",
     "raw-loader": "^4.0.2",
     "require-in-the-middle": "^8.0.0",
-    "sass": "^1.72.0",
     "tailwindcss": "catalog:",
     "tsconfig": "workspace:*",
     "tsx": "catalog:",

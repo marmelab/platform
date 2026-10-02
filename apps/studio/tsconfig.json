@@ -6,10 +6,10 @@
     "lib": ["dom", "dom.iterable", "esnext"],
     "paths": {
       "@/*": ["./*"],
-      "@ui/*": ["./../../packages/ui/src/*"] // handle ui package paths
+      "@ui/*": ["./vendor/ui/src/*"] // handle ui package paths
     },
     "plugins": [{ "name": "next" }]
   },
   "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
-  "exclude": ["node_modules", "public/deno/*.ts"]
+  "exclude": ["node_modules", "vendor", "public/deno/*.ts"]
 }

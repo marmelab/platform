@@ -4,6 +4,7 @@ const jsxA11y = require('eslint-plugin-jsx-a11y')
 const supabaseConfig = require('eslint-config-supabase/next')
 
 module.exports = defineConfig([
+  { ignores: ['vendor/**'] },
   { files: ['**/*.ts', '**/*.tsx'] },
   supabaseConfig,
   {
