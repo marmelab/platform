@@ -14,7 +14,7 @@ export const platform = new pg.Pool({
 });
 
 export async function withClient<T>(
-  options: { database: string; user?: string; password?: string; readWrite?: boolean },
+  options: { database: string; user?: string; password?: string; readWrite?: boolean; applicationName?: string },
   fn: (client: pg.Client) => Promise<T>,
 ): Promise<T> {
   const client = new pg.Client({
@@ -23,7 +23,7 @@ export async function withClient<T>(
     user: options.user ?? config.pg.adminUser,
     password: options.password ?? config.pg.adminPassword,
     database: options.database,
-    application_name: "control-plane",
+    application_name: options.applicationName ?? "control-plane",
     // a stopped app's database is read-only by default (B8): the platform's own admin sessions opt out
     options: options.readWrite ? "-c default_transaction_read_only=off" : undefined,
   });

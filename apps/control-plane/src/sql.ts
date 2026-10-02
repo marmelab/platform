@@ -8,10 +8,16 @@ import { platform, withClient } from "./db.ts";
 
 const MAX_ROWS = 200;
 
-/** Connects to the app database as app_<id>_owner (never as postgres / supabase_admin). */
-function withOwner<T>(app: AppRow, fn: (client: pg.Client) => Promise<T>) {
+/**
+ * Connects to the app database as app_<id>_owner (never as postgres / supabase_admin). The application name shows up
+ * in the schema changes recorded by the DDL event trigger (schema-changes.ts).
+ */
+function withOwner<T>(app: AppRow, fn: (client: pg.Client) => Promise<T>, applicationName = "platform") {
   const roles = appRoles(dbId(app.slug));
-  return withClient({ database: roles.database, user: roles.owner, password: appSecrets(app).passwords.owner }, fn);
+  return withClient(
+    { database: roles.database, user: roles.owner, password: appSecrets(app).passwords.owner, applicationName },
+    fn,
+  );
 }
 
 const lintsOf = async (c: pg.Client) => (await c.query<LintResult>(lintsSql())).rows;
@@ -92,18 +98,20 @@ export async function applyMigrations(user: Actor, app: AppRow, migrations: Migr
       const accepted = newErrors.filter((l) => isAccepted(l, acceptLints));
       if (dryRun || blocking.length) {
         await c.query("rollback");
-        return { committed: false, pending, skipped, lints, blocking, accepted };
+        return { committed: false, pending, skipped, lints, blocking, accepted, txid: null };
       }
+      // the DDL event trigger records this transaction id: it is how its schema changes are known to be a release's
+      const { rows: [{ txid }] } = await c.query<{ txid: string }>("select pg_current_xact_id()::text as txid");
       await c.query("commit");
       if (pending.length) await c.query("notify pgrst, 'reload schema'");
-      return { committed: true, pending, skipped, lints, blocking, accepted };
+      return { committed: true, pending, skipped, lints, blocking, accepted, txid };
     } catch (error) {
       await c.query("rollback");
       throw error;
     }
-  });
+  }, "platform-migrations");
 
-  const { pending, skipped, lints, blocking, accepted } = result;
+  const { pending, skipped, lints, blocking, accepted, txid } = result;
   if (dryRun) {
     return { status: "dry_run", applied: [], would_apply: pending, skipped, blocking_lints: blocking, lints };
   }
@@ -130,7 +138,7 @@ export async function applyMigrations(user: Actor, app: AppRow, migrations: Migr
     await platform.query(
       `insert into deployments (app_id, kind, version, status, created_by, finalized_at, manifest, release_id)
        values ($1, 'migrations', $2, 'live', $3, now(), $4, $5)`,
-      [app.id, next.rows[0].v, user.id, JSON.stringify({ applied: pending, accepted_lints: accepted }), releaseId],
+      [app.id, next.rows[0].v, user.id, JSON.stringify({ applied: pending, accepted_lints: accepted, txid }), releaseId],
     );
   }
   await audit(user.id, app.id, "apply_migrations", {
@@ -167,7 +175,7 @@ export async function executeSql(user: User, app: AppRow, sql: string, write: bo
       await c.query("rollback").catch(() => {});
       throw new UserError(pgError(error));
     }
-  });
+  }, "platform-execute-sql");
   if (write) await audit(user.id, app.id, "execute_sql", { sql, ms: Date.now() - started });
   return output;
 }

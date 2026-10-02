@@ -6,6 +6,8 @@ export const bootstrapSql = () => sqlFile("bootstrap.sql");
 export const templateSql = () => sqlFile("template.sql");
 export const platformSql = () => sqlFile("platform.sql");
 export const lintsSql = () => sqlFile("lints.sql");
+/** DDL event trigger and `_platform.schema_changes` (PLAN_1 §7). Idempotent, run as supabase_admin. */
+export const schemaChangesSql = () => sqlFile("schema_changes.sql");
 
 export const TEMPLATE_DB = "template_supabase";
 

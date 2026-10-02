@@ -319,6 +319,9 @@ describe("CI deployment API (GitHub OIDC) and DIRECT_DEPLOY", () => {
     cli(["set-setting", "direct_deploy", "admins"]);
     try {
       const reserved = /reserved to admins/;
+      const builder = await call(owner, "whoami");
+      assert.deepEqual([builder.direct_deploy, builder.direct_deploy_setting], [false, "admins"]);
+      assert.equal((await call(admin, "whoami")).direct_deploy, true);
       await refused(owner, "create_deployment", { app: APP, kind: "frontend" }, reserved);
       await refused(owner, "apply_migrations", { app: APP, migrations: [todos] }, reserved);
       await refused(owner, "begin_release", { app: APP }, reserved);
@@ -353,6 +356,7 @@ describe("CI deployment API (GitHub OIDC) and DIRECT_DEPLOY", () => {
       cli(["unset-setting", "direct_deploy"]);
     }
     // DIRECT_DEPLOY=everyone (the local default): builders publish again, without the exception flag
+    assert.equal((await call(owner, "whoami")).direct_deploy, true);
     const created = await call(owner, "create_deployment", { app: APP, kind: "frontend" });
     await upload(created.upload_url, await frontendArchive("builder"));
     const finalized = await call(owner, "finalize_deployment", { deployment_id: created.deployment_id });

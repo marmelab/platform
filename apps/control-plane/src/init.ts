@@ -1,6 +1,7 @@
 import {
   bootstrapSql,
   platformSql,
+  schemaChangesSql,
   STUDIO_META_DEFAULT,
   studioMetaDefaultDatabaseSql,
   studioMetaDefaultRoleSql,
@@ -48,6 +49,20 @@ async function ensureTemplate() {
   console.log(`${TEMPLATE_DB} created`);
 }
 
+/**
+ * Upgrades of template_supabase applied at every start (the template is only built once): the DDL event trigger
+ * (PLAN_1 §7). Idempotent. The template refuses connections outside this short window; startup runs before the API
+ * listens, so no create_app clones it meanwhile (the `init` CLI on a running platform could make one fail: retry it).
+ */
+async function upgradeTemplate() {
+  await withAdmin("template1", (c) => c.query(`alter database ${TEMPLATE_DB} allow_connections true`));
+  try {
+    await withAdmin(TEMPLATE_DB, (c) => c.query(schemaChangesSql()));
+  } finally {
+    await withAdmin("template1", (c) => c.query(`alter database ${TEMPLATE_DB} allow_connections false`));
+  }
+}
+
 async function ensurePlatformDb() {
   const db = config.pg.platformDb;
   await withAdmin("template1", async (c) => {
@@ -75,6 +90,7 @@ export async function initCluster() {
   await waitForPostgres();
   await withAdmin("postgres", (c) => c.query(bootstrapSql()));
   await ensureTemplate();
+  await upgradeTemplate();
   await ensurePlatformDb();
   await ensureStudioMetaDefault();
 }

@@ -32,7 +32,9 @@ import {
   releaseForUser,
   requireDirectDeploy,
 } from "./releases.ts";
+import { listSchemaChanges, schemaDrift } from "./schema-changes.ts";
 import { listSecrets, setSecrets } from "./secrets.ts";
+import { getSettings } from "./settings.ts";
 import { applyMigrations, executeSql, StructuredUserError } from "./sql.ts";
 
 async function run(fn: () => Promise<unknown>): Promise<CallToolResult> {
@@ -54,14 +56,32 @@ export function buildMcpServer(user: User): McpServer {
   const server = new McpServer({ name: "platform", version: "0.1.0" });
   const t = toolInputs;
 
-  server.registerTool("whoami", { description: "Current user and the apps they can access" }, () =>
-    run(async () => ({
-      email: user.email,
-      name: user.name,
-      role: user.role,
-      api_url: apiUrl(),
-      apps: (await appsForUser(user)).map((a) => ({ slug: a.slug, name: a.name, status: a.status, role: a.member_role })),
-    })));
+  server.registerTool(
+    "whoami",
+    {
+      description: "Current user, the apps they can access, and direct_deploy: whether this user may publish " +
+        "directly with their token (otherwise deployments go through the app's GitHub Actions CI)",
+    },
+    () =>
+      run(async () => {
+        const { directDeploy } = await getSettings();
+        return {
+          email: user.email,
+          name: user.name,
+          role: user.role,
+          api_url: apiUrl(),
+          // DIRECT_DEPLOY: admins always publish directly (the audited exception when the setting is "admins")
+          direct_deploy: user.role === "admin" || directDeploy === "everyone",
+          direct_deploy_setting: directDeploy,
+          apps: (await appsForUser(user)).map((a) => ({
+            slug: a.slug,
+            name: a.name,
+            status: a.status,
+            role: a.member_role,
+          })),
+        };
+      }),
+  );
 
   server.registerTool("list_apps", { description: "Apps the user can access, with URL and anon key" }, () =>
     run(async () => Promise.all((await appsForUser(user)).map(appInfo))));
@@ -70,10 +90,32 @@ export function buildMcpServer(user: User): McpServer {
     "get_app",
     {
       description:
-        "App details: URL, SUPABASE_URL and anon key (use them as VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY), live versions",
+        "App details: URL, SUPABASE_URL and anon key (use them as VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY), live " +
+        "versions, linked repository, last release, and schema_drift: schema changes made outside a release since " +
+        "the last one (details with list_schema_changes)",
       inputSchema: t.get_app,
     },
-    ({ app }) => run(async () => appInfo(await appForUser(user, app))),
+    ({ app }) =>
+      run(async () => {
+        const target = await appForUser(user, app);
+        const drift = await schemaDrift(target).catch((error) => {
+          console.error(`schema drift of ${target.slug}`, error);
+          return null;
+        });
+        return { ...(await appInfo(target)), schema_drift: drift };
+      }),
+  );
+
+  server.registerTool(
+    "list_schema_changes",
+    {
+      description: "Schema changes (DDL) recorded in the app database outside a release: Studio SQL or table " +
+        "editor, execute_sql with write, functions using SUPABASE_DB_URL. Newest first. all=true also lists the " +
+        "changes made by deployed migrations (in_release, release_id)",
+      inputSchema: t.list_schema_changes,
+    },
+    ({ app, all, limit }) =>
+      run(async () => listSchemaChanges(await appForUser(user, app), { all: all ?? false, limit: limit ?? 50 })),
   );
 
   server.registerTool(

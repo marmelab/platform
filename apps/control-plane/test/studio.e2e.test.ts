@@ -390,6 +390,27 @@ describe("Studio for app builders", () => {
     }
   });
 
+  test("9e. a schema change from Studio (pg-meta) is flagged as outside release", async () => {
+    const client = await connect();
+    try {
+      const table = `public.studio_ddl_${RUN}`;
+      const created = await sql(alice, A, `create table ${table} (id int primary key); ` +
+        `alter table ${table} enable row level security`);
+      assert.equal(created.status, 200, created.body);
+      const { schema_drift } = await tool(client, "get_app", { app: A });
+      assert.ok(schema_drift.count >= 1, JSON.stringify(schema_drift));
+      const { changes } = await tool(client, "list_schema_changes", { app: A });
+      const change = changes.find((c: { object_identity: string; command_tag: string }) =>
+        c.object_identity === table && c.command_tag === "CREATE TABLE");
+      assert.ok(change, JSON.stringify(changes));
+      assert.equal(change.role, `app_${A.replace(/-/g, "_")}_owner`);
+      assert.equal(change.in_release, false);
+      assert.notEqual(change.application_name, "platform-migrations");
+    } finally {
+      await client.close();
+    }
+  });
+
   test("10. logout ends the session", async () => {
     const out = await raw("POST", "/_platform/logout", { cookie: alice });
     assert.equal(out.status, 303);
