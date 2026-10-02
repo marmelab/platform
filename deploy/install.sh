@@ -1,22 +1,32 @@
 #!/usr/bin/env bash
-# Dev installer: generates secrets, starts the "plat" stack, initialises the cluster
-# (template_supabase + platform database) and creates the first admin with a PAT.
-# Re-runnable: secrets and the admin token are kept in deploy/.env and deploy/.env.local.
+# Dev installer: generates secrets, builds Studio, starts the "plat" stack, initialises the cluster
+# (template_supabase + platform database) and creates the first admin with a PAT and a Studio password.
+# Re-runnable: secrets and the admin credentials are kept in deploy/.env and deploy/.env.local.
+#   STUDIO_BUILD=1 deploy/install.sh    rebuilds the Studio image even if it exists
 set -euo pipefail
 cd "$(dirname "$0")"
 
 ADMIN_EMAIL="${ADMIN_EMAIL:-admin@example.com}"
 API_URL="http://api.localhost:8100"
+STUDIO_URL="http://studio.localhost:8100"
 
-if [ ! -f .env ]; then
-  umask 077
-  cat > .env <<ENV
-POSTGRES_PASSWORD=$(openssl rand -hex 16)
-PLATFORM_MASTER_KEY=$(openssl rand -hex 32)
-PLATFORM_GATEWAY_TOKEN=$(openssl rand -hex 32)
-PLATFORM_EDGE_ADMIN_TOKEN=$(openssl rand -hex 32)
-ENV
-  echo "secrets generated in deploy/.env"
+umask 077
+touch .env
+add_secret() {
+  grep -q "^$1=" .env || { echo "$1=$(openssl rand -hex "$2")" >> .env; echo "secret $1 generated in deploy/.env"; }
+}
+add_secret POSTGRES_PASSWORD 16
+add_secret PLATFORM_MASTER_KEY 32
+add_secret PLATFORM_GATEWAY_TOKEN 32
+add_secret PLATFORM_EDGE_ADMIN_TOKEN 32
+add_secret PLATFORM_STUDIO_HEADER_SECRET 32
+add_secret PLATFORM_STUDIO_CONFIG_TOKEN 32
+add_secret PG_META_CRYPTO_KEY 32
+add_secret STUDIO_META_DEFAULT_PASSWORD 16
+umask 022
+
+if [ "${STUDIO_BUILD:-0}" = 1 ] || ! docker image inspect plat/studio:dev >/dev/null 2>&1; then
+  ../apps/studio/build.sh
 fi
 
 docker compose -p plat up -d --build
@@ -31,17 +41,23 @@ curl -fsS "$API_URL/health" >/dev/null || { echo; docker logs --tail 50 plat-con
 
 docker exec plat-control-plane node src/cli.ts init
 
-if ! grep -q '^PLATFORM_TOKEN=' .env.local 2>/dev/null; then
+umask 077
+touch .env.local
+if ! grep -q '^PLATFORM_TOKEN=' .env.local; then
   TOKEN="$(docker exec plat-control-plane node src/cli.ts create-user "$ADMIN_EMAIL" admin install)"
-  umask 077
   {
     echo "PLATFORM_URL=$API_URL/mcp"
     echo "PLATFORM_ADMIN_EMAIL=$ADMIN_EMAIL"
     echo "PLATFORM_TOKEN=$TOKEN"
-  } > .env.local
-  echo
-  echo "Admin $ADMIN_EMAIL created. Personal access token (shown once, also saved in deploy/.env.local):"
-  echo "  $TOKEN"
+  } >> .env.local
+  echo "Admin $ADMIN_EMAIL created, personal access token saved in deploy/.env.local (PLATFORM_TOKEN)"
+fi
+if ! grep -q '^PLATFORM_ADMIN_PASSWORD=' .env.local; then
+  ADMIN_EMAIL_SAVED="$(sed -n 's/^PLATFORM_ADMIN_EMAIL=//p' .env.local)"
+  PASSWORD="$(docker exec plat-control-plane node src/cli.ts set-password "${ADMIN_EMAIL_SAVED:-$ADMIN_EMAIL}" --generate)"
+  echo "PLATFORM_ADMIN_PASSWORD=$PASSWORD" >> .env.local
+  echo "Studio password of the admin saved in deploy/.env.local (PLATFORM_ADMIN_PASSWORD)"
 fi
 echo
 echo "MCP endpoint: $API_URL/mcp  (Authorization: Bearer \$PLATFORM_TOKEN)"
+echo "Studio:       $STUDIO_URL  (admin: PLATFORM_ADMIN_EMAIL / PLATFORM_ADMIN_PASSWORD from deploy/.env.local)"

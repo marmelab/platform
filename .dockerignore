@@ -3,3 +3,6 @@
 spikes
 deploy
 **/.DS_Store
+apps/studio
+apps/edge-main-worker
+**/.next

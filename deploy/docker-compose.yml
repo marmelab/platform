@@ -83,6 +83,10 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       PLATFORM_MASTER_KEY: ${PLATFORM_MASTER_KEY}
       PLATFORM_EDGE_ADMIN_TOKEN: ${PLATFORM_EDGE_ADMIN_TOKEN}
+      PLATFORM_STUDIO_HEADER_SECRET: ${PLATFORM_STUDIO_HEADER_SECRET}
+      PLATFORM_STUDIO_CONFIG_TOKEN: ${PLATFORM_STUDIO_CONFIG_TOKEN}
+      STUDIO_META_DEFAULT_PASSWORD: ${STUDIO_META_DEFAULT_PASSWORD}
+      STUDIO_HOST: studio.localhost
       PGHOST: db
       APPS_DOMAIN: localhost
       PUBLIC_PORT: "8100"
@@ -97,6 +101,53 @@ services:
       - uploads:/data/uploads
     labels:
       platform.service: control-plane
+
+  # Multi-head Studio (apps/studio, image built on the host by apps/studio/build.sh). No published port:
+  # reachable only through Caddy (studio.localhost:8100) behind the control plane's forward auth.
+  studio:
+    image: plat/studio:dev
+    container_name: plat-studio
+    restart: unless-stopped
+    mem_limit: 1g
+    depends_on: [studio-meta, control-plane]
+    environment:
+      PLATFORM_CONTROL_PLANE_URL: http://control-plane:3001
+      PLATFORM_STUDIO_CONFIG_TOKEN: ${PLATFORM_STUDIO_CONFIG_TOKEN}
+      PLATFORM_STUDIO_HEADER_SECRET: ${PLATFORM_STUDIO_HEADER_SECRET}
+      STUDIO_PG_META_URL: http://studio-meta:8080
+      PG_META_CRYPTO_KEY: ${PG_META_CRYPTO_KEY}
+      STUDIO_DATA_DIR: /tmp/studio-data
+      DEFAULT_ORGANIZATION_NAME: Platform
+      SUPABASE_PUBLIC_URL: http://studio.localhost:8100
+      # Global "default project" of the fork: unreachable on purpose, every route must use its project
+      SUPABASE_URL: http://unreachable.invalid
+      SUPABASE_ANON_KEY: none
+      SUPABASE_SERVICE_KEY: none
+      MULTI_HEAD_HOST: unreachable.invalid
+      LOGFLARE_URL: http://unreachable.invalid
+    labels:
+      platform.service: studio
+
+  # Shared postgres-meta. Its default connection is an empty database with a role without privileges;
+  # Studio sends each project's connection in x-connection-encrypted.
+  studio-meta:
+    image: supabase/postgres-meta:v0.99.0
+    container_name: plat-studio-meta
+    restart: unless-stopped
+    mem_limit: 384m
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PG_META_PORT: 8080
+      PG_META_DB_HOST: db
+      PG_META_DB_PORT: 5432
+      PG_META_DB_NAME: studio_meta_default
+      PG_META_DB_USER: studio_meta_default
+      PG_META_DB_PASSWORD: ${STUDIO_META_DEFAULT_PASSWORD}
+      CRYPTO_KEY: ${PG_META_CRYPTO_KEY}
+    labels:
+      platform.service: studio-meta
 
 volumes:
   db-data:
