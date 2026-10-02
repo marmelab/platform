@@ -40,6 +40,7 @@ Studio and `execute_sql` connect as `app_<id>_owner`, which does **not** have `B
 ```bash
 docker exec plat-control-plane node src/cli.ts create-user bob@example.com developer   # prints a new PAT
 docker exec plat-control-plane node src/cli.ts delete-app demo
+docker exec plat-control-plane node src/cli.ts delete-user bob@example.com             # also deletes their sessions, tokens and memberships
 docker exec plat-control-plane node src/cli.ts set-password bob@example.com --generate         # prints a Studio password
 docker exec -i plat-control-plane node src/cli.ts set-password bob@example.com < password.txt  # or reads it from stdin
 docker exec plat-control-plane node src/cli.ts add-member demo bob@example.com developer
@@ -52,8 +53,10 @@ docker exec plat-control-plane node src/cli.ts init                             
 pnpm -r typecheck
 pnpm --filter @platform/control-plane test        # Studio access policy (unit)
 pnpm --filter @platform/control-plane e2e         # requires the running stack and deploy/.env.local
-pnpm --filter @platform/control-plane e2e:studio  # Studio: login, filtering, isolation (creates alice and bob)
+pnpm --filter @platform/control-plane e2e:studio  # Studio: login, filtering, isolation
 ```
+
+The e2e suites never touch existing apps or users. Each run creates disposable resources named after a run id: one app `e2e-<id>` for `e2e`, two apps `e2e-<id>-a` / `e2e-<id>-b` and two builders `e2e-<id>-alice@example.com` / `e2e-<id>-bob@example.com` (random passwords, kept in memory) for `e2e:studio`. They are deleted at the end of the run, even when a test fails, with `delete-app` and `delete-user`; the `after` hook then checks that nothing is left (platform rows, sessions, tokens, memberships, containers, Caddy routes, database and roles) and fails the suite otherwise. Set `E2E_KEEP=1` to keep the apps for inspection (their slugs are printed), then remove them with `delete-app`.
 
 ## Technical access (dev)
 

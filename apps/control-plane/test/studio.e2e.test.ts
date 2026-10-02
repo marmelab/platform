@@ -1,13 +1,15 @@
 // End-to-end test of Studio for app builders against the running "plat" stack (deploy/install.sh).
-// Needs the apps "demo" and "todo-app" (control plane e2e and the todo-app example).
+// Creates two disposable apps and two disposable builders, all deleted at the end of the run.
 import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createHmac, randomBytes } from "node:crypto";
-import { appendFileSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { request } from "node:http";
+import { setTimeout as sleep } from "node:timers/promises";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { cleanup, cli, runId } from "./disposable.ts";
 
 const ROOT = new URL("../../../", import.meta.url);
 const readEnv = (file: string) =>
@@ -16,21 +18,29 @@ const readEnv = (file: string) =>
       .map((l) => [l.slice(0, l.indexOf("=")), l.slice(l.indexOf("=") + 1)]),
   );
 const local = readEnv("deploy/.env.local");
-/** Test builders' passwords are kept in deploy/.env.local (git-ignored) so that they can also sign in by hand. */
-const testPassword = (name: string) => {
-  const key = `STUDIO_TEST_${name.toUpperCase()}_PASSWORD`;
-  if (!local[key]) {
-    local[key] = randomBytes(18).toString("base64url");
-    appendFileSync(new URL("deploy/.env.local", ROOT), `${key}=${local[key]}\n`);
-  }
-  return local[key]!;
-};
 const secrets = readEnv("deploy/.env");
 
 const STUDIO = "http://studio.localhost:8100";
 const RUN = Date.now();
-const cli = (args: string[], input?: string) =>
-  execFileSync("docker", ["exec", "-i", "plat-control-plane", "node", "src/cli.ts", ...args], { input, encoding: "utf8" });
+const ID = runId();
+/** alice is a member of A only, bob of B only. */
+const A = `e2e-${ID}-a`;
+const B = `e2e-${ID}-b`;
+const dbId = (slug: string) => slug.replace(/-/g, "_");
+
+async function connect() {
+  const client = new Client({ name: "studio-e2e", version: "0.0.0" });
+  await client.connect(new StreamableHTTPClientTransport(new URL(local.PLATFORM_URL ?? "http://api.localhost:8100/mcp"), {
+    requestInit: { headers: { Authorization: `Bearer ${local.PLATFORM_TOKEN}` } },
+  }));
+  return client;
+}
+
+async function tool(client: Client, name: string, args: Record<string, unknown>): Promise<any> {
+  const result = (await client.callTool({ name, arguments: args })) as { isError?: boolean; content: { text: string }[] };
+  if (result.isError) throw new Error(`${name} failed: ${result.content[0]?.text}`);
+  return JSON.parse(result.content[0]!.text);
+}
 /** Runs a fetch inside the plat network (from the control-plane container) and returns {status, body}. */
 const inNetwork = (url: string, init: Record<string, unknown> = {}) =>
   JSON.parse(execFileSync("docker", ["exec", "plat-control-plane", "node", "-e",
@@ -88,8 +98,8 @@ const projectRefs = async (cookie: string) => {
 
 describe("Studio for app builders", () => {
   const users = {
-    alice: { email: "alice@example.com", password: testPassword("alice") },
-    bob: { email: "bob@example.com", password: testPassword("bob") },
+    alice: { email: `e2e-${ID}-alice@example.com`, password: randomBytes(18).toString("base64url"), app: A },
+    bob: { email: `e2e-${ID}-bob@example.com`, password: randomBytes(18).toString("base64url"), app: B },
   };
   let alice = "";
   let bob = "";
@@ -97,10 +107,27 @@ describe("Studio for app builders", () => {
   let projects: { ref: string; service_key: string; internal_url: string }[] = [];
 
   before(async () => {
-    for (const [name, user] of Object.entries(users)) {
+    const client = await connect();
+    try {
+      for (const slug of [A, B]) await tool(client, "create_app", { name: slug, slug });
+      await tool(client, "apply_migrations", {
+        app: A,
+        migrations: [{ version: "20260101000001", name: "create_todos", sql: readFileSync(new URL("fixtures/todos.sql", import.meta.url), "utf8") }],
+      });
+      const { anon_key } = await tool(client, "get_app", { app: A });
+      const signup = await fetch(`http://${A}.localhost:8100/auth/v1/signup`, {
+        method: "POST",
+        headers: { apikey: anon_key, "content-type": "application/json" },
+        body: JSON.stringify({ email: `user-${RUN}@example.com`, password: randomBytes(12).toString("hex") }),
+      });
+      assert.equal(signup.status, 200, await signup.text());
+    } finally {
+      await client.close();
+    }
+    for (const user of Object.values(users)) {
       cli(["create-user", user.email, "developer", "studio-e2e"]);
       cli(["set-password", user.email], user.password);
-      cli(["add-member", name === "alice" ? "demo" : "todo-app", user.email, "developer"]);
+      cli(["add-member", user.app, user.email, "developer"]);
     }
     alice = await login(users.alice.email, users.alice.password);
     bob = await login(users.bob.email, users.bob.password);
@@ -109,10 +136,14 @@ describe("Studio for app builders", () => {
       headers: { authorization: `Bearer ${secrets.PLATFORM_STUDIO_CONFIG_TOKEN}` },
     });
     projects = JSON.parse(internal.body);
+    // Studio caches the project list for 2 s
+    for (let i = 0; i < 20 && !(await projectRefs(admin)).includes(B); i++) await sleep(500);
   });
 
   after(async () => {
     await raw("POST", "/_platform/logout", { cookie: bob });
+    await raw("POST", "/_platform/logout", { cookie: admin });
+    await cleanup([A, B], Object.values(users).map((u) => u.email));
   });
 
   test("1. login: wrong password, no session", async () => {
@@ -124,60 +155,61 @@ describe("Studio for app builders", () => {
     assert.equal(wrong.status, 401);
     assert.equal(wrong.headers.getSetCookie().length, 0);
     assert.equal((await raw("GET", "/api/platform/projects")).status, 401);
-    assert.equal((await raw("POST", "/api/platform/pg-meta/demo/query", {}, { query: "select 1" })).status, 401);
-    const page = await raw("GET", "/project/demo/editor", { accept: "text/html" });
+    assert.equal((await raw("POST", `/api/platform/pg-meta/${A}/query`, {}, { query: "select 1" })).status, 401);
+    const page = await raw("GET", `/project/${A}/editor`, { accept: "text/html" });
     assert.equal(page.status, 302);
-    assert.equal(page.headers.location, "/_platform/login?next=%2Fproject%2Fdemo%2Feditor");
+    assert.equal(page.headers.location, `/_platform/login?next=%2Fproject%2F${A}%2Feditor`);
     assert.equal((await raw("GET", "/api/platform/projects", { cookie: "platform_session=sess_forged" })).status, 401);
   });
 
   test("2. project lists are filtered", async () => {
-    assert.deepEqual(await projectRefs(alice), ["demo"]);
-    assert.deepEqual(await projectRefs(bob), ["todo-app"]);
+    assert.deepEqual(await projectRefs(alice), [A]);
+    assert.deepEqual(await projectRefs(bob), [B]);
     const all = await projectRefs(admin);
-    assert.ok(all.includes("demo") && all.includes("todo-app"), all.join());
+    assert.ok(all.includes(A) && all.includes(B), all.join());
     const orgProjects = await raw("GET", "/api/platform/organizations/default-org-slug/projects", { cookie: alice });
-    assert.ok(!orgProjects.body.includes("todo-app"));
+    assert.equal(orgProjects.status, 200, orgProjects.body);
+    assert.ok(orgProjects.body.includes(A) && !orgProjects.body.includes(B), orgProjects.body);
     const profile = JSON.parse((await raw("GET", "/api/platform/profile", { cookie: alice })).body);
     assert.equal(profile.primary_email, users.alice.email);
   });
 
-  test("3. alice queries demo through pg-meta (own database, owner role)", async () => {
-    const reply = await sql(alice, "demo", "select current_user as u, current_database() as d");
+  test("3. alice queries her app through pg-meta (own database, owner role)", async () => {
+    const reply = await sql(alice, A, "select current_user as u, current_database() as d");
     assert.equal(reply.status, 200, reply.body);
-    assert.deepEqual(JSON.parse(reply.body), [{ u: "app_demo_owner", d: "app_demo" }]);
-    // proxy routes (fixed fork bug): the table list comes from demo, not from pg-meta's default database
-    const tables = await raw("GET", "/api/platform/pg-meta/demo/tables?included_schemas=public", { cookie: alice });
+    assert.deepEqual(JSON.parse(reply.body), [{ u: `app_${dbId(A)}_owner`, d: `app_${dbId(A)}` }]);
+    // proxy routes (fixed fork bug): the table list comes from the app, not from pg-meta's default database
+    const tables = await raw("GET", `/api/platform/pg-meta/${A}/tables?included_schemas=public`, { cookie: alice });
     assert.equal(tables.status, 200, tables.body);
     assert.ok((JSON.parse(tables.body) as { name: string }[]).some((t) => t.name === "todos"), tables.body);
-    const users = await sql(alice, "demo", "select count(*)::int as n from auth.users");
+    const users = await sql(alice, A, "select count(*)::int as n from auth.users");
     assert.equal(users.status, 200, users.body);
   });
 
-  test("4. alice cannot reach todo-app", async () => {
+  test("4. alice cannot reach bob's app", async () => {
     const deny = async (label: string, reply: Promise<Reply>) => {
       const { status, body } = await reply;
       assert.ok(status === 403 || status === 400, `${label}: ${status} ${body}`);
     };
-    await deny("url", sql(alice, "todo-app", "select 1"));
-    await deny("forged X-Platform-Apps", sql(alice, "todo-app", "select 1", { "x-platform-apps": "demo,todo-app", "x-platform-role": "admin" }));
-    await deny("encoded ref", sql(alice, "todo%2Dapp", "select 1"));
-    await deny("encoded ref 2", sql(alice, "%74odo-app", "select 1"));
-    await deny("case", sql(alice, "TODO-APP", "select 1"));
-    await deny("dot-dot", raw("POST", "/api/platform/pg-meta/demo/../todo-app/query", { cookie: alice }, { query: "select 1" }));
-    await deny("encoded dot-dot", raw("POST", "/api/platform/pg-meta/demo/%2e%2e/todo-app/query", { cookie: alice }, { query: "select 1" }));
-    await deny("upper-case prefix", raw("POST", "/API/platform/pg-meta/todo-app/query", { cookie: alice }, { query: "select 1" }));
-    await deny("page", raw("GET", "/project/todo-app/editor", { cookie: alice, accept: "text/html" }));
-    await deny("auth route", raw("POST", "/api/platform/auth/todo-app/users", { cookie: alice }, { email: `x${RUN}@example.com` }));
-    await deny("types", raw("GET", "/api/v1/projects/todo-app/types/typescript", { cookie: alice }));
-    await deny("bob on demo", sql(bob, "demo", "select 1"));
+    await deny("url", sql(alice, B, "select 1"));
+    await deny("forged X-Platform-Apps", sql(alice, B, "select 1", { "x-platform-apps": `${A},${B}`, "x-platform-role": "admin" }));
+    await deny("encoded ref", sql(alice, B.replaceAll("-", "%2D"), "select 1"));
+    await deny("encoded ref 2", sql(alice, `%${B.charCodeAt(0).toString(16)}${B.slice(1)}`, "select 1"));
+    await deny("case", sql(alice, B.toUpperCase(), "select 1"));
+    await deny("dot-dot", raw("POST", `/api/platform/pg-meta/${A}/../${B}/query`, { cookie: alice }, { query: "select 1" }));
+    await deny("encoded dot-dot", raw("POST", `/api/platform/pg-meta/${A}/%2e%2e/${B}/query`, { cookie: alice }, { query: "select 1" }));
+    await deny("upper-case prefix", raw("POST", `/API/platform/pg-meta/${B}/query`, { cookie: alice }, { query: "select 1" }));
+    await deny("page", raw("GET", `/project/${B}/editor`, { cookie: alice, accept: "text/html" }));
+    await deny("auth route", raw("POST", `/api/platform/auth/${B}/users`, { cookie: alice }, { email: `x${RUN}@example.com` }));
+    await deny("types", raw("GET", `/api/v1/projects/${B}/types/typescript`, { cookie: alice }));
+    await deny("bob on alice's app", sql(bob, A, "select 1"));
   });
 
   test("5. Studio's own guard (behind Caddy) checks the signed identity", () => {
     const now = Math.floor(Date.now() / 1000);
     const sign = (user: string, role: string, apps: string, ts = now) =>
       `t=${ts},s=${createHmac("sha256", secrets.PLATFORM_STUDIO_HEADER_SECRET!).update(`${user}\n${role}\n${apps}\n${ts}`).digest("hex")}`;
-    const call = (headers: Record<string, string>, ref = "todo-app") =>
+    const call = (headers: Record<string, string>, ref = B) =>
       inNetwork(`http://studio:3000/api/platform/pg-meta/${ref}/query`, {
         method: "POST",
         headers: { "content-type": "application/json", ...headers },
@@ -190,10 +222,10 @@ describe("Studio for app builders", () => {
       "x-platform-signature": signature,
     });
     assert.equal(call({}), 401, "no identity");
-    assert.equal(call({ ...identity("demo"), "x-platform-apps": "demo,todo-app" }), 401, "apps changed after signing");
-    assert.equal(call(identity("demo", sign(users.alice.email, "developer", "demo", now - 3600))), 401, "expired");
-    assert.equal(call(identity("demo")), 403, "foreign ref");
-    assert.equal(call(identity("demo"), "demo"), 200, "own ref");
+    assert.equal(call({ ...identity(A), "x-platform-apps": `${A},${B}` }), 401, "apps changed after signing");
+    assert.equal(call(identity(A, sign(users.alice.email, "developer", A, now - 3600))), 401, "expired");
+    assert.equal(call(identity(A)), 403, "foreign ref");
+    assert.equal(call(identity(A), A), 200, "own ref");
   });
 
   test("6. fork features are refused, admins included", async () => {
@@ -201,22 +233,22 @@ describe("Studio for app builders", () => {
       assert.equal((await raw("POST", "/api/self-hosted/bootstrap", { cookie }, { email: "a@b.c", password: "x" })).status, 403);
       assert.equal((await raw("POST", "/api/platform/projects/import", { cookie }, { name: "x" })).status, 403);
       assert.equal((await raw("POST", "/api/platform/projects", { cookie }, { name: "x" })).status, 403);
-      assert.equal((await raw("DELETE", "/api/platform/projects/demo", { cookie })).status, 403);
-      assert.equal((await raw("POST", "/api/platform/projects/demo/failover", { cookie })).status, 403);
+      assert.equal((await raw("DELETE", `/api/platform/projects/${A}`, { cookie })).status, 403);
+      assert.equal((await raw("POST", `/api/platform/projects/${A}/failover`, { cookie })).status, 403);
     }
   });
 
   test("7. the admin sees and queries every app", async () => {
-    for (const ref of ["demo", "todo-app"]) {
+    for (const ref of [A, B]) {
       const reply = await sql(admin, ref, "select current_database() as d");
       assert.equal(reply.status, 200, reply.body);
-      assert.deepEqual(JSON.parse(reply.body), [{ d: `app_${ref.replace("-", "_")}` }]);
+      assert.deepEqual(JSON.parse(reply.body), [{ d: `app_${dbId(ref)}` }]);
     }
   });
 
-  test("8. an auth user created from Studio lands in demo's GoTrue only", async () => {
+  test("8. an auth user created from Studio lands in the app's GoTrue only", async () => {
     const email = `studio-${RUN}@example.com`;
-    const created = await raw("POST", "/api/platform/auth/demo/users", { cookie: alice }, {
+    const created = await raw("POST", `/api/platform/auth/${A}/users`, { cookie: alice }, {
       email,
       password: randomBytes(12).toString("hex"),
       email_confirm: true,
@@ -231,26 +263,26 @@ describe("Studio for app builders", () => {
       assert.equal(reply.status, 200, reply.body);
       return (JSON.parse(reply.body).users as { id: string; email: string }[]).find((u) => u.email === email);
     };
-    assert.equal(find("demo")?.id, id);
-    assert.equal(find("todo-app"), undefined);
-    const listed = await sql(alice, "demo", `select id from auth.users where email = '${email}'`);
+    assert.equal(find(A)?.id, id);
+    assert.equal(find(B), undefined);
+    const listed = await sql(alice, A, `select id from auth.users where email = '${email}'`);
     assert.deepEqual(JSON.parse(listed.body), [{ id }]);
 
-    const removed = await raw("DELETE", `/api/platform/auth/demo/users/${id}`, { cookie: alice });
+    const removed = await raw("DELETE", `/api/platform/auth/${A}/users/${id}`, { cookie: alice });
     assert.equal(removed.status, 200, removed.body);
-    assert.equal(find("demo"), undefined);
+    assert.equal(find(A), undefined);
   });
 
   test("9. storage targets the project and fails cleanly (no Storage before M5)", async () => {
-    const reply = await raw("GET", "/api/platform/storage/demo/buckets", { cookie: alice });
+    const reply = await raw("GET", `/api/platform/storage/${A}/buckets`, { cookie: alice });
     assert.ok(reply.status >= 400 && reply.status < 600, `${reply.status} ${reply.body}`);
     assert.doesNotThrow(() => JSON.parse(reply.body));
-    assert.equal((await raw("GET", "/api/platform/storage/todo-app/buckets", { cookie: alice })).status, 403);
+    assert.equal((await raw("GET", `/api/platform/storage/${B}/buckets`, { cookie: alice })).status, 403);
   });
 
   test("9b. owner role: no BYPASSRLS, auth.* read through targeted policies only", async () => {
     const rows = async (query: string) => {
-      const reply = await sql(alice, "demo", query);
+      const reply = await sql(alice, A, query);
       assert.equal(reply.status, 200, reply.body);
       return JSON.parse(reply.body) as Record<string, unknown>[];
     };
@@ -258,27 +290,27 @@ describe("Studio for app builders", () => {
     // Auth > Users (pg-meta get-users-paginated: auth.users joined with auth.identities)
     const listed = await rows(`select u.email, coalesce((select array_agg(distinct i.provider) from auth.identities i
       where i.user_id = u.id), '{}') as providers from auth.users u order by u.created_at desc limit 20`);
-    assert.ok(listed.length > 0, "demo users visible");
+    assert.ok(listed.length > 0, "the app's users are visible");
     assert.ok(listed.some((u) => (u.providers as string[]).includes("email")), JSON.stringify(listed));
     for (const table of ["sessions", "refresh_tokens", "mfa_factors", "one_time_tokens", "oauth_clients"]) {
-      const reply = await sql(alice, "demo", `select count(*) from auth.${table}`);
+      const reply = await sql(alice, A, `select count(*) from auth.${table}`);
       assert.notEqual(reply.status, 200, `${table}: ${reply.body}`);
       assert.match(reply.body, /permission denied/, table);
     }
     assert.deepEqual(await rows(`select tablename::text as t, roles::text[] as roles, cmd from pg_policies
       where schemaname = 'auth' order by 1`), [
-      { t: "identities", roles: ["app_demo_owner"], cmd: "SELECT" },
-      { t: "users", roles: ["app_demo_owner"], cmd: "SELECT" },
+      { t: "identities", roles: [`app_${dbId(A)}_owner`], cmd: "SELECT" },
+      { t: "users", roles: [`app_${dbId(A)}_owner`], cmd: "SELECT" },
     ]);
     assert.deepEqual(await rows(`select bool_and(relrowsecurity) as rls from pg_class
       where oid in ('auth.users'::regclass, 'auth.identities'::regclass)`), [{ rls: true }]);
     assert.deepEqual(await rows(`select r, has_schema_privilege(r, 'auth', 'usage') and
       (has_table_privilege(r, 'auth.users', 'select') or has_table_privilege(r, 'auth.identities', 'select')) as reads
-      from unnest(array['anon', 'authenticated', 'service_role', 'app_demo_authenticator']) r`), [
+      from unnest(array['anon', 'authenticated', 'service_role', 'app_${dbId(A)}_authenticator']) r`), [
       { r: "anon", reads: false },
       { r: "authenticated", reads: false },
       { r: "service_role", reads: false },
-      { r: "app_demo_authenticator", reads: false },
+      { r: `app_${dbId(A)}_authenticator`, reads: false },
     ]);
     // Assumed: the owner owns its public tables, so their RLS does not apply to it (as for Supabase's "postgres").
     const probe = `public.rls_probe_${RUN}`;
@@ -291,13 +323,10 @@ describe("Studio for app builders", () => {
   });
 
   test("9c. execute_sql (owner role) still reads auth.users for diagnostics", async () => {
-    const client = new Client({ name: "studio-e2e", version: "0.0.0" });
-    await client.connect(new StreamableHTTPClientTransport(new URL(local.PLATFORM_URL ?? "http://api.localhost:8100/mcp"), {
-      requestInit: { headers: { Authorization: `Bearer ${local.PLATFORM_TOKEN}` } },
-    }));
+    const client = await connect();
     try {
       const run = async (query: string) =>
-        (await client.callTool({ name: "execute_sql", arguments: { app: "demo", sql: query } })) as
+        (await client.callTool({ name: "execute_sql", arguments: { app: A, sql: query } })) as
           { isError?: boolean; content: { text: string }[] };
       const users = await run("select count(*)::int as n, (select rolbypassrls from pg_roles where rolname = current_user) as b from auth.users");
       assert.ok(!users.isError, users.content[0]?.text);

@@ -1,5 +1,5 @@
 // End-to-end test of the M2 control plane against the running "plat" stack (deploy/install.sh).
-// Uses a real MCP client with the admin PAT stored in deploy/.env.local.
+// Uses a real MCP client with the admin PAT stored in deploy/.env.local, on a disposable app deleted at the end of the run.
 import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
@@ -10,6 +10,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { createClient } from "@supabase/supabase-js";
 import * as tar from "tar";
+import { cleanup, cli, psql, runId } from "./disposable.ts";
 
 const ROOT = new URL("../../../", import.meta.url);
 const env = Object.fromEntries(
@@ -19,9 +20,10 @@ const env = Object.fromEntries(
     .map((line) => [line.slice(0, line.indexOf("=")), line.slice(line.indexOf("=") + 1)]),
 );
 const MCP_URL = env.PLATFORM_URL ?? "http://api.localhost:8100/mcp";
-const APP = "demo";
+const APP = `e2e-${runId()}`;
 const APP_URL = `http://${APP}.localhost:8100`;
 const RUN = Date.now();
+const OUTSIDER = `${APP}-outsider@example.com`;
 const NPM_CACHE = "/deno-cache/npm/registry.npmjs.org";
 const work = mkdtempSync(join(tmpdir(), "plat-e2e-"));
 
@@ -88,6 +90,7 @@ describe("control plane M2 e2e", () => {
 
   after(async () => {
     await admin?.close();
+    await cleanup([APP], [OUTSIDER]);
   });
 
   test("1. whoami", async () => {
@@ -101,7 +104,7 @@ describe("control plane M2 e2e", () => {
     }
   });
 
-  test("2. create_app demo (idempotent)", async () => {
+  test("2. create_app (idempotent)", async () => {
     app = await call(admin, "create_app", { name: "Demo", slug: APP });
     assert.equal(app.slug, APP);
     assert.equal(app.url, APP_URL);
@@ -199,18 +202,10 @@ describe("control plane M2 e2e", () => {
     assert.deepEqual(accepted.accepted_lints.map((l: { object: string }) => l.object), ["public.todo_titles"]);
     assert.equal(await relationExists("public.todo_titles"), true);
     assert.equal(await migrationRecorded(view.version), true);
-    const audited = execFileSync("docker", [
-      "exec",
-      "plat-db",
-      "psql",
-      "-U",
-      "supabase_admin",
-      "-d",
-      "platform",
-      "-tAc",
+    const audited = psql(
       "select details->'accepted_lints'->0->>'name' from audit_log where action = 'apply_migrations' " +
-      "order by created_at desc limit 1",
-    ], { encoding: "utf8" }).trim();
+        "order by created_at desc limit 1",
+    );
     assert.equal(audited, "security_definer_view");
 
     // a failing migration rolls back the whole batch
@@ -378,7 +373,7 @@ describe("control plane M2 e2e", () => {
   let v1: number;
   let v2: number;
 
-  test("5. deploy frontend and serve it on demo.localhost", async () => {
+  test("5. deploy frontend and serve it on <slug>.localhost", async () => {
     const first = await deploy(admin, "frontend", await pack(writeSite("v1"), ["."]));
     v1 = first.finalized.version;
     assert.equal(first.finalized.url, APP_URL);
@@ -434,7 +429,7 @@ describe("control plane M2 e2e", () => {
     assert.match((await getPage("/")).text, /Demo v1/);
     const deployments = await call(admin, "list_deployments", { app: APP, kind: "frontend" });
     assert.equal(deployments.find((d: { status: string }) => d.status === "live").version, v1);
-    // roll forward again so the demo app ends on its latest version
+    // roll forward to an explicit version
     await call(admin, "rollback", { app: APP, kind: "frontend", version: v2 });
     assert.match((await getPage("/")).text, /Demo v2/);
   });
@@ -462,15 +457,7 @@ describe("control plane M2 e2e", () => {
     assert.equal(bad.status, 401);
     await assert.rejects(connect("plat_invalid"));
 
-    const token = execFileSync("docker", [
-      "exec",
-      "plat-control-plane",
-      "node",
-      "src/cli.ts",
-      "create-user",
-      `outsider-${RUN}@example.com`,
-      "developer",
-    ], { encoding: "utf8" }).trim();
+    const token = cli(["create-user", OUTSIDER, "developer"]).trim();
     const outsider = await connect(token);
     try {
       const me = await call(outsider, "whoami");
