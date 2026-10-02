@@ -10,6 +10,8 @@ node packages/deploy-cli/src/main.ts deploy [--dir <app>] [--reason "<why outsid
 pnpm --filter @platform/deploy-cli start -- deploy --dir ../../examples/todo-app   # same, from the workspace
 ```
 
+`--app <slug>` names the app instead of the `app` of `.platform.json`, which may then be absent (the seed deploys the examples this way). The Claude Code plugin ships this CLI (`plugin/deploy-cli`, a symlink to `src/`) and runs it with the builder's PAT through `plugin/skills/deploy/scripts/platform-deploy`: the `deploy` skill for direct deployments and for `check` before a push, the `admin-deploy` skill with `--reason`.
+
 ## Authentication: one code path, two transports
 
 | `--auth` | When | Credentials | Calls |
