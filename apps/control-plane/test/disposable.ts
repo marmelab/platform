@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { appRoles } from "@platform/sql";
+import { appLoginRoles, appRoles } from "@platform/sql";
 
 /** Short, unique per run, valid inside a slug: `e2e-${runId()}`. */
 export const runId = () => `${Date.now().toString(36).slice(-5)}${randomBytes(2).toString("hex")}`;
@@ -87,9 +87,16 @@ export async function cleanup(apps: string[], users: string[]) {
     assert.ok(!sites.split("\n").includes(slug), `sites directory (routing marker) left for ${slug}`);
     assert.equal(psql(`select count(*) from pg_database where datname = '${roles.database}'`), "0", `${roles.database} left`);
     assert.equal(
-      psql(`select count(*) from pg_roles where rolname in (${list([roles.owner, roles.authenticator, roles.authAdmin])})`),
+      psql(`select count(*) from pg_roles where rolname in (${list(appLoginRoles(roles))})`),
       "0",
       `roles of ${slug} left`,
     );
+    // M5: Storage and Realtime tenants, Storage files
+    assert.equal(psql(`select count(*) from tenants where id = '${slug}'`, "platform_storage"), "0", `storage tenant of ${slug} left`);
+    assert.equal(psql(`select count(*) from _realtime.tenants where external_id = '${slug}'`, "platform_realtime"), "0",
+      `realtime tenant of ${slug} left`);
+    const files = execFileSync("docker", ["exec", "plat-control-plane", "sh", "-c", `ls -A /data/storage/tenants 2>/dev/null || true`],
+      { encoding: "utf8" });
+    assert.ok(!files.split("\n").includes(slug), `storage files left for ${slug}`);
   }
 }
