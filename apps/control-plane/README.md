@@ -44,10 +44,12 @@ docker exec plat-control-plane node src/cli.ts delete-app demo
 docker exec plat-control-plane node src/cli.ts delete-user bob@example.com             # also deletes their sessions, tokens and memberships
 docker exec plat-control-plane node src/cli.ts set-password bob@example.com --generate         # prints a Studio password
 docker exec -i plat-control-plane node src/cli.ts set-password bob@example.com < password.txt  # or reads it from stdin
-docker exec plat-control-plane node src/cli.ts add-member demo bob@example.com developer
+docker exec plat-control-plane node src/cli.ts add-member demo bob@example.com collaborator   # owner|collaborator
 docker exec plat-control-plane node src/cli.ts remove-member demo bob@example.com          # idempotent, refuses to remove the last owner
 docker exec plat-control-plane node src/cli.ts init                                     # idempotent, also run at startup
 ```
+
+App roles: a `collaborator` deploys, inspects the app and manages its users; an `owner` can also manage members, stop, start and delete the app; platform admins can do everything on every app. Memberships created with the former `developer` role are renamed `collaborator` by the idempotent schema migration run at startup.
 
 Membership changes apply to open Studio sessions and PATs on their next request: Studio forward auth and MCP read the user's apps from the database on every request. `remove-member` is recorded in `audit_log` (`remove_member`, no user since the CLI acts as the operator).
 

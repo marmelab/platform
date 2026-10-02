@@ -103,7 +103,7 @@ To create other app builders for manual testing (the CLI runs inside the control
 ```bash
 docker exec plat-control-plane node src/cli.ts create-user carol@example.com developer   # prints a PAT
 docker exec plat-control-plane node src/cli.ts set-password carol@example.com --generate  # prints a password
-docker exec plat-control-plane node src/cli.ts add-member <slug> carol@example.com developer
+docker exec plat-control-plane node src/cli.ts add-member <slug> carol@example.com collaborator
 ```
 
 An app builder only sees, in Studio and through MCP, the apps they are a member of.

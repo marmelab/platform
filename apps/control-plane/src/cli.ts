@@ -4,7 +4,7 @@
 //   node src/cli.ts delete-user <email>         (also deletes the user's sessions, tokens and memberships)
 //   node src/cli.ts set-password <email>        (password read from stdin: docker exec -i ... < file)
 //   node src/cli.ts set-password <email> --generate                     -> prints a generated password
-//   node src/cli.ts add-member <slug> <email> [owner|developer]
+//   node src/cli.ts add-member <slug> <email> [owner|collaborator]
 //   node src/cli.ts remove-member <slug> <email>   (idempotent, refuses to remove the last owner)
 //   node src/cli.ts delete-app <slug>
 import { randomBytes } from "node:crypto";
@@ -17,7 +17,7 @@ import { initCluster } from "./init.ts";
 import { setPassword } from "./sessions.ts";
 
 const USAGE = "usage: cli.ts init | create-user <email> [admin|developer] [token-name] | delete-user <email> | " +
-  "set-password <email> [--generate] | add-member <slug> <email> [owner|developer] | remove-member <slug> <email> | delete-app <slug>";
+  "set-password <email> [--generate] | add-member <slug> <email> [owner|collaborator] | remove-member <slug> <email> | delete-app <slug>";
 
 const [command, ...args] = process.argv.slice(2);
 
@@ -39,8 +39,8 @@ if (command === "init") {
   await setPassword(args[0], password);
   console.log(generate ? password : `password set for ${args[0]}`);
 } else if (command === "add-member" && args[0] && args[1]) {
-  const [slug, email, role = "developer"] = args;
-  if (!["owner", "developer"].includes(role)) throw new Error("role must be owner or developer");
+  const [slug, email, role = "collaborator"] = args;
+  if (!["owner", "collaborator"].includes(role)) throw new Error("role must be owner or collaborator");
   const row = await one<{ slug: string }>(
     `insert into app_members (app_id, user_id, role)
      select a.id, u.id, $3 from apps a, users u where a.slug = $1 and u.email = $2

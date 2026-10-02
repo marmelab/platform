@@ -39,7 +39,7 @@ create table if not exists apps (
 create table if not exists app_members (
   app_id uuid not null references apps (id) on delete cascade,
   user_id uuid not null references users (id) on delete cascade,
-  role text not null default 'developer' check (role in ('owner', 'developer')),
+  role text not null default 'collaborator' check (role in ('owner', 'collaborator')),
   primary key (app_id, user_id)
 );
 
@@ -96,3 +96,15 @@ create table if not exists sessions (
   expires_at timestamptz not null,
   created_at timestamptz not null default now()
 );
+
+-- App roles: "developer" members became "collaborator" (bloc 1)
+do $$
+begin
+  if exists (select 1 from pg_constraint where conname = 'app_members_role_check'
+              and pg_get_constraintdef(oid) like '%developer%') then
+    alter table app_members drop constraint app_members_role_check;
+    update app_members set role = 'collaborator' where role = 'developer';
+    alter table app_members add constraint app_members_role_check check (role in ('owner', 'collaborator'));
+  end if;
+end $$;
+alter table app_members alter column role set default 'collaborator';

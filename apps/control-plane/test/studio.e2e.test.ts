@@ -127,7 +127,7 @@ describe("Studio for app builders", () => {
     for (const user of Object.values(users)) {
       cli(["create-user", user.email, "developer", "studio-e2e"]);
       cli(["set-password", user.email], user.password);
-      cli(["add-member", user.app, user.email, "developer"]);
+      cli(["add-member", user.app, user.email, "collaborator"]);
     }
     alice = await login(users.alice.email, users.alice.password);
     bob = await login(users.bob.email, users.bob.password);
@@ -175,7 +175,7 @@ describe("Studio for app builders", () => {
   });
 
   test("2b. add-member and remove-member apply to open sessions", async () => {
-    cli(["add-member", A, users.bob.email, "developer"]);
+    cli(["add-member", A, users.bob.email, "collaborator"]);
     assert.deepEqual(await projectRefs(bob), [A, B].sort());
     assert.equal((await sql(bob, A, "select 1")).status, 200);
     assert.equal(cli(["remove-member", A, users.bob.email]).trim(), `${users.bob.email} removed from ${A}`);
