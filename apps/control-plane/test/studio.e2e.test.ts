@@ -9,7 +9,7 @@ import { request } from "node:http";
 import { setTimeout as sleep } from "node:timers/promises";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { cleanup, cli, runId, waitForControlPlane } from "./disposable.ts";
+import { cleanup, cli, psql, runId, waitForControlPlane } from "./disposable.ts";
 
 const ROOT = new URL("../../../", import.meta.url);
 const readEnv = (file: string) =>
@@ -361,10 +361,20 @@ describe("Studio for app builders", () => {
     assert.equal(find(A), undefined);
   });
 
-  test("9. storage targets the project and fails cleanly (no Storage before M5)", async () => {
-    const reply = await raw("GET", `/api/platform/storage/${A}/buckets`, { cookie: alice });
-    assert.ok(reply.status >= 400 && reply.status < 600, `${reply.status} ${reply.body}`);
-    assert.doesNotThrow(() => JSON.parse(reply.body));
+  test("9. storage browser (M5): buckets and objects of the project only", async () => {
+    const bucket = `studio-${Date.now().toString(36)}`;
+    const created = await raw("POST", `/api/platform/storage/${A}/buckets`, { cookie: alice }, { id: bucket, public: false });
+    assert.equal(created.status, 200, created.body);
+    const buckets = await raw("GET", `/api/platform/storage/${A}/buckets`, { cookie: alice });
+    assert.equal(buckets.status, 200, buckets.body);
+    assert.ok(JSON.parse(buckets.body).some((b: { id: string }) => b.id === bucket));
+    const listed = await raw("POST", `/api/platform/storage/${A}/buckets/${bucket}/objects/list`, { cookie: alice },
+      { path: "", options: { limit: 10 } });
+    assert.equal(listed.status, 200, listed.body);
+    assert.deepEqual(JSON.parse(listed.body), []);
+    // the bucket is in A's database only
+    assert.equal(psql(`select count(*) from storage.buckets where id = '${bucket}'`, `app_${dbId(A)}`), "1");
+    assert.equal(psql(`select count(*) from storage.buckets where id = '${bucket}'`, `app_${dbId(B)}`), "0");
     assert.equal((await raw("GET", `/api/platform/storage/${B}/buckets`, { cookie: alice })).status, 403);
   });
 
