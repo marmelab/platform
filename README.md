@@ -20,7 +20,9 @@ apps/
 packages/
   shared/             zod schemas and types shared by the API and the MCP server
   sql/                template database, per-app roles, linter queries
+  deploy-cli/         platform-deploy: checks or deploys an app repo (GitHub OIDC in CI, or a PAT)
 plugin/               Claude Code plugin (deploy skill + MCP config)
+ci/                   reusable GitHub Actions deploy workflow, and an example caller for app repos
 deploy/               docker-compose stack ("plat"), Caddy bootstrap, install.sh
 examples/todo-app/    example app: personal todo list (Vite + React + supabase-js)
 examples/notes-app/   example app: notes shared between users (Vite + React + supabase-js)
@@ -129,6 +131,14 @@ Claude creates the app, applies the migrations (the linter rejects unsafe ones),
 
 > This direct deployment from the builder's machine is the M3 prototype. The target is deployment by GitHub Actions only, with direct deployment reserved to admins (see [docs/USER_JOURNEYS.md](docs/USER_JOURNEYS.md) B2 and [PLAN_1.md](PLAN_1.md) §6, milestone M3bis).
 
+Without Claude, the same deployment runs from a terminal with the deploy CLI (it reads `.platform.json`, which the skill writes):
+
+```bash
+PLATFORM_URL=http://api.localhost:8100 PLATFORM_TOKEN=... node packages/deploy-cli/src/main.ts deploy --dir /tmp/todo-app
+```
+
+In GitHub Actions, the app repo calls the reusable workflow `ci/.github/workflows/deploy.yml` (example caller: `ci/examples/platform.yml`), which runs the same CLI with a GitHub OIDC token; see [packages/deploy-cli/README.md](packages/deploy-cli/README.md). It has not run on GitHub yet: the e2e suite simulates the runner's token endpoint.
+
 ## Tests
 
 The stack must be running, and `deploy/.env.local` must exist.
@@ -136,7 +146,7 @@ The stack must be running, and `deploy/.env.local` must exist.
 ```bash
 pnpm typecheck                                     # all workspace packages (Studio's upstream typecheck excluded)
 pnpm --filter @platform/control-plane test         # Studio access policy, unit
-pnpm --filter @platform/control-plane e2e          # MCP end to end: provisioning, migrations, deployments, isolation
+pnpm --filter @platform/control-plane e2e          # MCP end to end: provisioning, migrations, deployments, isolation; CI API; platform-deploy
 pnpm --filter @platform/control-plane e2e:studio   # Studio: login, per-app filtering, bypass attempts
 node apps/control-plane/scripts/verify-notes-app.ts # seeded notes-app: sharing rules, as its app users (after --seed)
 (cd apps/edge-main-worker && deno test --allow-read --allow-write)
