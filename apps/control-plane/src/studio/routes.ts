@@ -4,7 +4,8 @@ import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { appsForUser, studio } from "../apps.ts";
 import type { User } from "../auth.ts";
 import { config } from "../config.ts";
-import { login, logout, SESSION_COOKIE, userForSession } from "../sessions.ts";
+import { TooManyAttempts } from "../login-limit.ts";
+import { createSession, logout, SESSION_COOKIE, throttledCredentials, userForSession } from "../sessions.ts";
 import { loginPage, refusedPage } from "./pages.ts";
 import { studioAccess } from "./policy.ts";
 
@@ -45,12 +46,19 @@ studioPublicRoutes.post("/_platform/login", async (c) => {
   const form = await c.req.parseBody();
   const email = String(form.email ?? "");
   const next = safeNext(String(form.next ?? ""));
-  const token = await login(email, String(form.password ?? ""));
-  if (!token) {
+  let user;
+  try {
+    user = await throttledCredentials(c, email, String(form.password ?? ""));
+  } catch (error) {
+    if (!(error instanceof TooManyAttempts)) throw error;
+    c.header("Retry-After", String(error.retryAfterSeconds));
+    return c.html(loginPage({ next, email, error: error.message }), 429);
+  }
+  if (!user) {
     console.warn(`studio login failed for ${JSON.stringify(email)}`);
     return c.html(loginPage({ next, email, error: "Invalid email or password." }), 401);
   }
-  setCookie(c, SESSION_COOKIE, token, {
+  setCookie(c, SESSION_COOKIE, await createSession(user.id), {
     httpOnly: true,
     sameSite: "Lax",
     secure: secure(),

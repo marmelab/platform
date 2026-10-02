@@ -15,7 +15,8 @@ import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { z } from "zod";
 import { authenticate, type User } from "../auth.ts";
 import { adminUrl, config } from "../config.ts";
-import { createSession, logout, SESSION_COOKIE, userForSession, verifyCredentials } from "../sessions.ts";
+import { TooManyAttempts } from "../login-limit.ts";
+import { createSession, logout, SESSION_COOKIE, throttledCredentials, userForSession } from "../sessions.ts";
 import { type AdminEnv, adminApi } from "./api.ts";
 import { errorResponse, HttpError } from "./rest.ts";
 
@@ -50,7 +51,14 @@ adminSite.post("/api/auth/login", async (c) => {
   checkBrowserRequest(c, { mutation: true });
   const input = z.object({ email: z.string().max(320), password: z.string().max(1024) })
     .parse(await c.req.json().catch(() => ({})));
-  const user = await verifyCredentials(input.email, input.password);
+  let user;
+  try {
+    user = await throttledCredentials(c, input.email, input.password);
+  } catch (error) {
+    if (!(error instanceof TooManyAttempts)) throw error;
+    c.header("Retry-After", String(error.retryAfterSeconds));
+    return c.json({ message: error.message }, 429);
+  }
   if (!user) {
     console.warn(`admin login failed for ${JSON.stringify(input.email)}`);
     return c.json({ message: "Invalid email or password." }, 401);
