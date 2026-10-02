@@ -163,7 +163,8 @@ Status: ❌ M6.
 ### A8. Platform upgrade
 1. Control plane migration.
 2. Recycling the GoTrue and PostgREST containers, app by app.
-3. Rebuilding Studio: replay the patches documented in `apps/studio/PLATFORM_PATCHES.md`.
+3. Re-applying the owner role's grants and the `platform_owner_read` policies on `auth.users` and `auth.identities` (`syncAll`, run at control plane startup): a GoTrue migration that recreates one of these tables drops its policy, and Auth > Users in Studio would show no users until then.
+4. Rebuilding Studio: replay the patches documented in `apps/studio/PLATFORM_PATCHES.md`.
 
 Channel: shell.
 Status: ❌ M7. The Studio upgrade procedure is documented (M0ter).

@@ -64,13 +64,24 @@ Caddy sert l'hôte `studio.localhost`. La route `studio` est poussée par le con
 - Le `jwt_secret` n'est pas transmis : Studio ne s'en sert que pour l'afficher.
 
 **Owner, par rapport à M0bis.** `register` ajoute :
-- `BYPASSRLS` ;
+- `NOBYPASSRLS` (le `BYPASSRLS` du premier jet est retiré, y compris sur `demo` et `todo-app` via `syncAll`) ;
 - `GRANT anon, authenticated, service_role WITH INHERIT FALSE, SET TRUE` ;
 - `USAGE` sur `graphql` et `graphql_public` ;
-- `SELECT` sur toutes les tables `auth`, avec les default privileges de `auth_admin` ;
-- `TRIGGER` sur `auth.users`.
+- `SELECT` sur `auth.users` et `auth.identities` seulement (le `SELECT` sur toutes les tables `auth` et les default privileges de `auth_admin` sont révoqués) ;
+- `TRIGGER` sur `auth.users` (`REFERENCES` vient du provisioning).
 
-Effet de bord assumé : `execute_sql` et `SUPABASE_DB_URL` contournent eux aussi la RLS, comme le `postgres` de Supabase.
+Les tables `auth.*` ont la RLS activée sans policy. L'owner les lit donc par une policy dédiée, créée dans la base de l'app par `supabase_admin` :
+
+| Table | Policy | Lue par |
+|---|---|---|
+| `auth.users` | `platform_owner_read FOR SELECT TO app_<id>_owner USING (true)` | pg-meta : liste, détail et comptage des utilisateurs (Auth > Users) |
+| `auth.identities` | idem | pg-meta : colonne « providers » de la liste et du détail |
+
+Les autres tables `auth` (`sessions`, `refresh_tokens`, `mfa_*`, `one_time_tokens`, `flow_state`, `sso_*`, `saml_*`, `audit_log_entries`, `oauth_*`, `webauthn_*`…) renvoient `permission denied`. Studio ne les lit pas en SQL : les écritures d'utilisateurs (création, suppression, facteurs MFA) passent par l'API GoTrue avec la service key. Les FK vers `auth.users` (contrôles RI, qui ignorent la RLS) et les triggers sur `auth.users` n'ont besoin que de `REFERENCES` et `TRIGGER`. `anon`, `authenticated`, `service_role` et `app_<id>_authenticator` n'y gagnent rien : la policy ne vise que l'owner.
+
+La RLS reste activée sur ces tables (réactivée par `register` si besoin). Les policies survivent à un redémarrage de GoTrue, qui ne rejoue que les migrations nouvelles. Une migration GoTrue qui recréerait une table les perdrait : `register` (création d'app, `syncAll` au démarrage du control plane) les recrée si elles manquent, et c'est une étape de la mise à jour (A8 dans `docs/USER_JOURNEYS.md`). Pour la même raison, `provision` appelle `register` une fois GoTrue sain, quand `auth.identities` existe.
+
+Conséquence : `execute_sql` et `SUPABASE_DB_URL` ne contournent plus la RLS hors des tables possédées par l'owner. Comportement assumé : l'owner, propriétaire des tables de `public`, n'est pas soumis à leur RLS (sauf `FORCE ROW LEVEL SECURITY`), comme le `postgres` de Supabase. `SET ROLE service_role` (qui a `BYPASSRLS`) n'ouvre rien de plus dans `auth`, faute de privilèges sur ces tables. Une vue ou une fonction `SECURITY DEFINER` de l'owner qui lit `auth.users` expose toutes les lignes, comme avant ; le lint 0002 le signale.
 
 **postgres-meta partagé.** Sa connexion par défaut pointe sur la base vide `studio_meta_default`, avec un rôle du même nom sans aucun privilège. Les deux sont créés par `init`.
 
@@ -211,7 +222,8 @@ Les stacks compose m0bis et m0 sont arrêtées, données et volumes conservés. 
 | Storage | 500 JSON tant que M5 n'existe pas | Ajouter `/storage/v1` aux routes internes de Caddy avec M5 |
 | Functions et Logs | Fonctions refusées, logs vides (Logflare global) | 2 à 3 j |
 | GraphiQL | `api/graphql.ts` utilise encore `SUPABASE_URL` global | 1 h |
-| Clé `service_role` | Affichée par Settings > API keys, comme Studio upstream ; pas d'élévation puisque l'owner a déjà `BYPASSRLS` | 0,5 j pour la masquer |
+| Clé `service_role` | Affichée par Settings > API keys, comme Studio upstream. Sans `BYPASSRLS` sur l'owner, elle donne plus que la base : l'API admin de GoTrue (toutes les tables `auth` en lecture et écriture) et PostgREST en `service_role` | 0,5 j pour la masquer |
+| Policies `auth` de l'owner | Recréées par `register` si une migration GoTrue recrée `auth.users` ou `auth.identities` ; entre la migration et le prochain `syncAll`, Auth > Users est vide | Rejouer `syncAll` après chaque mise à jour de GoTrue (A8) |
 | Métadonnées du cluster | `pg_database` et `pg_roles` laissent voir les noms des autres apps | Non trivial |
 | Typecheck du fork | Rouge en amont | Suivre l'amont |
 | Workspace unique | `node_modules` de 1,9 Go ; les overrides du fork s'appliquent à tout le workspace ; le réglage `minimumReleaseAge` du fork a été retiré | — |
