@@ -25,8 +25,61 @@ The per-app images (`GOTRUE_IMAGE`, `POSTGREST_IMAGE`) are pulled by the control
 
 - URL: `http://api.localhost:8100/mcp`, with the `Authorization: Bearer <PAT>` header.
 - Claude Code: `claude mcp add --transport http platform http://api.localhost:8100/mcp --header "Authorization: Bearer $PLATFORM_TOKEN"`
-- Tools: `whoami`, `list_apps`, `get_app`, `create_app`, `apply_migrations`, `execute_sql`, `create_deployment`, `finalize_deployment`, `list_deployments`, `rollback`, `set_secrets`, `list_secrets`, `list_members`, `add_member`, `remove_member`, `stop_app`, `start_app`, `delete_app`, `get_logs`.
+- Tools: `whoami`, `list_apps`, `get_app`, `create_app`, `link_repo`, `apply_migrations`, `execute_sql`, `create_deployment`, `finalize_deployment`, `begin_release`, `finish_release`, `list_deployments`, `rollback`, `set_secrets`, `list_secrets`, `list_members`, `add_member`, `remove_member`, `stop_app`, `start_app`, `delete_app`, `get_logs`.
 - Archives don't go through MCP: `create_deployment` returns a `PUT http://api.localhost:8100/uploads/<token>` URL (single use, 15 min) and a ready-to-use `tar` + `curl` command.
+
+## Releases, direct deployment and `DIRECT_DEPLOY`
+
+A **release** groups the deployments (migrations, functions, frontend) of one publication. `releases.source` is `ci` (one GitHub Actions run attempt, through the CI API below: commit, run URL and GitHub actor from the OIDC claims) or `direct` (a PAT through MCP: the platform account in `created_by`). `get_app` returns the app's `last_release`, and `list_deployments` the `release_id` of each deployment.
+
+Direct deployment through MCP: `begin_release(app, commit_sha?, reason?)` opens a release, its `release_id` is then passed to `apply_migrations` and `create_deployment` (`finalize_deployment` follows the deployment), and `finish_release(release_id, succeeded|failed)` closes it. Without `release_id`, each successful publication is recorded as its own finished release (that is what the current `deploy` skill and the seed do). A release can only be used by the app it belongs to, while `running`; `finish_release` through MCP only closes `direct` releases.
+
+The platform setting **`DIRECT_DEPLOY`** decides who publishes with a PAT:
+
+- `admins` (default when unset; **use it in production**): builder PATs are refused the publishing tools (`apply_migrations` without `dry_run`, `create_deployment`, `finalize_deployment`, `begin_release`) with an error that points to CI. They keep everything else (reads, `dry_run`, `execute_sql`, secrets, members, `rollback`, `stop_app` / `start_app`). Admins keep the publishing tools: their releases are flagged `admin_exception = true` (the audited exception of PLAN_1 §6.3, with an optional `reason` given to `begin_release`).
+- `everyone`: every member of the app publishes with their PAT (the M3 model). `deploy/install.sh` writes `DIRECT_DEPLOY=everyone` into `deploy/.env` for local installs, so that the e2e suites, the seed and the current `deploy` skill keep working without GitHub.
+
+The tools stay listed for builders; the refusal happens at call time, so that Claude gets the explanation.
+
+## CI deployment API (GitHub OIDC)
+
+The same operations as the MCP deployment tools, for GitHub Actions (`packages/deploy-cli`, to come), on `http://api.localhost:8100/ci/apps/<slug>/...`, authenticated by a GitHub OIDC token in `Authorization: Bearer` (`permissions: id-token: write`, audience = the platform API URL). No PAT and no long-lived secret in GitHub.
+
+| Request | Mode | Body | Does |
+|---|---|---|---|
+| `GET /ci/apps/<slug>` | check | | `get_app`, plus `mode` and `check_reasons` |
+| `POST /ci/apps/<slug>/migrations` | check if `dry_run: true`, else deploy | `{migrations, dry_run?, accept_lints?}` | `apply_migrations` (rejected lints: HTTP 422 with the same body as MCP) |
+| `POST /ci/apps/<slug>/release` | deploy | | opens the run's release (idempotent per run attempt) |
+| `POST /ci/apps/<slug>/deployments` | deploy | `{kind}` | `create_deployment` in the run's release (upload URL as in MCP) |
+| `POST /ci/apps/<slug>/deployments/<id>/finalize` | deploy | | `finalize_deployment`, only for a deployment of the run's release |
+| `POST /ci/apps/<slug>/release/finish` | any | `{status: succeeded\|failed, error?}` | closes the run's release |
+
+The run's release is identified by the token's `run_id` and `run_attempt`: the client does not pass ids, and a token from another run cannot publish into it. Errors are `{error}` with 401 (token), 403 (workflow, repository, check mode), 409 (no release for the run, app stopped), 400 (invalid body, release already finished).
+
+Every request checks, in this order:
+
+1. the signature against the issuer's JWKS (`jose`, RS256; keys cached 10 min and refetched on an unknown `kid`), `iss` = `OIDC_ISSUER`, `aud` = `OIDC_AUDIENCE`, `exp` (30 s clock tolerance), and the GitHub claims the API uses;
+2. `job_workflow_ref` against `CI_ALLOWED_WORKFLOWS`: this is what guarantees that the company checks ran, since editing the app repo's workflow does not change the reusable workflow it calls;
+3. `repository_id` = the app's `github_repo_id` (`link_repo`), stable across renames. An unknown app and an app linked to another repository give the same 403.
+
+Then the mode: **deploy** when `ref` = `refs/heads/<default_branch>` and `ref_protected` = `true`; **check** otherwise (pull requests, other branches, unprotected default branch), which only allows `GET` and migrations `dry_run`. A **stopped** app refuses every publishing request (409 `app "<slug>" is stopped: start_app before deploying`); `GET` and `dry_run` stay available.
+
+Audit: CI actions are recorded with no `user_id` and `actor: github:<login>` in the details; `create_release` records the commit, run URL and actor.
+
+## Settings
+
+Platform settings come from the control plane's environment (`deploy/docker-compose.yml`, values from `deploy/.env`), and can be overridden at runtime without a restart by a row of the `settings` table: `docker exec plat-control-plane node src/cli.ts set-setting <key> <value>`, `unset-setting <key>` to go back to the environment, `settings` to print the effective values. They are read on every CI request and every MCP publishing call.
+
+| Key | Environment | Default | |
+|---|---|---|---|
+| `direct_deploy` | `DIRECT_DEPLOY` | `admins` (`everyone` written by `install.sh`) | see above |
+| `ci_allowed_workflows` | `CI_ALLOWED_WORKFLOWS` | empty: every CI token is refused | comma-separated. `owner/repo/.github/workflows/deploy.yml@refs/heads/main` matches that exact `job_workflow_ref`; without `@`, any ref of that workflow file. Pin a ref (branch or tag) in production. Case-sensitive |
+| `oidc_issuer` | `OIDC_ISSUER` | `https://token.actions.githubusercontent.com` | GHES: `https://<host>/_services/token`. The run URL of a release uses `https://github.com`, or the issuer's origin for GHES |
+| `oidc_audience` | `OIDC_AUDIENCE` | the API URL (`http://api.localhost:8100`) | the `audience` asked by the workflow |
+| `oidc_jwks_url` | `OIDC_JWKS_URL` | `<issuer>/.well-known/jwks` | |
+| `oidc_jwks` | none | unset | **test only**: inline JWKS (JSON) trusted instead of `oidc_jwks_url`; the e2e suite uses it as a fake issuer. Never set it in production |
+
+The control plane must reach the issuer's JWKS. Behind an HTTP proxy, Node's `fetch` needs `NODE_USE_ENV_PROXY=1` with `HTTPS_PROXY` in the control plane's environment.
 
 ## Apps
 
@@ -64,11 +117,11 @@ Stopping and deleting (journey B8): `stop_app`, `start_app` and `delete_app` are
 ```bash
 pnpm -r typecheck
 pnpm --filter @platform/control-plane test        # Studio access policy (unit)
-pnpm --filter @platform/control-plane e2e         # requires the running stack and deploy/.env.local
+pnpm --filter @platform/control-plane e2e         # requires the running stack and deploy/.env.local; also runs test/ci.e2e.test.ts
 pnpm --filter @platform/control-plane e2e:studio  # Studio: login, filtering, isolation
 ```
 
-The e2e suites never touch existing apps or users. Each run creates disposable resources named after a run id: one app `e2e-<id>` for `e2e`, two apps `e2e-<id>-a` / `e2e-<id>-b` and two builders `e2e-<id>-alice@example.com` / `e2e-<id>-bob@example.com` (random passwords, kept in memory) for `e2e:studio`. They are deleted at the end of the run, even when a test fails, with `delete-app` and `delete-user`; the `after` hook then checks that nothing is left (platform rows, sessions, tokens, memberships, containers, Caddy routes, database and roles) and fails the suite otherwise. Set `E2E_KEEP=1` to keep the apps for inspection (their slugs are printed), then remove them with `delete-app`.
+The e2e suites never touch existing apps or users. Each run creates disposable resources named after a run id: one app `e2e-<id>` for `e2e` (plus `e2e-<id>-ci` and its owner and collaborator for the CI suite), two apps `e2e-<id>-a` / `e2e-<id>-b` and two builders `e2e-<id>-alice@example.com` / `e2e-<id>-bob@example.com` (random passwords, kept in memory) for `e2e:studio`. They are deleted at the end of the run, even when a test fails, with `delete-app` and `delete-user`; the `after` hook then checks that nothing is left (platform rows, sessions, tokens, memberships, containers, Caddy routes, database and roles) and fails the suite otherwise. The CI suite (`test/ci.e2e.test.ts`) acts as a fake GitHub OIDC issuer: it generates an RS256 key pair, sets `oidc_issuer`, `oidc_jwks` and `ci_allowed_workflows`, toggles `direct_deploy`, and restores the previous settings in its `after` hook. It expects `DIRECT_DEPLOY=everyone` in the environment (local install). Set `E2E_KEEP=1` to keep the apps for inspection (their slugs are printed), then remove them with `delete-app`.
 
 ## Technical access (dev)
 

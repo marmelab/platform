@@ -26,13 +26,13 @@ Legend: ✅ done · 🟡 partial · ❌ missing. Milestones refer to [PLAN_1.md]
 | Custom domains | Never. Apps are only served on `<app>.<domain>`. |
 | Studio | Open to builders for their own apps, through the vendored multi-head fork (see [CLAUDE.md](../CLAUDE.md)). |
 | Source code | Every app is linked to one GitHub repository in the company's GitHub organization. The admin reads the code on GitHub: the platform never hosts or displays source code. |
-| Deployment path | **Always GitHub Actions**, from the default branch of the linked repo, after the company's CI checks (security scans, required reviews). Builders never deploy from their machine: the `deploy` skill sets up the CI job, then pushes. |
+| Deployment path | **Always GitHub Actions** in production, from the default branch of the linked repo, after the company's CI checks (security scans, required reviews): the `deploy` skill sets up the CI job, then pushes. Direct deployment from a local machine stays available when the platform allows it (`DIRECT_DEPLOY`, below): e2e tests run without GitHub. |
 | CI authentication | GitHub OIDC: the platform accepts a deployment only if the OIDC token proves the linked repo (`repository_id`), its default branch (`ref`, `ref_protected`) and an admin-approved reusable workflow (`job_workflow_ref`). No long-lived deploy secret is stored in GitHub. |
 | Shared deploy workflow | The admin maintains one reusable workflow (in the same repo as the plugin marketplace) that runs the company checks, builds the frontend and deploys. App repos only call it, so the checks cannot be skipped by editing the app repo. |
 | Pull requests | The same reusable workflow runs on PRs in check mode: company checks, build, and a migrations dry run with the security linter. Nothing is published. |
 | Accepted lints | Declared in `.platform.json` (`acceptedLints`), so that accepting a lint goes through code review. Still audited on the platform. |
 | Schema changes outside CI | Accepted and detected. Studio's SQL editor and `execute_sql(write=true)` run as the app's owner role and can change the schema without review; they stay available (data fixes, emergencies), but a DDL event trigger records every schema change not made by a deployment, and the app is flagged in A9. |
-| Direct deployment | Reserved to admins (`admin-deploy` skill), for emergencies or apps without CI. It requires a reason, is audited, and the app is flagged in the admin view until the next CI deployment. |
+| Direct deployment | Platform setting `DIRECT_DEPLOY`. `admins` (production): reserved to admins (`admin-deploy` skill), for emergencies or apps without CI; it takes a reason, is audited as an admin exception, and the app is flagged in the admin view until the next CI deployment. `everyone` (local installs, written by `install.sh`): builders may still deploy directly with their PAT. Either way, a direct deployment creates a release with `source = direct` and its author; CI runs create `source = ci` releases. |
 
 ## App builder journeys
 
@@ -58,7 +58,7 @@ Trigger: "deploy the app to the platform" in a Vite + Supabase repo.
 7. The skill shows the URL, the Studio link and the run link. On failure, it reads the run logs and `get_logs`, then proposes a fix (B3).
 
 Channel: Claude Code + MCP + GitHub.
-Status: 🟡. Direct deployment from the builder's machine works (✅ M3, about 45 s) but is the model we are leaving. Missing ❌: OIDC on the control plane, `link_repo`, the deploy CLI and reusable workflow, the new skill, and restricting deploy tools to CI and admins. The quota is not enforced yet ❌.
+Status: 🟡. Direct deployment from the builder's machine works (✅ M3, about 45 s), and stays the path when `DIRECT_DEPLOY=everyone`. Control plane side ✅ (M3bis): `link_repo` (owner or admin, audited, shown by `get_app`), the CI API `/ci/*` authenticated by GitHub OIDC (linked `repository_id`, protected default branch, allowed `job_workflow_ref`; check mode for other refs), releases with commit, run URL and GitHub actor, and `DIRECT_DEPLOY=admins` refusing the publishing tools to builder PATs. Missing ❌: the deploy CLI (`platform-deploy`), the reusable workflow and the new `deploy` skill. The quota is not enforced yet ❌.
 
 ### B3. Iteration
 Trigger: the builder changes the schema, the functions or the frontend.
@@ -68,7 +68,7 @@ Trigger: the builder changes the schema, the functions or the frontend.
 4. `rollback` of the frontend or the functions if needed, through MCP: it only re-points to a version that CI already deployed. Migrations are never rolled back; a fix goes through a new migration.
 
 Channel: Claude Code + GitHub, MCP for rollback.
-Status: 🟡. Missing: everything CI-related (see B2), `list_migrations` and a bundle hash (unchanged functions are redeployed). A migration that contains its own `COMMIT` escapes the rollback (CP-1).
+Status: 🟡. The control plane accepts PR checks (check mode: `get_app` and migrations `dry_run`) and CI deployments from the protected default branch (see B2). Missing: the deploy CLI, the reusable workflow (PR comment with the lints), `list_migrations` and a bundle hash (unchanged functions are redeployed). A migration that contains its own `COMMIT` escapes the rollback (CP-1).
 
 ### B4. Debugging in production
 Trigger: a user reports a bug, or an alert comes in.
@@ -126,7 +126,7 @@ Status: 🟡. The MCP tools `stop_app`, `start_app` and `delete_app` exist, for 
 5. Platform settings: the GitHub organization, the OIDC issuer, the allowed `job_workflow_ref` values; organization variable `PLATFORM_URL`.
 
 Channel: shell.
-Status: 🟡. `install.sh` works locally, but `api.localhost` is hardcoded, and there is neither the TLS `ask` endpoint nor Loki.
+Status: 🟡. `install.sh` works locally (and writes `DIRECT_DEPLOY=everyone`), but `api.localhost` is hardcoded, and there is neither the TLS `ask` endpoint nor Loki. The platform settings of step 5 exist (`OIDC_ISSUER`, `OIDC_AUDIENCE`, `CI_ALLOWED_WORKFLOWS`, `DIRECT_DEPLOY`, in the environment or with the `set-setting` CLI); `install.sh` does not ask for them yet.
 
 ### A2. Builders, tokens and quotas
 1. Create a builder (email, password).
@@ -191,7 +191,7 @@ Trigger: the admin wants to know what runs on the platform, and who is responsib
 Channel: admin.
 Flags: deployed outside CI (A10), accepted lints, schema changed outside CI, abandoned.
 
-Status: ❌ M4. Status, owner and deployments already exist in the `platform` database; missing: the DDL event trigger, the repo link and commit on deployments (B2), per-app metrics (Caddy per-host metrics, `pg_database_size`, Docker stats sampled by the control plane).
+Status: ❌ M4. Status, owner, linked repo, releases (commit, run, author, source, admin exception) and their deployments already exist in the `platform` database; missing: the DDL event trigger, per-app metrics (Caddy per-host metrics, `pg_database_size`, Docker stats sampled by the control plane).
 
 ### A10. Direct deployment (exception)
 Trigger: an emergency fix while CI is broken, an app whose repo cannot run CI, or a takeover (A5).
@@ -200,7 +200,7 @@ Trigger: an emergency fix while CI is broken, an app whose repo cannot run CI, o
 3. The deployment is audited and the app is flagged "deployed outside CI" in A9 until the next CI deployment.
 
 Channel: Claude Code + MCP (admin only).
-Status: 🟡. Technically what M3 does today for every builder; the admin restriction, the reason and the flag are ❌.
+Status: 🟡. Control plane ✅: with `DIRECT_DEPLOY=admins`, only admins publish with a PAT; `begin_release(reason)` groups the publications, and the release is recorded as `source = direct`, `admin_exception = true`, with the reason and the admin, and audited. Missing ❌: the `admin-deploy` skill (dirty tree and unpushed commit checks), the deploy CLI, and the flag in the admin view (M4).
 
 ## App user journeys
 

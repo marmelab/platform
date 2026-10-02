@@ -10,7 +10,7 @@ Les PME qui équipent leurs collaborateurs de Claude Code se retrouvent avec des
 - des « instances Supabase » créées à la volée (Postgres, Auth, REST, Storage, Realtime, Edge Functions) ;
 - l'hébergement statique des SPA ;
 - **aucune UI pour les devs** : un serveur MCP + une skill Claude Code (« Claude, déploie l'app sur la plateforme ») ;
-- un **déploiement toujours fait par la CI GitHub** de l'entreprise, après ses contrôles (sécurité, revue) : la skill installe le job, elle ne déploie pas elle-même ;
+- un **déploiement toujours fait par la CI GitHub** de l'entreprise, après ses contrôles (sécurité, revue) : la skill installe le job, elle ne déploie pas elle-même. Le déploiement direct depuis le poste reste possible quand la plateforme l'autorise (réglage `DIRECT_DEPLOY`, §6.3) : installations locales et tests e2e sans GitHub ;
 - une **interface d'administration** (shadcn-admin-kit) pour gérer comptes, tokens, apps, instances.
 
 Cible de dimensionnement : **40 à 60 apps** par installation (plusieurs apps par collaborateur), une seule VM.
@@ -26,7 +26,7 @@ Cible de dimensionnement : **40 à 60 apps** par installation (plusieurs apps pa
 | Auth des apps | Supabase Auth (GoTrue), apps internes et publiques, SSO entreprise via SAML / OAuth (Entra ID, Google, Keycloak…) |
 | Interface dev | MCP distant + skill, packagés en **plugin Claude Code** |
 | Build front | **Dans la CI** (GitHub Actions), upload du `dist/` |
-| Chemin de déploiement | **Toujours la CI GitHub**, depuis la branche par défaut du repo lié à l'app, via un workflow réutilisable maintenu par l'admin. Déploiement direct réservé aux admins, par exception (§6.3) |
+| Chemin de déploiement | **Toujours la CI GitHub**, depuis la branche par défaut du repo lié à l'app, via un workflow réutilisable maintenu par l'admin. Déploiement direct réglé par `DIRECT_DEPLOY` (§6.3) : `admins` en production (exception auditée), `everyone` pour une installation locale (le déploiement depuis le poste reste possible, les tests e2e tournent sans GitHub) |
 | Code source | Chaque app est liée à un repo de l'organisation GitHub de l'entreprise. L'admin lit le code sur GitHub : **pas d'interface de code dans la plateforme** |
 | Auth de la CI | **OIDC GitHub** : pas de secret de déploiement longue durée (§5.1) |
 | Langage | TypeScript partout (Deno pour le main worker des Edge Functions) |
@@ -173,7 +173,8 @@ Pour une installation chez le client à usage interne, ça semble passer. Pour M
 - `app_members` (app_id, user_id, rôle)
 - `app_secrets` (app_id, clé, valeur chiffrée), pour les edge functions
 - `app_auth_config` (app_id, providers, SSO, SMTP override, signup policy)
-- `releases` (id, app_id, commit_sha, source `ci | admin`, ci_run_url, github_actor, reason (déploiement admin), statut, started_at, finished_at) : un run de CI = une release, qui regroupe ses déploiements
+- `releases` (id, app_id, source `ci | direct`, statut `running | succeeded | failed`, commit_sha, ref, ci_run_id, ci_run_url, github_actor, created_by (PAT d'un déploiement direct), admin_exception, reason, started_at, finished_at) : un run de CI (une tentative) = une release, qui regroupe ses déploiements ; un déploiement direct crée une release `direct`, marquée `admin_exception` quand c'est un admin alors que `DIRECT_DEPLOY=admins`
+- `settings` (clé, valeur) : réglages plateforme modifiés à chaud (CLI), prioritaires sur l'env du control plane
 - `deployments` (id, app_id, release_id, kind `frontend | functions | migrations`, version, statut, created_by, created_at, manifest)
 - `app_metrics` (app_id, heure, requêtes, réponses 5xx, taille DB, mémoire des conteneurs) : échantillonné par le control plane pour la vue apps de l'admin (§8)
 - `uploads` (id, deployment_id, token à usage unique, expires_at)
@@ -204,11 +205,12 @@ Chaque étape doit être idempotente, avec reprise sur erreur et une opération 
 | `list_apps` / `get_app` | Statut, URL, `SUPABASE_URL`, anon key, dernière version |
 | `create_app(name)` | Provisioning (§4.2) |
 | `link_repo(app, repo, repository_id, default_branch)` | Lie l'app à son repo GitHub (propriétaire de l'app ; changement audité) |
-| `apply_migrations(app, migrations[], dry_run?)` | Contenu SQL des fichiers `supabase/migrations/*`. N'applique que les nouvelles, dans une transaction. Lance ensuite le **linter de sécurité** (§7) et renvoie ses alertes. Pour un builder : `dry_run` seulement ; l'application réelle passe par la CI (§5.1) |
+| `apply_migrations(app, migrations[], dry_run?, release_id?)` | Contenu SQL des fichiers `supabase/migrations/*`. N'applique que les nouvelles, dans une transaction. Lance ensuite le **linter de sécurité** (§7) et renvoie ses alertes. Avec `DIRECT_DEPLOY=admins`, un builder n'a que le `dry_run` ; l'application réelle passe par la CI (§5.1) |
 | `execute_sql(app, sql, write=false)` | Lecture seule par défaut. L'écriture est explicite et journalisée |
 | `list_tables(app)` / `generate_types(app)` | Introspection, génération des types TS de la base |
-| `create_deployment(app, kind)` | Renvoie une **URL d'upload pré-signée** (usage unique, TTL court). CI et admins seulement |
-| `finalize_deployment(deployment_id)` | Vérifie, extrait, bascule `current`, recharge les fonctions. CI et admins seulement |
+| `create_deployment(app, kind, release_id?)` | Renvoie une **URL d'upload pré-signée** (usage unique, TTL court). Admins seulement si `DIRECT_DEPLOY=admins` |
+| `finalize_deployment(deployment_id)` | Vérifie, extrait, bascule `current`, recharge les fonctions. Admins seulement si `DIRECT_DEPLOY=admins` |
+| `begin_release(app, commit_sha?, reason?)` / `finish_release(release_id, statut)` | Déploiement direct : regroupe les publications suivantes dans une release `direct`. Sans release, chaque publication est sa propre release |
 | `list_deployments` / `rollback(app, version)` | Historique (avec commit et run de CI) et retour arrière vers une version déjà déployée par la CI |
 | `set_secrets(app, secrets)` / `list_secrets(app)` | Secrets des edge functions (valeurs jamais renvoyées) |
 | `configure_auth(app, …)` | Providers, SSO plateforme on/off, signup, URLs de redirection |
@@ -217,17 +219,19 @@ Chaque étape doit être idempotente, avec reprise sur erreur et une opération 
 
 **Les fichiers ne passent pas par les arguments MCP**, qui provoqueraient une inflation du contexte. Le `dist/` et `supabase/functions/` sont archivés et envoyés par `curl` vers l'URL pré-signée.
 
-**Droits par identité** : un PAT de builder n'a plus accès aux outils qui publient (`apply_migrations` hors `dry_run`, `create_deployment`, `finalize_deployment`). Il garde la lecture, les logs, `execute_sql`, `set_secrets`, `configure_auth`, la gestion des membres, `rollback` et `stop_app` / `start_app`. Les admins gardent tout (§6.3).
+**Droits par identité**, selon le réglage `DIRECT_DEPLOY` (§6.3) : avec `admins` (production), un PAT de builder n'a plus accès aux outils qui publient (`apply_migrations` hors `dry_run`, `create_deployment`, `finalize_deployment`, `begin_release`) : l'appel est refusé avec un message qui renvoie vers la CI. Il garde la lecture, les logs, `execute_sql`, `set_secrets`, `configure_auth`, la gestion des membres, `rollback` et `stop_app` / `start_app`. Les admins gardent tout. Avec `everyone` (installation locale), les builders gardent aussi les outils qui publient.
 
 ### 5.1 API de déploiement pour la CI
 
-- Mêmes opérations que les outils MCP de déploiement, exposées en REST sur `api.<domaine>/ci/*` et appelées par un **CLI de déploiement** (`platform-deploy`, TypeScript), lui-même appelé par le workflow réutilisable (§6.2). L'admin l'utilise aussi pour un déploiement direct.
+- Mêmes opérations que les outils MCP de déploiement, exposées en REST sur `api.<domaine>/ci/apps/<app>/…` (`GET` = `get_app`, `migrations`, `release` et `release/finish`, `deployments` et `deployments/<id>/finalize` ; détail dans `apps/control-plane/README.md`) et appelées par un **CLI de déploiement** (`platform-deploy`, TypeScript), lui-même appelé par le workflow réutilisable (§6.2). L'admin l'utilise aussi pour un déploiement direct, avec son PAT (MCP).
 - Auth : **token OIDC GitHub** (`permissions: id-token: write`, audience = URL de la plateforme). Le control plane vérifie la signature (JWKS de l'émetteur configuré : github.com ou GHES) et les claims :
   - `repository_id` = `apps.github_repo_id` (stable même si le repo est renommé) ;
   - pour publier : `ref` = branche par défaut de l'app et `ref_protected = true` ;
-  - `job_workflow_ref` dans la liste des workflows réutilisables autorisés par l'admin. C'est ce qui garantit que les contrôles de l'entreprise ont tourné : modifier le workflow du repo de l'app ne suffit pas à les contourner.
+  - `job_workflow_ref` dans la liste des workflows réutilisables autorisés par l'admin (`CI_ALLOWED_WORKFLOWS` : une entrée `…/deploy.yml@refs/heads/main` exige cette ref exacte, une entrée sans `@` accepte toutes les refs du fichier ; épingler une ref en production). C'est ce qui garantit que les contrôles de l'entreprise ont tourné : modifier le workflow du repo de l'app ne suffit pas à les contourner.
+  - signature vérifiée avec `jose` (JWKS de l'émetteur mis en cache), `iss`, `aud` (par défaut l'URL de l'API), `exp`.
 - Mode **check** (pull requests, n'importe quelle ref du repo lié) : `get_app` et `apply_migrations` en `dry_run` seulement.
-- Chaque run crée une `release` (commit, run, acteur GitHub). Les lints acceptés viennent de `.platform.json` (`acceptedLints`), donc de la revue de code, et restent audités.
+- Chaque run crée une `release` (commit, run, acteur GitHub), identifiée par `run_id` et `run_attempt` du token : un token d'un autre run ne peut pas y publier. Les lints acceptés viennent de `.platform.json` (`acceptedLints`), donc de la revue de code, et restent audités.
+- Une app arrêtée (`stop_app`) refuse toute publication par la CI ; `get_app` et le `dry_run` restent possibles.
 - Les secrets des fonctions restent sur la plateforme (`set_secrets` par le builder) : rien à stocker dans GitHub. Repli sans OIDC (vieux GHES, autre forge) : un token de déploiement par app en secret d'environnement GitHub restreint à la branche par défaut. Hors V1.
 
 ## 6. Plugin Claude Code, CI et déploiement
@@ -274,15 +278,20 @@ Les revues obligatoires et les checks requis restent configurés par le client s
 
 ### 6.3 Déploiement direct par un admin (exception)
 
+Le réglage plateforme **`DIRECT_DEPLOY`** (env du control plane, modifiable à chaud par la CLI `set-setting`) décide qui peut publier avec un PAT :
+
+- `admins` (**à utiliser en production**, valeur par défaut si absent) : seuls les admins publient en direct, et chaque release directe d'un admin est marquée `admin_exception` (l'exception auditée ci-dessous) ;
+- `everyone` : tout membre de l'app publie avec son PAT, comme en M3. `install.sh` l'écrit dans `deploy/.env` pour une installation locale : les tests e2e, le seed et la skill `deploy` actuelle tournent sans GitHub.
+
 Skill `admin-deploy`, pour une urgence (CI en panne), une app sans CI ou une reprise d'app (A5) :
 
-- réservée aux PAT d'admin ; demande une **raison** ;
+- réservée aux PAT d'admin quand `DIRECT_DEPLOY=admins` ; demande une **raison** (`begin_release`) ;
 - lance le même `platform-deploy` que la CI, depuis un checkout local du repo lié ; refuse un arbre modifié ou un commit absent du repo distant ;
-- crée une `release` `source = admin`, auditée ; l'app est signalée « déployée hors CI » dans l'admin jusqu'au prochain déploiement par la CI.
+- crée une `release` `source = direct` (`admin_exception`, raison, compte de l'admin), auditée ; l'app est signalée « déployée hors CI » dans l'admin jusqu'au prochain déploiement par la CI.
 
 ## 7. Garde-fous de sécurité
 
-- **CI comme seul chemin de publication** : contrôles de sécurité de l'entreprise et revue de code avant tout déploiement, garantis par les claims OIDC (`repository_id`, `ref_protected`, `job_workflow_ref`, §5.1). Le code déployé est toujours un commit du repo lié, consultable par l'admin sur GitHub.
+- **CI comme seul chemin de publication** (avec `DIRECT_DEPLOY=admins`, hors exception admin) : contrôles de sécurité de l'entreprise et revue de code avant tout déploiement, garantis par les claims OIDC (`repository_id`, `ref_protected`, `job_workflow_ref`, §5.1). Le code déployé est toujours un commit du repo lié, consultable par l'admin sur GitHub.
 - **Linter** après chaque `apply_migrations` : tables du schéma `public` sans RLS, policies `USING (true)` sur des tables sensibles, fonctions `SECURITY DEFINER` exposées, etc. On s'appuie sur **splinter**, le linter open source de Supabase. Résultat visible dans le retour MCP, sur la PR et dans l'admin.
 - **Changements de schéma hors CI : acceptés et détectés.** L'éditeur SQL de Studio et `execute_sql(write=true)` agissent avec le rôle owner et peuvent modifier le schéma hors CI. On les garde (corrections de données, urgences), mais un event trigger DDL (dans `template_supabase`) journalise tout changement fait hors d'une release, et l'app est signalée dans l'admin.
 - La clé `service_role` n'est jamais renvoyée par `get_app` (seulement injectée dans les edge functions).
@@ -316,7 +325,7 @@ Auth de l'admin : comptes locaux en V1, SSO entreprise (OIDC) ensuite.
 
 - Repo `deploy/` contenant un `docker-compose.yml` pour le socle (Postgres, Caddy, control plane, admin, Storage, Realtime, Edge Runtime, Studio multi-head, postgres-meta, Loki, Vector) et un script `install.sh`, qui vérifie les prérequis, génère les secrets, initialise la database template et crée le premier admin.
 - Prérequis client : une VM Linux (16 Go+ recommandés pour 50 apps), un DNS wildcard `*.<domaine>`, des ports 80/443, un SMTP, un bucket S3 pour les backups (optionnel), une **organisation GitHub** (github.com ou GHES avec OIDC). L'API doit être joignable par les runners GitHub Actions (sinon, runners auto-hébergés dans le réseau du client), et le control plane doit joindre l'émetteur OIDC.
-- Configuration GitHub à l'installation : publication du repo interne (marketplace + workflow réutilisable), ajout des contrôles de l'entreprise au workflow, liste des `job_workflow_ref` autorisés, variable d'organisation `PLATFORM_URL`.
+- Configuration GitHub à l'installation : publication du repo interne (marketplace + workflow réutilisable), ajout des contrôles de l'entreprise au workflow, liste des `job_workflow_ref` autorisés (`CI_ALLOWED_WORKFLOWS`), `DIRECT_DEPLOY=admins`, variable d'organisation `PLATFORM_URL`.
 - **Versions des composants Supabase épinglées**, alignées sur une release du `docker-compose` officiel Supabase. Les mises à jour de la plateforme passent par un script de migration du control plane, puis par un recyclage progressif des conteneurs GoTrue et PostgREST app par app.
 - **[SPIKE]** Vérifier les licences des composants redistribués (GoTrue, PostgREST, Storage, Realtime, Edge Runtime, postgres-meta), et faire valider juridiquement la **Sustainable Use License** de Studio multi-head (§3.6).
 
@@ -346,7 +355,7 @@ examples/todo-app/    # app de test end-to-end (Vite + supabase-js + 1 edge func
 | M1 | **Spike Edge Functions multi-tenant** | Main worker qui route 2 apps, env isolées, `verify_jwt`, import `npm:` |
 | M2 | **Control plane + MCP minimal** | `create_app`, `get_app`, `apply_migrations`, `create/finalize_deployment` (front + fonctions), `get_logs` |
 | M3 | **Plugin Claude Code** | Sur `examples/todo-app`, « déploie l'app sur la plateforme » fonctionne de bout en bout depuis un repo vierge (déploiement direct depuis le poste, remplacé par M3bis) |
-| M3bis | **Déploiement par la CI** | OIDC GitHub vérifié par le control plane (repo, branche protégée, workflow autorisé), `platform-deploy`, workflow réutilisable (modes check et deploy), skill `deploy` réécrite (repo, `link_repo`, secrets, workflow), skill `admin-deploy`, releases avec commit et run, event trigger DDL qui signale les changements de schéma hors release ; outils de publication retirés aux PAT de builder. Critère : sur `examples/todo-app`, « déploie l'app sur la plateforme » depuis un repo vierge aboutit à un déploiement par GitHub Actions, et un push d'un workflow modifié pour sauter les contrôles est refusé |
+| M3bis | **Déploiement par la CI** | OIDC GitHub vérifié par le control plane (repo, branche protégée, workflow autorisé), `platform-deploy`, workflow réutilisable (modes check et deploy), skill `deploy` réécrite (repo, `link_repo`, secrets, workflow), skill `admin-deploy`, releases avec commit et run, event trigger DDL qui signale les changements de schéma hors release ; outils de publication retirés aux PAT de builder quand `DIRECT_DEPLOY=admins`. Volet control plane fait (OIDC, `link_repo`, releases, API `/ci/*`, `DIRECT_DEPLOY`). Critère : sur `examples/todo-app`, « déploie l'app sur la plateforme » depuis un repo vierge aboutit à un déploiement par GitHub Actions, et un push d'un workflow modifié pour sauter les contrôles est refusé |
 | M4 | **Admin shadcn-admin-kit** | Users, tokens, vue de toutes les apps (propriétaire, repo, dernier déploiement, charge), stop/start/delete, releases, rollback, logs |
 | M5 | **Storage + Realtime multi-tenant** | Upload de fichiers et abonnement realtime fonctionnels sur 2 apps |
 | M6 | **Auth avancée** | SMTP, SSO plateforme (OIDC puis SAML), politique de signup |
