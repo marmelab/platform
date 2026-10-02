@@ -45,8 +45,11 @@ docker exec plat-control-plane node src/cli.ts delete-user bob@example.com      
 docker exec plat-control-plane node src/cli.ts set-password bob@example.com --generate         # prints a Studio password
 docker exec -i plat-control-plane node src/cli.ts set-password bob@example.com < password.txt  # or reads it from stdin
 docker exec plat-control-plane node src/cli.ts add-member demo bob@example.com developer
+docker exec plat-control-plane node src/cli.ts remove-member demo bob@example.com          # idempotent, refuses to remove the last owner
 docker exec plat-control-plane node src/cli.ts init                                     # idempotent, also run at startup
 ```
+
+Membership changes apply to open Studio sessions and PATs on their next request: Studio forward auth and MCP read the user's apps from the database on every request. `remove-member` is recorded in `audit_log` (`remove_member`, no user since the CLI acts as the operator).
 
 ## Tests
 
