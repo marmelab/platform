@@ -18,7 +18,7 @@ Legend: ✅ done · 🟡 partial · ❌ missing. Milestones refer to [PLAN_1.md]
 | Members management | Both through MCP tools (for the owner) and through the admin UI. |
 | Visibility | A builder only sees the apps they are a member of. No catalog. |
 | App auth configuration | Shared. The builder manages signup, redirect URLs and simple providers. The admin configures the company SSO once; the builder enables it on their app with one click. |
-| App users management | In Studio (Auth tab) and through MCP tools. |
+| App users management | In Studio (Auth tab) and through MCP tools, by any member of the app (owner or collaborator). Until the shared SMTP (M6), an invitation returns its link to the builder, who hands it over. |
 | Environments | One instance per app, for good. Staging is the builder's local `supabase start`. |
 | Alerts | Admin dashboard, plus an email to the owner of the affected app. |
 | Abandoned apps | After N days without traffic or deployment, the app is flagged to the admin and the owner. The admin decides: put it to sleep, or delete it after a final backup. |
@@ -86,7 +86,7 @@ Trigger: invite, delete or unblock an account, count sign-ups.
 2. Or in Claude: dedicated MCP tools.
 
 Channel: Studio and MCP.
-Status: 🟡. Studio is ✅ (M0ter). The MCP tools (`list_auth_users`, `invite_user`, `delete_user`) are ❌.
+Status: 🟡. Studio is ✅ (M0ter). The MCP tools are ✅ (B5), for any member of the app or an admin: `list_auth_users` (paginated, email filter; read from the database, so it also works on a stopped app), `invite_user`, `delete_user`, `ban_user` and `unban_user` (through the app's GoTrue admin API, audited, refused on a stopped app). Without SMTP, `invite_user` creates the account and returns a single-use invite link (24 h) for the builder to hand over, instead of emailing it; the invitation email comes with M6 (TECH_DEBT CP-16).
 
 ### B6. App auth and SSO
 Trigger: an internal app restricted to employees, or a public app.

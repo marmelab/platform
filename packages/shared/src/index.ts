@@ -36,6 +36,12 @@ export const releaseFinish = {
   error: z.string().max(2000).optional().describe("Why the release failed"),
 };
 
+/** An app user (GoTrue), by id or by email: exactly one of them. */
+const authUserRef = {
+  user_id: z.uuid().optional().describe("Id of the app user (auth.users.id)"),
+  email: z.email().optional().describe("Email of the app user, instead of user_id"),
+};
+
 export const toolInputs = {
   get_app: { app: slug },
   create_app: {
@@ -107,6 +113,20 @@ export const toolInputs = {
       .describe("false: changes outside releases since the last succeeded release; true: every recorded change"),
     limit: z.number().int().positive().max(500).default(50),
   },
+  list_auth_users: {
+    app: slug,
+    page: z.number().int().positive().default(1),
+    per_page: z.number().int().positive().max(1000).default(50),
+    filter: z.string().min(1).max(200).optional().describe("Case-insensitive substring of the email"),
+  },
+  invite_user: { app: slug, email: z.email().describe("Email of the person to invite") },
+  delete_user: { app: slug, ...authUserRef },
+  ban_user: {
+    app: slug,
+    ...authUserRef,
+    duration_hours: z.number().int().positive().max(876000).optional().describe("Omitted: banned indefinitely"),
+  },
+  unban_user: { app: slug, ...authUserRef },
   get_logs: {
     app: slug,
     service: z.enum(["gotrue", "postgrest", "functions", "postgres"]).optional(),

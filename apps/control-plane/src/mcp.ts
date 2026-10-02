@@ -13,6 +13,7 @@ import {
   UserError,
 } from "./apps.ts";
 import type { User } from "./auth.ts";
+import { BAN_FOREVER_HOURS, deleteUser, inviteUser, listAuthUsers, setBan } from "./auth-users.ts";
 import { apiUrl } from "./config.ts";
 import {
   createDeployment,
@@ -290,6 +291,64 @@ export function buildMcpServer(user: User): McpServer {
         requireOwner(user, target, "manage members");
         return removeMember(user, target, email);
       }),
+  );
+
+  server.registerTool(
+    "list_auth_users",
+    {
+      description: "Users of the app itself (its Auth/GoTrue accounts, not platform members), newest first: email, " +
+        "id, created_at, last_sign_in_at, invited_at, confirmed, banned. Any member of the app. Also works on a " +
+        "stopped app (read from the database).",
+      inputSchema: t.list_auth_users,
+    },
+    ({ app, page, per_page, filter }) =>
+      run(async () =>
+        listAuthUsers(await appForUser(user, app), { page: page ?? 1, perPage: per_page ?? 50, filter })
+      ),
+  );
+
+  server.registerTool(
+    "invite_user",
+    {
+      description: "Invite a person to the app (any member, audited): creates their app account and returns a " +
+        "single-use invite_link valid 24 h. No email is sent (no SMTP yet): give the link to the person privately, " +
+        "never paste it in a public place. Refused on a stopped app.",
+      inputSchema: t.invite_user,
+    },
+    ({ app, email }) => run(async () => inviteUser(user, await appForUser(user, app), email)),
+  );
+
+  server.registerTool(
+    "delete_user",
+    {
+      description: "Permanently delete a user of the app (any member, audited), by user_id or email. Rows of the " +
+        "app's tables that reference auth.users follow their foreign keys (cascade, set null or an error). Only " +
+        "with the user's explicit consent. Refused on a stopped app.",
+      inputSchema: t.delete_user,
+    },
+    ({ app, user_id, email }) => run(async () => deleteUser(user, await appForUser(user, app), { user_id, email })),
+  );
+
+  server.registerTool(
+    "ban_user",
+    {
+      description: "Block a user of the app (any member, audited), by user_id or email: they can no longer sign in " +
+        "nor refresh their session. Indefinitely unless duration_hours. Refused on a stopped app.",
+      inputSchema: t.ban_user,
+    },
+    ({ app, user_id, email, duration_hours }) =>
+      run(async () =>
+        setBan(user, await appForUser(user, app), { user_id, email }, duration_hours ?? BAN_FOREVER_HOURS)
+      ),
+  );
+
+  server.registerTool(
+    "unban_user",
+    {
+      description: "Unblock a user of the app banned with ban_user (any member, audited). Refused on a stopped app.",
+      inputSchema: t.unban_user,
+    },
+    ({ app, user_id, email }) => run(async () => setBan(user, await appForUser(user, app), { user_id, email }, null)),
   );
 
   server.registerTool(
