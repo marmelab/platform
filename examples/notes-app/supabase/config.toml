@@ -1,0 +1,18 @@
+project_id = "notes-app"
+
+[api]
+port = 54321
+
+[db]
+port = 54322
+major_version = 17
+
+[auth]
+site_url = "http://127.0.0.1:5173"
+enable_signup = true
+
+[auth.email]
+enable_confirmations = false
+
+[functions.share-note]
+verify_jwt = true
