@@ -93,6 +93,13 @@ services:
       API_HOST: api.localhost
       CADDY_ADMIN_URL: http://caddy:2019
       DOCKER_NETWORK: plat
+      # Platform settings (apps/control-plane/README.md, "Settings"). DIRECT_DEPLOY: "admins" in production;
+      # install.sh writes "everyone" into deploy/.env for local installs.
+      DIRECT_DEPLOY: ${DIRECT_DEPLOY:-admins}
+      CI_ALLOWED_WORKFLOWS: ${CI_ALLOWED_WORKFLOWS:-}
+      OIDC_ISSUER: ${OIDC_ISSUER:-https://token.actions.githubusercontent.com}
+      OIDC_AUDIENCE: ${OIDC_AUDIENCE:-}
+      OIDC_JWKS_URL: ${OIDC_JWKS_URL:-}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - sites:/data/sites

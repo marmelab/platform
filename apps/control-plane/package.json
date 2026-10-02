@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node src/index.ts",
     "typecheck": "tsc --noEmit",
-    "e2e": "node --test --test-concurrency=1 test/e2e.test.ts",
+    "e2e": "node --test --test-concurrency=1 test/e2e.test.ts test/ci.e2e.test.ts",
     "test": "node --test test/studio-policy.test.ts",
     "e2e:studio": "node --test --test-concurrency=1 test/studio.e2e.test.ts"
   },
@@ -17,6 +17,7 @@
     "@platform/sql": "workspace:*",
     "dockerode": "^5.0.1",
     "hono": "^4.13.12",
+    "jose": "^6.2.12",
     "pg": "^8.23.1",
     "smol-toml": "^1.9.0",
     "tar": "^7.5.22",

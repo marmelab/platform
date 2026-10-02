@@ -8,6 +8,15 @@ export interface User {
   role: "admin" | "developer";
 }
 
+/**
+ * Who performs a publication: a platform user (PAT), or a CI run (GitHub OIDC) which has no platform account
+ * (id null, email "github:<actor>").
+ */
+export interface Actor {
+  id: string | null;
+  email: string;
+}
+
 export async function authenticate(authorization: string | undefined): Promise<User | null> {
   const match = /^Bearer\s+(\S+)$/i.exec(authorization ?? "");
   if (!match) return null;

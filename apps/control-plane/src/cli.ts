@@ -9,6 +9,9 @@
 //   node src/cli.ts stop-app <slug>            (maintenance page, containers stopped)
 //   node src/cli.ts start-app <slug>
 //   node src/cli.ts delete-app <slug>
+//   node src/cli.ts settings                       (effective platform settings)
+//   node src/cli.ts set-setting <key> <value>      (overrides the environment, e.g. direct_deploy admins)
+//   node src/cli.ts unset-setting <key>            (back to the environment's value)
 import { randomBytes } from "node:crypto";
 import { text } from "node:stream/consumers";
 import type { MemberRole } from "@platform/shared";
@@ -18,9 +21,11 @@ import { one, platform } from "./db.ts";
 import { initCluster } from "./init.ts";
 import { addMember, removeMember } from "./members.ts";
 import { setPassword } from "./sessions.ts";
+import { getSettings, setSetting, unsetSetting } from "./settings.ts";
 
 const USAGE = "usage: cli.ts init | create-user <email> [admin|developer] [token-name] | delete-user <email> | " +
-  "set-password <email> [--generate] | add-member <slug> <email> [owner|collaborator] | remove-member <slug> <email> | stop-app <slug> | start-app <slug> | delete-app <slug>";
+  "set-password <email> [--generate] | add-member <slug> <email> [owner|collaborator] | remove-member <slug> <email> | stop-app <slug> | start-app <slug> | delete-app <slug> | " +
+  "settings | set-setting <key> <value> | unset-setting <key>";
 
 const [command, ...args] = process.argv.slice(2);
 
@@ -65,6 +70,15 @@ if (command === "init") {
 } else if (command === "delete-app" && args[0]) {
   await deleteApp(args[0]);
   console.log(`app ${args[0]} deleted`);
+} else if (command === "settings") {
+  const settings = await getSettings();
+  console.log(JSON.stringify({ ...settings, oidcJwks: settings.oidcJwks ? "(inline JWKS set: test only)" : null }, null, 2));
+} else if (command === "set-setting" && args[0] && args[1] !== undefined) {
+  await setSetting(args[0], args[1]);
+  console.log(`${args[0]} set`);
+} else if (command === "unset-setting" && args[0]) {
+  await unsetSetting(args[0]);
+  console.log(`${args[0]} unset`);
 } else {
   console.error(USAGE);
   process.exitCode = 1;

@@ -3,7 +3,7 @@ import type { AcceptedLint, LintResult, Migration } from "@platform/shared";
 import type pg from "pg";
 import { type AppRow, appSecrets, dbId, UserError } from "./apps.ts";
 import { audit } from "./audit.ts";
-import type { User } from "./auth.ts";
+import type { Actor, User } from "./auth.ts";
 import { platform, withClient } from "./db.ts";
 
 const MAX_ROWS = 200;
@@ -41,6 +41,8 @@ const isAccepted = (l: LintResult, accepted: AcceptedLint[]) =>
 export interface ApplyOptions {
   dryRun?: boolean;
   acceptLints?: AcceptedLint[];
+  /** Release of the migrations deployment, called only once something was committed. */
+  release?: () => Promise<string | null>;
 }
 
 /**
@@ -48,7 +50,7 @@ export interface ApplyOptions {
  * everything back unless accepted; dry_run always rolls back. ERRORs that already existed before
  * this batch are reported but do not block.
  */
-export async function applyMigrations(user: User, app: AppRow, migrations: Migration[], options: ApplyOptions = {}) {
+export async function applyMigrations(user: Actor, app: AppRow, migrations: Migration[], options: ApplyOptions = {}) {
   const { dryRun = false, acceptLints = [] } = options;
   const sorted = [...migrations].sort((a, b) => a.version.localeCompare(b.version, "en", { numeric: true }));
   const versions = new Set<string>();
@@ -104,7 +106,11 @@ export async function applyMigrations(user: User, app: AppRow, migrations: Migra
     return { status: "dry_run", applied: [], would_apply: pending, skipped, blocking_lints: blocking, lints };
   }
   if (!result.committed) {
-    await audit(user.id, app.id, "apply_migrations_rejected", { would_apply: pending, blocking_lints: blocking });
+    await audit(user.id, app.id, "apply_migrations_rejected", {
+      would_apply: pending,
+      blocking_lints: blocking,
+      ...(user.id ? {} : { actor: user.email }),
+    });
     throw new StructuredUserError(
       `Rolled back: the migrations introduce ${blocking.length} ERROR lint(s), nothing was applied. ` +
         "Fix the migrations, or pass accept_lints only with the user's explicit consent.",
@@ -112,19 +118,27 @@ export async function applyMigrations(user: User, app: AppRow, migrations: Migra
     );
   }
 
+  let releaseId: string | null = null;
   if (pending.length) {
+    releaseId = (await options.release?.()) ?? null;
     const next = await platform.query<{ v: number }>(
       "select coalesce(max(version), 0) + 1 as v from deployments where app_id = $1 and kind = 'migrations'",
       [app.id],
     );
     await platform.query(
-      `insert into deployments (app_id, kind, version, status, created_by, finalized_at, manifest)
-       values ($1, 'migrations', $2, 'live', $3, now(), $4)`,
-      [app.id, next.rows[0].v, user.id, JSON.stringify({ applied: pending, accepted_lints: accepted })],
+      `insert into deployments (app_id, kind, version, status, created_by, finalized_at, manifest, release_id)
+       values ($1, 'migrations', $2, 'live', $3, now(), $4, $5)`,
+      [app.id, next.rows[0].v, user.id, JSON.stringify({ applied: pending, accepted_lints: accepted }), releaseId],
     );
   }
-  await audit(user.id, app.id, "apply_migrations", { applied: pending, skipped, accepted_lints: accepted });
-  return { status: "applied", applied: pending, skipped, accepted_lints: accepted, lints };
+  await audit(user.id, app.id, "apply_migrations", {
+    applied: pending,
+    skipped,
+    accepted_lints: accepted,
+    release_id: releaseId,
+    ...(user.id ? {} : { actor: user.email }),
+  });
+  return { status: "applied", applied: pending, skipped, accepted_lints: accepted, release_id: releaseId, lints };
 }
 
 export async function executeSql(user: User, app: AppRow, sql: string, write: boolean) {

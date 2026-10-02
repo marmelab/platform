@@ -1,12 +1,37 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { toolInputs } from "@platform/shared";
-import { appForUser, appInfo, appsForUser, createApp, deleteAppConfirmed, startApp, stopApp, UserError } from "./apps.ts";
+import {
+  appForUser,
+  appInfo,
+  appsForUser,
+  createApp,
+  deleteAppConfirmed,
+  linkRepo,
+  startApp,
+  stopApp,
+  UserError,
+} from "./apps.ts";
 import type { User } from "./auth.ts";
 import { apiUrl } from "./config.ts";
-import { createDeployment, finalizeDeployment, listDeployments, rollback } from "./deployments.ts";
+import {
+  createDeployment,
+  finalizeDeployment,
+  listDeployments,
+  loadDeployment,
+  rollback,
+  setDeploymentRelease,
+} from "./deployments.ts";
 import { getLogs } from "./logs.ts";
 import { addMember, listMembers, removeMember, requireOwner } from "./members.ts";
+import {
+  beginDirectRelease,
+  directRelease,
+  finishRelease,
+  implicitDirectRelease,
+  releaseForUser,
+  requireDirectDeploy,
+} from "./releases.ts";
 import { listSecrets, setSecrets } from "./secrets.ts";
 import { applyMigrations, executeSql, StructuredUserError } from "./sql.ts";
 
@@ -68,16 +93,23 @@ export function buildMcpServer(user: User): McpServer {
         "by the security linter in the same transaction. If the batch introduces an ERROR lint (table without " +
         "RLS, security definer view...), everything is rolled back and the lints are returned: stop and show " +
         "them to the user. dry_run=true always rolls back. accept_lints commits despite the listed ERRORs " +
-        "(audited): use it only with the user's explicit consent.",
+        "(audited): use it only with the user's explicit consent. Without dry_run this publishes: when the " +
+        "platform reserves direct deployment to admins (DIRECT_DEPLOY=admins), builders get an error and deploy " +
+        "through CI.",
       inputSchema: t.apply_migrations,
     },
-    ({ app, migrations, dry_run, accept_lints }) =>
-      run(async () =>
-        applyMigrations(user, await appForUser(user, app), migrations, {
-          dryRun: dry_run ?? false,
+    ({ app, migrations, dry_run, accept_lints, release_id }) =>
+      run(async () => {
+        const target = await appForUser(user, app);
+        const dryRun = dry_run ?? false;
+        if (!dryRun) await requireDirectDeploy(user);
+        const release = release_id ? await directRelease(target, release_id) : null;
+        return applyMigrations(user, target, migrations, {
+          dryRun,
           acceptLints: accept_lints ?? [],
-        })
-      ),
+          release: async () => release?.id ?? (await implicitDirectRelease(user, target)).id,
+        });
+      }),
   );
 
   server.registerTool(
@@ -95,20 +127,68 @@ export function buildMcpServer(user: User): McpServer {
       description:
         "Start a frontend or functions deployment. Returns a single-use pre-signed upload URL: upload a tar.gz " +
         "with curl (frontend: content of dist/; functions: supabase/functions and optional supabase/config.toml), " +
-        "then call finalize_deployment.",
+        "then call finalize_deployment. Publishing tool: reserved to admins when DIRECT_DEPLOY=admins.",
       inputSchema: t.create_deployment,
     },
-    ({ app, kind }) => run(async () => createDeployment(user, await appForUser(user, app), kind)),
+    ({ app, kind, release_id }) =>
+      run(async () => {
+        const target = await appForUser(user, app);
+        await requireDirectDeploy(user);
+        const release = release_id ? await directRelease(target, release_id) : null;
+        return createDeployment(user, target, kind, release?.id ?? null);
+      }),
   );
 
   server.registerTool(
     "finalize_deployment",
     {
       description: "Verify, extract and publish an uploaded deployment. Functions are booted on the new version " +
-        "first: if one fails to start (BOOT_ERROR), the deployment fails and the live version is unchanged.",
+        "first: if one fails to start (BOOT_ERROR), the deployment fails and the live version is unchanged. " +
+        "Publishing tool: reserved to admins when DIRECT_DEPLOY=admins.",
       inputSchema: t.finalize_deployment,
     },
-    ({ deployment_id }) => run(() => finalizeDeployment(user, deployment_id)),
+    ({ deployment_id }) =>
+      run(async () => {
+        const { deployment, app } = await loadDeployment(user, deployment_id);
+        await requireDirectDeploy(user);
+        if (deployment.release_id) await directRelease(app, deployment.release_id);
+        const result = await finalizeDeployment(user, deployment, app);
+        if (deployment.release_id) return { ...result, release_id: deployment.release_id };
+        const release = await implicitDirectRelease(user, app);
+        await setDeploymentRelease(deployment.id, release.id);
+        return { ...result, release_id: release.id };
+      }),
+  );
+
+  server.registerTool(
+    "begin_release",
+    {
+      description: "Direct deployment (outside CI): open a release that groups the next apply_migrations, " +
+        "create_deployment and finalize_deployment calls (pass its release_id), then finish_release. Without it, " +
+        "each publication is its own release. Reserved to admins when DIRECT_DEPLOY=admins (the audited exception: " +
+        "give a reason).",
+      inputSchema: t.begin_release,
+    },
+    ({ app, commit_sha, reason }) =>
+      run(async () => {
+        const target = await appForUser(user, app);
+        const release = await beginDirectRelease(user, target, { commitSha: commit_sha, reason });
+        return { release_id: release.id, admin_exception: release.admin_exception };
+      }),
+  );
+
+  server.registerTool(
+    "finish_release",
+    { description: "Close a release opened with begin_release", inputSchema: t.finish_release },
+    ({ release_id, status, error }) =>
+      run(async () => {
+        const release = await releaseForUser(user, release_id);
+        await appForUser(user, release.slug).catch(() => {
+          throw new UserError("release not found");
+        });
+        if (release.source !== "direct") throw new UserError("a CI release is finished by its CI run");
+        return finishRelease(user.id, release, status, error);
+      }),
   );
 
   server.registerTool(
@@ -164,6 +244,22 @@ export function buildMcpServer(user: User): McpServer {
         const target = await appForUser(user, app);
         requireOwner(user, target, "manage members");
         return removeMember(user, target, email);
+      }),
+  );
+
+  server.registerTool(
+    "link_repo",
+    {
+      description: "Link the app to its GitHub repository (owner or admin only, audited). CI deployments are then " +
+        "accepted only from this repository (by its numeric id, stable across renames), from its default branch " +
+        "when protected, through a workflow allowed by the platform admin.",
+      inputSchema: t.link_repo,
+    },
+    ({ app, repo, repository_id, default_branch }) =>
+      run(async () => {
+        const target = await appForUser(user, app);
+        requireOwner(user, target, "link the repository");
+        return linkRepo(user, target, repo, repository_id, default_branch);
       }),
   );
 
