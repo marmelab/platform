@@ -6,6 +6,7 @@ Node 24 + TypeScript (run directly, without a build step, thanks to type strippi
 
 ```bash
 deploy/install.sh          # generates deploy/.env, starts the "plat" compose project, initializes the cluster, creates the admin
+deploy/install.sh --seed   # same, then scripts/seed.ts: builders alice and bob, todo-app and notes-app deployed through MCP
 ```
 
 The script is safe to rerun. On the first run it prints the admin's PAT (`admin@example.com`, configurable with `ADMIN_EMAIL=`) and also saves it to **`deploy/.env.local`** (gitignored):

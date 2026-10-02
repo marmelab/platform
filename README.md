@@ -51,6 +51,19 @@ deploy/install.sh
 4. initializes the Postgres cluster (template database, `platform` database);
 5. creates the first admin, and saves their personal access token (`PLATFORM_TOKEN`) and Studio password (`PLATFORM_ADMIN_PASSWORD`) in `deploy/.env.local`.
 
+With `--seed` (or `SEED=1`), `install.sh` then runs [apps/control-plane/scripts/seed.ts](apps/control-plane/scripts/seed.ts), so you can try the platform as an app builder right away:
+
+```bash
+deploy/install.sh --seed
+```
+
+The seed is idempotent and goes through the real API (MCP with each builder's PAT, pre-signed upload, `finalize_deployment`). It:
+1. creates the app builders `alice@example.com` and `bob@example.com` (developer role), resets their Studio password to `alice-password` / `bob-password` (override with `SEED_ALICE_PASSWORD` / `SEED_BOB_PASSWORD`), and issues a PAT for each unless the one saved in `deploy/.env.local` still works;
+2. deploys [examples/todo-app](examples/todo-app) as `todo-app` (owner alice) and again as `notes-app` (owner bob): migrations, the `summary` function, and the frontend built against the app's URL and anon key;
+3. signs up `demo-user@example.com` / `demo-password` in each app's Auth and adds a few todos for them.
+
+On a rerun, existing apps are redeployed (migrations already applied are skipped, new frontend and functions versions) and existing demo rows are kept. The seed never changes memberships or other apps: if a seed slug already belongs to another user, it is skipped with a warning, and the seed warns when a seed builder is also a member of other apps. It prints a summary of the URLs and accounts at the end.
+
 Both files are gitignored. To stop or restart the stack:
 
 ```bash
@@ -73,13 +86,18 @@ docker compose -p plat -f deploy/docker-compose.yml start
 | User | Role | Credentials |
 |---|---|---|
 | `admin@example.com` | admin, sees every app | `PLATFORM_ADMIN_PASSWORD` (Studio) and `PLATFORM_TOKEN` (MCP) in `deploy/.env.local` |
+| `alice@example.com` (seed) | app builder, sees `todo-app` only | `alice-password` (Studio), `SEED_ALICE_TOKEN` (MCP) in `deploy/.env.local` |
+| `bob@example.com` (seed) | app builder, sees `notes-app` only | `bob-password` (Studio), `SEED_BOB_TOKEN` (MCP) in `deploy/.env.local` |
+| `demo-user@example.com` (seed) | app user of `todo-app` and `notes-app`, sees their own todos | `demo-password`, on http://todo-app.localhost:8100 and http://notes-app.localhost:8100 |
 
-To create app builders for manual testing (the CLI runs inside the control plane container):
+The seed passwords are fixed development credentials for the local stack only. Seed accounts are created by `deploy/install.sh --seed`; on a stack where alice or bob were already given other memberships by hand, they also see those apps.
+
+To create other app builders for manual testing (the CLI runs inside the control plane container):
 
 ```bash
-docker exec plat-control-plane node src/cli.ts create-user alice@example.com developer   # prints a PAT
-docker exec plat-control-plane node src/cli.ts set-password alice@example.com --generate  # prints a password
-docker exec plat-control-plane node src/cli.ts add-member <slug> alice@example.com developer
+docker exec plat-control-plane node src/cli.ts create-user carol@example.com developer   # prints a PAT
+docker exec plat-control-plane node src/cli.ts set-password carol@example.com --generate  # prints a password
+docker exec plat-control-plane node src/cli.ts add-member <slug> carol@example.com developer
 ```
 
 An app builder only sees, in Studio and through MCP, the apps they are a member of.
