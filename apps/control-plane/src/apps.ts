@@ -410,17 +410,19 @@ export async function startApp(actor: User | null, app: AppRow) {
 
 /**
  * Symmetric of provision(): routes, containers, database and roles, files, rows. A final backup is taken first
- * (backups.ts); if it fails, nothing is deleted. Audited, with the backup path (audit_log.app_id becomes null when
- * the row goes away: the slug stays in the details).
+ * (backups.ts); if it fails, nothing is deleted. `backup: false` skips it (the data is then lost for good). Audited,
+ * with the backup path, or `backup: null` and `backup_skipped: true` (audit_log.app_id becomes null when the row goes
+ * away: the slug stays in the details).
  */
-export async function deleteApp(actor: User | null, slug: string) {
+export async function deleteApp(actor: User | null, slug: string, { backup: withBackup = true } = {}) {
   const app = await one<AppRow>("select * from apps where slug = $1", [slug]);
-  const backup = await backupApp(slug, app);
+  const backup = withBackup ? await backupApp(slug, app) : null;
   await audit(actor?.id ?? null, app?.id ?? null, "delete_app", {
     slug,
     status: app?.status ?? null,
     backup: backup?.path ?? null,
     backup_files: backup?.files ?? null,
+    backup_skipped: !withBackup,
   });
   await router.removeApp(slug);
   await studio.unregister(slug);
@@ -430,13 +432,13 @@ export async function deleteApp(actor: User | null, slug: string) {
   await rm(join(config.dataDir.sites, slug), { recursive: true, force: true });
   await rm(join(config.dataDir.functions, slug), { recursive: true, force: true });
   await platform.query("delete from apps where slug = $1", [slug]);
-  return { slug, deleted: true, backup: backup?.path ?? null };
+  return { slug, deleted: true, backup: backup?.path ?? null, backup_skipped: !withBackup };
 }
 
 /** B8 through MCP: destructive, so the caller must repeat the slug. */
-export async function deleteAppConfirmed(user: User, app: AppRow, confirm: string) {
+export async function deleteAppConfirmed(user: User, app: AppRow, confirm: string, backup = true) {
   if (confirm !== app.slug) {
     throw new UserError(`deleting "${app.slug}" is irreversible: pass confirm="${app.slug}" with the user's explicit consent`);
   }
-  return deleteApp(user, app.slug);
+  return deleteApp(user, app.slug, { backup });
 }

@@ -115,7 +115,8 @@ export function appDatabaseSql(appId: string): string[] {
 
 /**
  * B8: a stopped app's database is read-only by default for every new session (run in "postgres"). A guardrail, not
- * a security boundary: any session may still opt out with SET or BEGIN READ WRITE (TECH_DEBT CP-9).
+ * a security boundary: any session may still opt out with SET or BEGIN READ WRITE (accepted trade-off, formerly
+ * TECH_DEBT CP-9).
  */
 export function databaseReadOnlySql(appId: string, readOnly: boolean): string {
   const r = appRoles(appId);

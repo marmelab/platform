@@ -8,7 +8,8 @@
 //   node src/cli.ts remove-member <slug> <email>   (idempotent, refuses to remove the last owner)
 //   node src/cli.ts stop-app <slug>            (maintenance page, containers stopped, database read-only)
 //   node src/cli.ts start-app <slug>
-//   node src/cli.ts delete-app <slug>          (final backup first, prints its path; aborted if the backup fails)
+//   node src/cli.ts delete-app <slug> [--no-backup]   (final backup first, prints its path; aborted if the backup
+//                                                     fails; --no-backup skips it: the data is lost for good)
 //   node src/cli.ts settings                       (effective platform settings)
 //   node src/cli.ts set-setting <key> <value>      (overrides the environment, e.g. direct_deploy admins)
 //   node src/cli.ts unset-setting <key>            (back to the environment's value)
@@ -24,7 +25,7 @@ import { setPassword } from "./sessions.ts";
 import { getSettings, setSetting, unsetSetting } from "./settings.ts";
 
 const USAGE = "usage: cli.ts init | create-user <email> [admin|developer] [token-name] | delete-user <email> | " +
-  "set-password <email> [--generate] | add-member <slug> <email> [owner|collaborator] | remove-member <slug> <email> | stop-app <slug> | start-app <slug> | delete-app <slug> | " +
+  "set-password <email> [--generate] | add-member <slug> <email> [owner|collaborator] | remove-member <slug> <email> | stop-app <slug> | start-app <slug> | delete-app <slug> [--no-backup] | " +
   "settings | set-setting <key> <value> | unset-setting <key>";
 
 const [command, ...args] = process.argv.slice(2);
@@ -67,9 +68,13 @@ if (command === "init") {
 } else if (command === "start-app" && args[0]) {
   const { changed } = await startApp(null, await appBySlug(args[0]));
   console.log(changed ? `app ${args[0]} started` : `app ${args[0]} is already running`);
-} else if (command === "delete-app" && args[0]) {
-  const { backup } = await deleteApp(null, args[0]);
-  console.log(backup ? `app ${args[0]} deleted, backup in ${backup}` : `app ${args[0]} deleted (nothing to back up)`);
+} else if (command === "delete-app" && args[0] && args.slice(1).every((a) => a === "--no-backup")) {
+  const { backup, backup_skipped } = await deleteApp(null, args[0], { backup: !args.includes("--no-backup") });
+  console.log(
+    backup ? `app ${args[0]} deleted, backup in ${backup}`
+    : backup_skipped ? `app ${args[0]} deleted, without backup`
+    : `app ${args[0]} deleted (nothing to back up)`,
+  );
 } else if (command === "settings") {
   const settings = await getSettings();
   console.log(JSON.stringify({ ...settings, oidcJwks: settings.oidcJwks ? "(inline JWKS set: test only)" : null }, null, 2));
