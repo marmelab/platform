@@ -278,6 +278,7 @@ export async function createApp(user: User, name: string, requestedSlug?: string
       user.id,
     ]);
   }
+  if (app.status === "stopped") throw new UserError(`app "${slug}" is stopped: use start_app`);
   const started = Date.now();
   await provision(app);
   await audit(user.id, app.id, "create_app", { slug, ms: Date.now() - started });
@@ -286,11 +287,15 @@ export async function createApp(user: User, name: string, requestedSlug?: string
 
 /** Re-applies routes and edge configs for every app (Caddy restarted, volumes recreated...). */
 export async function syncAll() {
-  const apps = await many<AppRow>("select * from apps where status in ('running', 'error')");
+  const apps = await many<AppRow>("select * from apps where status in ('running', 'error', 'stopped')");
   for (const app of apps) {
     try {
       await prepareDirectories(app.slug);
       await writeEdgeConfig(app);
+      if (app.status === "stopped") {
+        await router.maintenanceApp(app.slug, appHost(app.slug));
+        continue;
+      }
       await router.upsertApp({
         slug: app.slug,
         host: appHost(app.slug),
@@ -308,6 +313,26 @@ export async function pathExists(path: string) {
   return stat(path).then(() => true, () => false);
 }
 
+/** B8: maintenance page first (Caddy then serves no static file, API or function), then containers are stopped. */
+export async function stopApp(actor: User | null, app: AppRow) {
+  if (app.status === "stopped") return { slug: app.slug, status: "stopped", changed: false };
+  await router.maintenanceApp(app.slug, appHost(app.slug));
+  await orchestrator.stopApp(app.slug);
+  await platform.query("update apps set status = 'stopped', updated_at = now() where id = $1", [app.id]);
+  await audit(actor?.id ?? null, app.id, "stop_app", { slug: app.slug });
+  return { slug: app.slug, status: "stopped", changed: true };
+}
+
+/** Reverse of stopApp(): provision() is idempotent, restarts the containers and restores the routes. */
+export async function startApp(actor: User | null, app: AppRow) {
+  const changed = app.status !== "running";
+  if (changed) {
+    await provision(app);
+    await audit(actor?.id ?? null, app.id, "start_app", { slug: app.slug, from: app.status });
+  }
+  return { slug: app.slug, status: "running", changed };
+}
+
 /** Symmetric of provision(): routes, containers, database and roles, files, rows. */
 export async function deleteApp(slug: string) {
   await router.removeApp(slug);
@@ -318,4 +343,15 @@ export async function deleteApp(slug: string) {
   await rm(join(config.dataDir.sites, slug), { recursive: true, force: true });
   await rm(join(config.dataDir.functions, slug), { recursive: true, force: true });
   await platform.query("delete from apps where slug = $1", [slug]);
+}
+
+/** B8 through MCP: destructive, so the caller must repeat the slug. The final backup (M7) is not taken yet. */
+export async function deleteAppConfirmed(user: User, app: AppRow, confirm: string) {
+  if (confirm !== app.slug) {
+    throw new UserError(`deleting "${app.slug}" is irreversible: pass confirm="${app.slug}" with the user's explicit consent`);
+  }
+  // audit_log.app_id is set to null when the row goes away: the slug stays in the details
+  await audit(user.id, app.id, "delete_app", { slug: app.slug, status: app.status });
+  await deleteApp(app.slug);
+  return { slug: app.slug, deleted: true };
 }

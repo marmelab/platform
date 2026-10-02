@@ -6,11 +6,13 @@
 //   node src/cli.ts set-password <email> --generate                     -> prints a generated password
 //   node src/cli.ts add-member <slug> <email> [owner|collaborator]
 //   node src/cli.ts remove-member <slug> <email>   (idempotent, refuses to remove the last owner)
+//   node src/cli.ts stop-app <slug>            (maintenance page, containers stopped)
+//   node src/cli.ts start-app <slug>
 //   node src/cli.ts delete-app <slug>
 import { randomBytes } from "node:crypto";
 import { text } from "node:stream/consumers";
 import type { MemberRole } from "@platform/shared";
-import { type AppRow, deleteApp } from "./apps.ts";
+import { type AppRow, deleteApp, startApp, stopApp } from "./apps.ts";
 import { createToken, upsertUser } from "./auth.ts";
 import { one, platform } from "./db.ts";
 import { initCluster } from "./init.ts";
@@ -18,7 +20,7 @@ import { addMember, removeMember } from "./members.ts";
 import { setPassword } from "./sessions.ts";
 
 const USAGE = "usage: cli.ts init | create-user <email> [admin|developer] [token-name] | delete-user <email> | " +
-  "set-password <email> [--generate] | add-member <slug> <email> [owner|collaborator] | remove-member <slug> <email> | delete-app <slug>";
+  "set-password <email> [--generate] | add-member <slug> <email> [owner|collaborator] | remove-member <slug> <email> | stop-app <slug> | start-app <slug> | delete-app <slug>";
 
 const [command, ...args] = process.argv.slice(2);
 
@@ -54,6 +56,12 @@ if (command === "init") {
   const [slug, email] = args;
   const { removed } = await removeMember(null, await appBySlug(slug), email);
   console.log(removed ? `${email} removed from ${slug}` : `${email} is not a member of ${slug}`);
+} else if (command === "stop-app" && args[0]) {
+  const { changed } = await stopApp(null, await appBySlug(args[0]));
+  console.log(changed ? `app ${args[0]} stopped` : `app ${args[0]} is already stopped`);
+} else if (command === "start-app" && args[0]) {
+  const { changed } = await startApp(null, await appBySlug(args[0]));
+  console.log(changed ? `app ${args[0]} started` : `app ${args[0]} is already running`);
 } else if (command === "delete-app" && args[0]) {
   await deleteApp(args[0]);
   console.log(`app ${args[0]} deleted`);

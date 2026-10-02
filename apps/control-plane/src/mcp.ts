@@ -1,7 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { toolInputs } from "@platform/shared";
-import { appForUser, appInfo, appsForUser, createApp, UserError } from "./apps.ts";
+import { appForUser, appInfo, appsForUser, createApp, deleteAppConfirmed, startApp, stopApp, UserError } from "./apps.ts";
 import type { User } from "./auth.ts";
 import { apiUrl } from "./config.ts";
 import { createDeployment, finalizeDeployment, listDeployments, rollback } from "./deployments.ts";
@@ -164,6 +164,47 @@ export function buildMcpServer(user: User): McpServer {
         const target = await appForUser(user, app);
         requireOwner(user, target, "manage members");
         return removeMember(user, target, email);
+      }),
+  );
+
+  server.registerTool(
+    "stop_app",
+    {
+      description: "Stop the app (owner or admin only): its Auth and REST containers are stopped, functions no longer " +
+        "run and every URL of the app answers 503 with a maintenance page. The database and Studio stay available.",
+      inputSchema: t.stop_app,
+    },
+    ({ app }) =>
+      run(async () => {
+        const target = await appForUser(user, app);
+        requireOwner(user, target, "stop the app");
+        return stopApp(user, target);
+      }),
+  );
+
+  server.registerTool(
+    "start_app",
+    { description: "Restart a stopped app (owner or admin only) and restore its routes", inputSchema: t.start_app },
+    ({ app }) =>
+      run(async () => {
+        const target = await appForUser(user, app);
+        requireOwner(user, target, "start the app");
+        return startApp(user, target);
+      }),
+  );
+
+  server.registerTool(
+    "delete_app",
+    {
+      description: "Irreversibly delete the app (owner or admin only): database, users, files, functions, secrets, " +
+        "deployments and members. No backup is taken. Only with the user's explicit consent; confirm must repeat the slug.",
+      inputSchema: t.delete_app,
+    },
+    ({ app, confirm }) =>
+      run(async () => {
+        const target = await appForUser(user, app);
+        requireOwner(user, target, "delete the app");
+        return deleteAppConfirmed(user, target, confirm);
       }),
   );
 

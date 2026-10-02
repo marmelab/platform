@@ -26,6 +26,8 @@ export interface RawLogLine {
 export interface Orchestrator {
   ensure(spec: ServiceSpec): Promise<void>;
   removeApp(app: string): Promise<void>;
+  /** Stops the app's containers without removing them (ensure() restarts them). */
+  stopApp(app: string): Promise<void>;
   status(app: string): Promise<ContainerStatus[]>;
   logs(container: string, sinceSeconds: number, tail: number): Promise<RawLogLine[]>;
   appContainers(app: string): Promise<ContainerStatus[]>;
@@ -103,6 +105,12 @@ export class DockerOrchestrator implements Orchestrator {
   async removeApp(app: string): Promise<void> {
     for (const c of await this.appContainers(app)) {
       await this.docker.getContainer(c.name).remove({ force: true });
+    }
+  }
+
+  async stopApp(app: string): Promise<void> {
+    for (const c of await this.appContainers(app)) {
+      if (c.state === "running" || c.state === "restarting") await this.docker.getContainer(c.name).stop();
     }
   }
 
