@@ -114,7 +114,7 @@ Trigger: project over, or abandoned-app flag.
 3. `delete_app`: symmetric to provisioning.
 
 Channel: Claude Code + MCP (owner), or admin.
-Status: 🟡. The MCP tools `stop_app`, `start_app` and `delete_app` exist, for an owner of the app or an admin, and are audited. `stop_app` stops GoTrue and PostgREST and replaces the app's Caddy routes with a 503 maintenance response (page on `/`, JSON `APP_STOPPED` on `/auth/v1`, `/rest/v1`, `/functions/v1`), so functions no longer run. A stopped app is read-only: its database defaults to read-only transactions (Studio and `execute_sql` still read it, Studio writes fail), and the control plane refuses every write with `APP_STOPPED` (`execute_sql` with `write`, migrations except `dry_run`, secrets, deployments, rollbacks, releases, `link_repo`, the CI API); a guardrail, not a hard guarantee (accepted: a deliberate write by the owner role remains possible, see TECH_DEBT "Accepted trade-offs"). `start_app` makes it writable again and re-runs the idempotent provisioning. `delete_app` requires `confirm: <slug>` and first takes the final backup (step 2): a `pg_dump` of the database and a tarball of the deployed sites and functions, in the platform's `backups` volume; if the backup fails, nothing is deleted; the path is returned and audited. `backup: false` (CLI `--no-backup`) deletes without that backup, same rights and confirmation, when the user explicitly asks: the data is lost for good, and the audit entry records the skipped backup. Admin CLI: `stop-app`, `start-app`, `delete-app [--no-backup]`; admin console: Stop, Start and Delete (typed confirmation, final backup checkbox) on the app page. Restoring a backup, retention and off-site copies (M7, TECH_DEBT CP-14) and the abandoned-app flag are ❌.
+Status: 🟡. The MCP tools `stop_app`, `start_app` and `delete_app` exist, for an owner of the app or an admin, and are audited. `stop_app` stops GoTrue and PostgREST and replaces the app's Caddy routes with a 503 maintenance response (page on `/`, JSON `APP_STOPPED` on `/auth/v1`, `/rest/v1`, `/functions/v1`, `/storage/v1`, `/realtime/v1`), so functions no longer run, uploads are refused and the app's open Realtime websockets are closed (M5). A stopped app is read-only: its database defaults to read-only transactions (Studio and `execute_sql` still read it, Studio writes fail), and the control plane refuses every write with `APP_STOPPED` (`execute_sql` with `write`, migrations except `dry_run`, secrets, deployments, rollbacks, releases, `link_repo`, the CI API); a guardrail, not a hard guarantee (accepted: a deliberate write by the owner role remains possible, see TECH_DEBT "Accepted trade-offs"). `start_app` makes it writable again and re-runs the idempotent provisioning. `delete_app` requires `confirm: <slug>` and first takes the final backup (step 2): a `pg_dump` of the database (with the Storage metadata) and tarballs of the deployed sites and functions and of the app's Storage files (M5), in the platform's `backups` volume; if the backup fails, nothing is deleted; the path is returned and audited. `backup: false` (CLI `--no-backup`) deletes without that backup, same rights and confirmation, when the user explicitly asks: the data is lost for good, and the audit entry records the skipped backup. Admin CLI: `stop-app`, `start-app`, `delete-app [--no-backup]`; admin console: Stop, Start and Delete (typed confirmation, final backup checkbox) on the app page. Restoring a backup, retention and off-site copies (M7, TECH_DEBT CP-14) and the abandoned-app flag are ❌.
 
 ## Admin journeys
 
@@ -219,6 +219,14 @@ Status: ✅.
 ### U4. Password reset
 Email sent through the shared SMTP, then a reset page in the app.
 Status: ❌ M6.
+
+### U5. Files
+Upload, list and download files with `supabase.storage`, restricted by the app's policies on `storage.objects` (e.g. one folder per user); public buckets for public assets.
+Status: 🟡 (M5). Works per app on the shared Storage API (same URL and anon key as the rest of the app; buckets and policies by migration, Studio's Storage browser or the service role in a function), isolated between apps. Missing: per-app quota, image transformations, S3 protocol, backups of running apps (TECH_DEBT SR-3).
+
+### U6. Live updates
+`supabase.channel(...)`: `postgres_changes` on the app's tables (added to the `supabase_realtime` publication by a migration, filtered by RLS), broadcast and presence between clients.
+Status: 🟡 (M5). Works per app on the shared Realtime, isolated between apps. Broadcast from Database (`realtime.send()`, `realtime.broadcast_changes()`) works for one app at a time only (TECH_DEBT SR-1).
 
 ## Open questions
 
