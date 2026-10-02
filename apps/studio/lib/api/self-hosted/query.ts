@@ -2,10 +2,10 @@ import * as Sentry from '@sentry/nextjs'
 
 import { constructHeaders } from '../apiHelpers'
 import { databaseErrorSchema, PgMetaDatabaseError, WrappedResult } from './types'
-import { assertSelfHosted, encryptString } from './util'
+import { assertSelfHosted } from './util'
 import { getStoredProjectByRef } from './projectsStore'
 import { PG_META_URL } from '@/lib/constants/index'
-import { getPgMetaProxyConfig } from './pgMetaProxy'
+import { externalConnectionHeaders, getPgMetaProxyConfig } from './pgMetaProxy'
 
 export type QueryOptions = {
   query: string
@@ -74,8 +74,7 @@ export async function executeQuery<T = unknown>({
       } else if (project.db_host) {
         // Legacy manual-connection project: use default pg-meta with an encrypted
         // connection string header pointing at the user-supplied host/port.
-        const connStr = `postgresql://${project.db_user || 'postgres'}:${project.db_password}@${project.db_host}:${project.db_port ?? 5432}/${project.db_name || 'postgres'}`
-        connectionHeaders = { 'x-connection-encrypted': encryptString(connStr) }
+        connectionHeaders = externalConnectionHeaders(project)
       }
     }
     // If project not found, fall through — pgMetaBase stays as PG_META_URL (default DB)

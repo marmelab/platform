@@ -1,5 +1,6 @@
 import { PG_META_URL } from '@/lib/constants'
-import { getStoredProjectByRef } from './projectsStore'
+import { getStoredProjectByRef, type StoredProject } from './projectsStore'
+import { encryptString } from './util'
 
 export interface PgMetaProxyConfig {
   /** pg-meta base URL to call (e.g. "http://localhost:8020/pg") */
@@ -22,6 +23,12 @@ export interface PgMetaProxyConfig {
  *
  * Default and legacy projects fall through to the shared PG_META_URL.
  */
+/** x-connection-encrypted header for projects reached through the shared pg-meta (external mode, db_host set). */
+export function externalConnectionHeaders(project: StoredProject): Record<string, string> {
+  const connStr = `postgresql://${project.db_user || 'postgres'}:${project.db_password}@${project.db_host}:${project.db_port ?? 5432}/${project.db_name || 'postgres'}`
+  return { 'x-connection-encrypted': encryptString(connStr) }
+}
+
 export function getPgMetaProxyConfig(ref: string | undefined): PgMetaProxyConfig {
   if (ref && ref !== 'default') {
     const project = getStoredProjectByRef(ref)
@@ -33,6 +40,9 @@ export function getPgMetaProxyConfig(ref: string | undefined): PgMetaProxyConfig
           Authorization: `Bearer ${project.service_key}`,
         },
       }
+    }
+    if (project?.db_host) {
+      return { pgMetaBase: PG_META_URL as string, projectHeaders: externalConnectionHeaders(project) }
     }
   }
   return { pgMetaBase: PG_META_URL as string, projectHeaders: null }
