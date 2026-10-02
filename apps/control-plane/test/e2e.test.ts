@@ -20,10 +20,13 @@ const env = Object.fromEntries(
     .map((line) => [line.slice(0, line.indexOf("=")), line.slice(line.indexOf("=") + 1)]),
 );
 const MCP_URL = env.PLATFORM_URL ?? "http://api.localhost:8100/mcp";
+const ADMIN_EMAIL = env.PLATFORM_ADMIN_EMAIL ?? "admin@example.com";
 const APP = `e2e-${runId()}`;
 const APP_URL = `http://${APP}.localhost:8100`;
 const RUN = Date.now();
 const OUTSIDER = `${APP}-outsider@example.com`;
+const OWNER = `${APP}-owner@example.com`;
+const COLLAB = `${APP}-collab@example.com`;
 const NPM_CACHE = "/deno-cache/npm/registry.npmjs.org";
 const work = mkdtempSync(join(tmpdir(), "plat-e2e-"));
 
@@ -82,6 +85,8 @@ const sqlLiteral = (value: string) => `'${value.replaceAll("'", "''")}'`;
 
 describe("control plane M2 e2e", () => {
   let admin: Client;
+  let owner: Client;
+  let collab: Client;
   let app: any;
 
   before(async () => {
@@ -89,13 +94,13 @@ describe("control plane M2 e2e", () => {
   });
 
   after(async () => {
-    await admin?.close();
-    await cleanup([APP], [OUTSIDER]);
+    for (const client of [admin, owner, collab]) await client?.close();
+    await cleanup([APP], [OUTSIDER, OWNER, COLLAB]);
   });
 
   test("1. whoami", async () => {
     const me = await call(admin, "whoami");
-    assert.equal(me.email, env.PLATFORM_ADMIN_EMAIL ?? "admin@example.com");
+    assert.equal(me.email, ADMIN_EMAIL);
     assert.equal(me.role, "admin");
     const tools = (await admin.listTools()).tools.map((t) => t.name).sort();
     for (const name of ["apply_migrations", "create_app", "create_deployment", "execute_sql", "finalize_deployment",
@@ -478,5 +483,39 @@ describe("control plane M2 e2e", () => {
     } finally {
       await outsider.close();
     }
+  });
+
+  const refused = async (client: Client, name: string, args: Record<string, unknown>, pattern: RegExp) => {
+    const result = await callRaw(client, name, args);
+    assert.equal(result.isError, true, `${name} should be refused: ${result.content[0]?.text}`);
+    assert.match(result.content[0]!.text, pattern);
+  };
+
+  test("10. members: owner, collaborator and admin rights", async () => {
+    owner = await connect(cli(["create-user", OWNER, "developer"]).trim());
+    collab = await connect(cli(["create-user", COLLAB, "developer"]).trim());
+    await refused(admin, "add_member", { app: APP, email: `${APP}-nobody@example.com` }, /an admin must create it/);
+    await call(admin, "add_member", { app: APP, email: OWNER, role: "owner" });
+    const members = await call(owner, "add_member", { app: APP, email: COLLAB });
+    assert.deepEqual(
+      members.map((m: { email: string; role: string }) => `${m.role}:${m.email}`).sort(),
+      [`owner:${ADMIN_EMAIL}`, `owner:${OWNER}`, `collaborator:${COLLAB}`].sort(),
+    );
+    assert.equal((await call(collab, "whoami")).apps.find((a: { slug: string }) => a.slug === APP).role, "collaborator");
+    assert.equal((await call(collab, "list_members", { app: APP })).length, 3);
+
+    await refused(collab, "add_member", { app: APP, email: OUTSIDER }, /only an owner/);
+    await refused(collab, "remove_member", { app: APP, email: OWNER }, /only an owner/);
+    const deployment = await call(collab, "create_deployment", { app: APP, kind: "frontend" });
+    assert.match(deployment.upload_url, /\/uploads\//);
+
+    await call(owner, "remove_member", { app: APP, email: ADMIN_EMAIL });
+    await refused(owner, "remove_member", { app: APP, email: OWNER }, /last owner/);
+    await refused(owner, "add_member", { app: APP, email: OWNER, role: "collaborator" }, /last owner/);
+    await refused(admin, "remove_member", { app: APP, email: OWNER }, /last owner/);
+    await call(admin, "add_member", { app: APP, email: ADMIN_EMAIL, role: "owner" });
+    const audited = psql(`select count(*) from audit_log l join apps a on a.id = l.app_id
+      where a.slug = '${APP}' and l.action in ('add_member', 'remove_member')`);
+    assert.equal(audited, "4");
   });
 });

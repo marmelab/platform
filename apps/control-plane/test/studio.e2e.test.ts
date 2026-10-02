@@ -28,10 +28,10 @@ const A = `e2e-${ID}-a`;
 const B = `e2e-${ID}-b`;
 const dbId = (slug: string) => slug.replace(/-/g, "_");
 
-async function connect() {
+async function connect(token = local.PLATFORM_TOKEN) {
   const client = new Client({ name: "studio-e2e", version: "0.0.0" });
   await client.connect(new StreamableHTTPClientTransport(new URL(local.PLATFORM_URL ?? "http://api.localhost:8100/mcp"), {
-    requestInit: { headers: { Authorization: `Bearer ${local.PLATFORM_TOKEN}` } },
+    requestInit: { headers: { Authorization: `Bearer ${token}` } },
   }));
   return client;
 }
@@ -98,8 +98,8 @@ const projectRefs = async (cookie: string) => {
 
 describe("Studio for app builders", () => {
   const users = {
-    alice: { email: `e2e-${ID}-alice@example.com`, password: randomBytes(18).toString("base64url"), app: A },
-    bob: { email: `e2e-${ID}-bob@example.com`, password: randomBytes(18).toString("base64url"), app: B },
+    alice: { email: `e2e-${ID}-alice@example.com`, password: randomBytes(18).toString("base64url"), app: A, token: "" },
+    bob: { email: `e2e-${ID}-bob@example.com`, password: randomBytes(18).toString("base64url"), app: B, token: "" },
   };
   let alice = "";
   let bob = "";
@@ -125,7 +125,7 @@ describe("Studio for app builders", () => {
       await client.close();
     }
     for (const user of Object.values(users)) {
-      cli(["create-user", user.email, "developer", "studio-e2e"]);
+      user.token = cli(["create-user", user.email, "developer", "studio-e2e"]).trim();
       cli(["set-password", user.email], user.password);
       cli(["add-member", user.app, user.email, "collaborator"]);
     }
@@ -183,6 +183,24 @@ describe("Studio for app builders", () => {
     assert.deepEqual(await projectRefs(bob), [B]);
     assert.equal((await sql(bob, A, "select 1")).status, 403);
     assert.throws(() => cli(["remove-member", A, local.PLATFORM_ADMIN_EMAIL!]), /last owner/);
+  });
+
+  test("2c. MCP add_member and remove_member apply at once to Studio and whoami", async () => {
+    const owner = await connect();
+    const bobClient = await connect(users.bob.token);
+    try {
+      const bobApps = async () => (await tool(bobClient, "whoami", {})).apps.map((a: { slug: string; role: string }) => `${a.slug}:${a.role}`).sort();
+      await tool(owner, "add_member", { app: A, email: users.bob.email, role: "collaborator" });
+      assert.deepEqual(await projectRefs(bob), [A, B].sort());
+      assert.deepEqual(await bobApps(), [`${A}:collaborator`, `${B}:collaborator`].sort());
+      const { removed } = await tool(owner, "remove_member", { app: A, email: users.bob.email });
+      assert.equal(removed, true);
+      assert.deepEqual(await projectRefs(bob), [B]);
+      assert.deepEqual(await bobApps(), [`${B}:collaborator`]);
+    } finally {
+      await bobClient.close();
+      await owner.close();
+    }
   });
 
   test("3. alice queries her app through pg-meta (own database, owner role)", async () => {

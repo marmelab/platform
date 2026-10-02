@@ -6,6 +6,7 @@ import type { User } from "./auth.ts";
 import { apiUrl } from "./config.ts";
 import { createDeployment, finalizeDeployment, listDeployments, rollback } from "./deployments.ts";
 import { getLogs } from "./logs.ts";
+import { addMember, listMembers, removeMember, requireOwner } from "./members.ts";
 import { listSecrets, setSecrets } from "./secrets.ts";
 import { applyMigrations, executeSql, StructuredUserError } from "./sql.ts";
 
@@ -132,6 +133,38 @@ export function buildMcpServer(user: User): McpServer {
     "list_secrets",
     { description: "Names of the edge function secrets (values are never returned)", inputSchema: t.list_secrets },
     ({ app }) => run(async () => listSecrets(await appForUser(user, app))),
+  );
+
+  server.registerTool(
+    "list_members",
+    { description: "Members of the app (platform accounts) and their role: owner or collaborator", inputSchema: t.list_members },
+    ({ app }) => run(async () => listMembers(await appForUser(user, app))),
+  );
+
+  server.registerTool(
+    "add_member",
+    {
+      description: "Add a platform user to the app, or change their role (owner or admin only). The account must " +
+        "already exist on the platform: only an admin can create it.",
+      inputSchema: t.add_member,
+    },
+    ({ app, email, role }) =>
+      run(async () => {
+        const target = await appForUser(user, app);
+        requireOwner(user, target, "manage members");
+        return addMember(user, target, email, role ?? "collaborator");
+      }),
+  );
+
+  server.registerTool(
+    "remove_member",
+    { description: "Remove a member from the app (owner or admin only). The last owner cannot be removed.", inputSchema: t.remove_member },
+    ({ app, email }) =>
+      run(async () => {
+        const target = await appForUser(user, app);
+        requireOwner(user, target, "manage members");
+        return removeMember(user, target, email);
+      }),
   );
 
   server.registerTool(
