@@ -405,7 +405,7 @@ describe("Studio for app builders", () => {
       assert.ok(change, JSON.stringify(changes));
       assert.equal(change.role, `app_${A.replace(/-/g, "_")}_owner`);
       assert.equal(change.in_release, false);
-      assert.notEqual(change.application_name, "platform-migrations");
+      assert.match(change.application_name, /^postgres-meta/);
     } finally {
       await client.close();
     }

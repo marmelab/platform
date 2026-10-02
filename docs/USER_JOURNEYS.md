@@ -58,7 +58,7 @@ Trigger: "deploy the app to the platform" in a Vite + Supabase repo.
 7. The skill shows the URL, the Studio link and the run link. On failure, it reads the run logs and `get_logs`, then proposes a fix (B3).
 
 Channel: Claude Code + MCP + GitHub.
-Status: 🟡. Direct deployment from the builder's machine works (✅ M3, about 45 s), and stays the path when `DIRECT_DEPLOY=everyone`. Control plane side ✅ (M3bis): `link_repo` (owner or admin, audited, shown by `get_app`), the CI API `/ci/*` authenticated by GitHub OIDC (linked `repository_id`, protected default branch, allowed `job_workflow_ref`; check mode for other refs), releases with commit, run URL and GitHub actor, and `DIRECT_DEPLOY=admins` refusing the publishing tools to builder PATs. Deploy CLI and reusable workflow ✅ (M3bis): `platform-deploy` (`packages/deploy-cli`) runs check and deploy with a GitHub OIDC token or a PAT, and `ci/.github/workflows/deploy.yml` calls it after a placeholder company checks job; tested end to end without GitHub (fake OIDC issuer and token endpoint), never run on GitHub yet. Missing ❌: the new `deploy` skill (repo, `link_repo`, secrets, workflow file, push and `gh run watch`). The quota is not enforced yet ❌.
+Status: 🟡. Direct deployment from the builder's machine works and stays available when `whoami` says `direct_deploy: true` (`DIRECT_DEPLOY=everyone`, or an admin): the `deploy` skill then runs `platform-deploy` with the builder's PAT (verified with Claude Code and the installed plugin on a copy of `examples/todo-app`, about 30 s). Control plane side ✅ (M3bis): `link_repo` (owner or admin, audited, shown by `get_app`), the CI API `/ci/*` authenticated by GitHub OIDC (linked `repository_id`, protected default branch, allowed `job_workflow_ref`; check mode for other refs), releases with commit, run URL and GitHub actor, and `DIRECT_DEPLOY=admins` refusing the publishing tools to builder PATs. Deploy CLI and reusable workflow ✅ (M3bis): `platform-deploy` (`packages/deploy-cli`) runs check and deploy with a GitHub OIDC token or a PAT, and `ci/.github/workflows/deploy.yml` calls it after a placeholder company checks job; tested end to end without GitHub (fake OIDC issuer and token endpoint), never run on GitHub yet. The `deploy` skill ✅ (M3bis) chooses the path from `whoami` (`direct_deploy`, and `ci`: the reusable workflow to call and the company organization, derived from `CI_ALLOWED_WORKFLOWS`) and the repository: CI path with `gh repo create`, `link_repo`, branch protection check, `PLATFORM_URL` variable, function secrets, `.github/workflows/platform.yml` from the example caller, `platform-deploy check` for the migrations and lints review, PR and `gh run watch`; direct path with `platform-deploy deploy`. Its scripts and the direct path are tested locally (`plugin/test/scripts.test.sh`, `test/plugin.e2e.test.ts`); the CI path has never run against GitHub ❌ (TECH_DEBT PLG-4, CI-1). The quota is not enforced yet ❌.
 
 ### B3. Iteration
 Trigger: the builder changes the schema, the functions or the frontend.
@@ -68,7 +68,7 @@ Trigger: the builder changes the schema, the functions or the frontend.
 4. `rollback` of the frontend or the functions if needed, through MCP: it only re-points to a version that CI already deployed. Migrations are never rolled back; a fix goes through a new migration.
 
 Channel: Claude Code + GitHub, MCP for rollback.
-Status: 🟡. The control plane accepts PR checks (check mode: `get_app` and migrations `dry_run`) and CI deployments from the protected default branch (see B2). The deploy CLI and the reusable workflow run the PR check (company checks placeholder, migrations dry run with the lints and `acceptedLints`, build) and report it in the run summary. Missing: the PR comment with the lints (the run summary only), `list_migrations` and a bundle hash (unchanged functions are redeployed). A migration that contains its own `COMMIT` escapes the rollback (CP-1).
+Status: 🟡. The control plane accepts PR checks (check mode: `get_app` and migrations `dry_run`) and CI deployments from the protected default branch (see B2). The `deploy` skill opens the PR and watches its check, and only adds a lint to `acceptedLints` with explicit consent (CI path untested on GitHub). The deploy CLI and the reusable workflow run the PR check (company checks placeholder, migrations dry run with the lints and `acceptedLints`, build) and report it in the run summary. Missing: the PR comment with the lints (the run summary only), `list_migrations` and a bundle hash (unchanged functions are redeployed). A migration that contains its own `COMMIT` escapes the rollback (CP-1).
 
 ### B4. Debugging in production
 Trigger: a user reports a bug, or an alert comes in.
@@ -78,7 +78,7 @@ Trigger: a user reports a bug, or an alert comes in.
 4. Optionally, inspection in Studio (tables, SQL, RLS).
 
 Channel: Claude Code + MCP, and Studio.
-Status: 🟡. `get_logs` reads Docker logs with no history (Loki is not done). Studio is ✅ (M0ter). Alerts are ❌.
+Status: 🟡. `get_logs` reads Docker logs with no history (Loki is not done). Studio is ✅ (M0ter). A fix made in Studio or with `execute_sql(write=true)` that changes the schema is recorded by the DDL event trigger: `get_app` shows `schema_drift` and `list_schema_changes` lists the changes, so that the builder turns them into a migration ✅. Alerts are ❌.
 
 ### B5. Managing the app's users
 Trigger: invite, delete or unblock an account, count sign-ups.
@@ -191,7 +191,7 @@ Trigger: the admin wants to know what runs on the platform, and who is responsib
 Channel: admin.
 Flags: deployed outside CI (A10), accepted lints, schema changed outside CI, abandoned.
 
-Status: ❌ M4. Status, owner, linked repo, releases (commit, run, author, source, admin exception) and their deployments already exist in the `platform` database; missing: the DDL event trigger, per-app metrics (Caddy per-host metrics, `pg_database_size`, Docker stats sampled by the control plane).
+Status: ❌ M4. Status, owner, linked repo, releases (commit, run, author, source, admin exception) and their deployments already exist in the `platform` database, and so does the data of the "schema changed outside CI" flag: the DDL event trigger records every schema change in the app database (`_platform.schema_changes`), and `get_app` returns `schema_drift` (changes outside releases since the last succeeded release; `list_schema_changes` for the details). Missing: the admin view itself, and per-app metrics (Caddy per-host metrics, `pg_database_size`, Docker stats sampled by the control plane).
 
 ### A10. Direct deployment (exception)
 Trigger: an emergency fix while CI is broken, an app whose repo cannot run CI, or a takeover (A5).
@@ -200,7 +200,7 @@ Trigger: an emergency fix while CI is broken, an app whose repo cannot run CI, o
 3. The deployment is audited and the app is flagged "deployed outside CI" in A9 until the next CI deployment.
 
 Channel: Claude Code + MCP (admin only).
-Status: 🟡. Control plane ✅: with `DIRECT_DEPLOY=admins`, only admins publish with a PAT; `begin_release(reason)` groups the publications, and the release is recorded as `source = direct`, `admin_exception = true`, with the reason and the admin, and audited. The deploy CLI ✅ runs a direct deployment with the admin's PAT (`--reason`, commit of the checkout; it only flags uncommitted changes in its summary). Missing ❌: the `admin-deploy` skill (dirty tree and unpushed commit checks), and the flag in the admin view (M4).
+Status: 🟡. Control plane ✅: with `DIRECT_DEPLOY=admins`, only admins publish with a PAT; `begin_release(reason)` groups the publications, and the release is recorded as `source = direct`, `admin_exception = true`, with the reason and the admin, and audited. The deploy CLI ✅ runs a direct deployment with the admin's PAT (`--reason`, commit of the checkout; it only flags uncommitted changes in its summary). The `admin-deploy` skill ✅ checks the admin role, asks for the reason, refuses a dirty tree (untracked files included), a commit that is not on the remote or a checkout of another repository than the linked one (`preflight.sh`), then runs `platform-deploy deploy --reason` (verified with Claude Code: refused without a remote, then deployed). Missing ❌: the flag in the admin view (M4).
 
 ## App user journeys
 

@@ -201,8 +201,9 @@ Chaque étape doit être idempotente, avec reprise sur erreur et une opération 
 
 | Outil | Description |
 |---|---|
-| `whoami` | Utilisateur, apps accessibles |
-| `list_apps` / `get_app` | Statut, URL, `SUPABASE_URL`, anon key, dernière version |
+| `whoami` | Utilisateur, apps accessibles, `direct_deploy` (cet utilisateur peut-il publier avec son PAT) et `ci` (le `uses:` du workflow réutilisable à appeler et l'organisation GitHub de l'entreprise, déduits de `CI_ALLOWED_WORKFLOWS`) |
+| `list_apps` / `get_app` | Statut, URL, `SUPABASE_URL`, anon key, dernière version ; `get_app` renvoie aussi `schema_drift` (changements de schéma hors release depuis la dernière release réussie, §7) |
+| `list_schema_changes(app, all?)` | Changements de schéma enregistrés par l'event trigger DDL : hors release par défaut, tous avec `all` |
 | `create_app(name)` | Provisioning (§4.2) |
 | `link_repo(app, repo, repository_id, default_branch)` | Lie l'app à son repo GitHub (propriétaire de l'app ; changement audité) |
 | `apply_migrations(app, migrations[], dry_run?, release_id?)` | Contenu SQL des fichiers `supabase/migrations/*`. N'applique que les nouvelles, dans une transaction. Lance ensuite le **linter de sécurité** (§7) et renvoie ses alertes. Avec `DIRECT_DEPLOY=admins`, un builder n'a que le `dry_run` ; l'application réelle passe par la CI (§5.1) |
@@ -240,7 +241,8 @@ Chaque étape doit être idempotente, avec reprise sur erreur et une opération 
 plugin/
   .claude-plugin/plugin.json
   .mcp.json                     # url: https://api.<domaine>/mcp, headers: Authorization: Bearer ${PLATFORM_TOKEN}
-  skills/deploy/SKILL.md        # mise en place de la CI, puis push et suivi du run
+  deploy-cli -> ../packages/deploy-cli/src   # platform-deploy livré dans le plugin (lien symbolique résolu à l'installation)
+  skills/deploy/SKILL.md        # mise en place de la CI, puis push et suivi du run ; déploiement direct si autorisé
   skills/admin-deploy/SKILL.md  # déploiement direct, admins seulement (§6.3)
 ci/
   .github/workflows/deploy.yml  # workflow réutilisable maintenu par l'admin (§6.2)
@@ -251,7 +253,7 @@ Le plugin et le workflow réutilisable sont publiés dans le **même repo intern
 
 ### 6.1 Skill `deploy` (builder)
 
-« Déploie l'app sur la plateforme » ne déploie plus depuis le poste : la skill vérifie et installe ce qui manque, puis laisse la CI publier.
+« Déploie l'app sur la plateforme » passe par la CI dès qu'elle est possible : la skill vérifie et installe ce qui manque, puis laisse la CI publier. Le déploiement direct depuis le poste (`platform-deploy` avec le PAT) reste disponible quand `whoami` renvoie `direct_deploy: true` (`DIRECT_DEPLOY=everyone`, ou un admin), s'il n'y a ni repo ni CI ou si l'utilisateur le demande.
 
 1. Lire `.platform.json` à la racine du repo (id de l'app, `acceptedLints`). S'il est absent, `create_app` puis écriture du fichier.
 2. Vérifier que le projet est une SPA (Vite) et localiser `supabase/migrations` et `supabase/functions`.
@@ -260,6 +262,8 @@ Le plugin et le workflow réutilisable sont publiés dans le **même repo intern
 5. CI, seulement si absent : `.github/workflows/platform.yml` qui appelle le workflow réutilisable sur `push` (branche par défaut) et `pull_request`, avec `id-token: write` ; variable `PLATFORM_URL` au niveau du repo si elle n'existe pas au niveau de l'organisation.
 6. Revue préalable des nouvelles migrations, et `apply_migrations` en `dry_run` : remonter les lints, **stopper si des tables sont exposées sans RLS**. Ajouter un lint à `acceptedLints` seulement avec le consentement explicite de l'utilisateur.
 7. Commit et push (ou PR si la branche par défaut est protégée), puis `gh run watch`. Afficher l'URL de l'app, le lien Studio et le lien du run. En cas d'échec : logs du run (`gh run view --log-failed`), `get_logs`, diagnostic.
+
+Choix du chemin : CI si `whoami.ci` existe et que le projet a (ou que l'utilisateur veut) un repo dans `ci.github_org` ; direct si `direct_deploy` et pas de repo ni de CI, ou sur demande explicite ; sinon, explication et arrêt. La revue des migrations (étape 6) passe dans les deux cas par `platform-deploy check` avec le PAT (le `dry_run` reste ouvert aux builders). La branche par défaut doit être protégée pour que la CI publie : la skill le vérifie et propose une protection minimale (PR obligatoire). Le workflow appelant est écrit à partir de `ci/examples/platform.yml` (livré dans le plugin) avec le `uses:` de `whoami.ci`.
 
 Distribution : un marketplace de plugins interne au client (repo Git), installé en une commande. L'admin fournit le token et le dev le place dans `PLATFORM_TOKEN`. Le dev a aussi besoin du CLI `gh` connecté.
 
@@ -281,19 +285,19 @@ Les revues obligatoires et les checks requis restent configurés par le client s
 Le réglage plateforme **`DIRECT_DEPLOY`** (env du control plane, modifiable à chaud par la CLI `set-setting`) décide qui peut publier avec un PAT :
 
 - `admins` (**à utiliser en production**, valeur par défaut si absent) : seuls les admins publient en direct, et chaque release directe d'un admin est marquée `admin_exception` (l'exception auditée ci-dessous) ;
-- `everyone` : tout membre de l'app publie avec son PAT, comme en M3. `install.sh` l'écrit dans `deploy/.env` pour une installation locale : les tests e2e, le seed et la skill `deploy` actuelle tournent sans GitHub.
+- `everyone` : tout membre de l'app publie avec son PAT, comme en M3. `install.sh` l'écrit dans `deploy/.env` pour une installation locale : les tests e2e, le seed et le chemin direct de la skill `deploy` tournent sans GitHub.
 
 Skill `admin-deploy`, pour une urgence (CI en panne), une app sans CI ou une reprise d'app (A5) :
 
 - réservée aux PAT d'admin quand `DIRECT_DEPLOY=admins` ; demande une **raison** (`begin_release`) ;
-- lance le même `platform-deploy` que la CI, depuis un checkout local du repo lié ; refuse un arbre modifié ou un commit absent du repo distant ;
+- lance le même `platform-deploy` que la CI, depuis un checkout local du repo lié ; refuse un arbre modifié (fichiers non suivis compris), un commit absent du repo distant ou un checkout d'un autre repo que le repo lié (`preflight.sh`) ;
 - crée une `release` `source = direct` (`admin_exception`, raison, compte de l'admin), auditée ; l'app est signalée « déployée hors CI » dans l'admin jusqu'au prochain déploiement par la CI.
 
 ## 7. Garde-fous de sécurité
 
 - **CI comme seul chemin de publication** (avec `DIRECT_DEPLOY=admins`, hors exception admin) : contrôles de sécurité de l'entreprise et revue de code avant tout déploiement, garantis par les claims OIDC (`repository_id`, `ref_protected`, `job_workflow_ref`, §5.1). Le code déployé est toujours un commit du repo lié, consultable par l'admin sur GitHub.
 - **Linter** après chaque `apply_migrations` : tables du schéma `public` sans RLS, policies `USING (true)` sur des tables sensibles, fonctions `SECURITY DEFINER` exposées, etc. On s'appuie sur **splinter**, le linter open source de Supabase. Résultat visible dans le retour MCP, sur la PR et dans l'admin.
-- **Changements de schéma hors CI : acceptés et détectés.** L'éditeur SQL de Studio et `execute_sql(write=true)` agissent avec le rôle owner et peuvent modifier le schéma hors CI. On les garde (corrections de données, urgences), mais un event trigger DDL (dans `template_supabase`) journalise tout changement fait hors d'une release, et l'app est signalée dans l'admin.
+- **Changements de schéma hors CI : acceptés et détectés.** L'éditeur SQL de Studio et `execute_sql(write=true)` agissent avec le rôle owner et peuvent modifier le schéma hors CI. On les garde (corrections de données, urgences), mais un event trigger DDL (dans `template_supabase`) journalise tout changement fait hors d'une release, et l'app est signalée dans l'admin. Mise en œuvre : event triggers `ddl_command_end` et `sql_drop` (fonctions `SECURITY DEFINER` de `supabase_admin`, schéma `_platform` non exposé, rôles de l'app sans aucun droit dessus) qui enregistrent commande, objet, rôle de session, `application_name` et identifiant de transaction ; les sessions de `supabase_admin` (provisioning) et de GoTrue (`app_<id>_auth_admin`) sont ignorées. Le control plane note l'identifiant de transaction de chaque lot de migrations qu'il valide : un changement dont la transaction n'en fait pas partie est « hors release » (non falsifiable par l'app, contrairement à un GUC de session). Appliqué à chaque démarrage du control plane au template et aux apps existantes. `get_app.schema_drift` compte les changements hors release depuis la dernière release réussie, `list_schema_changes` les détaille.
 - La clé `service_role` n'est jamais renvoyée par `get_app` (seulement injectée dans les edge functions).
 - `execute_sql` en écriture : flag explicite et journalisation dans `audit_log`.
 - Isolation réseau : seuls Caddy et le control plane sont exposés, les conteneurs d'app sont sur un réseau interne.
@@ -355,7 +359,7 @@ examples/todo-app/    # app de test end-to-end (Vite + supabase-js + 1 edge func
 | M1 | **Spike Edge Functions multi-tenant** | Main worker qui route 2 apps, env isolées, `verify_jwt`, import `npm:` |
 | M2 | **Control plane + MCP minimal** | `create_app`, `get_app`, `apply_migrations`, `create/finalize_deployment` (front + fonctions), `get_logs` |
 | M3 | **Plugin Claude Code** | Sur `examples/todo-app`, « déploie l'app sur la plateforme » fonctionne de bout en bout depuis un repo vierge (déploiement direct depuis le poste, remplacé par M3bis) |
-| M3bis | **Déploiement par la CI** | OIDC GitHub vérifié par le control plane (repo, branche protégée, workflow autorisé), `platform-deploy`, workflow réutilisable (modes check et deploy), skill `deploy` réécrite (repo, `link_repo`, secrets, workflow), skill `admin-deploy`, releases avec commit et run, event trigger DDL qui signale les changements de schéma hors release ; outils de publication retirés aux PAT de builder quand `DIRECT_DEPLOY=admins`. Volet control plane fait (OIDC, `link_repo`, releases, API `/ci/*`, `DIRECT_DEPLOY`). `platform-deploy` (`packages/deploy-cli`, modes OIDC et PAT) et workflow réutilisable (`ci/`) faits, testés de bout en bout sans GitHub (émetteur OIDC simulé) ; reste : un vrai run GitHub Actions, les skills `deploy` et `admin-deploy`, l'event trigger DDL. Critère : sur `examples/todo-app`, « déploie l'app sur la plateforme » depuis un repo vierge aboutit à un déploiement par GitHub Actions, et un push d'un workflow modifié pour sauter les contrôles est refusé |
+| M3bis | **Déploiement par la CI** | OIDC GitHub vérifié par le control plane (repo, branche protégée, workflow autorisé), `platform-deploy`, workflow réutilisable (modes check et deploy), skill `deploy` réécrite (repo, `link_repo`, secrets, workflow), skill `admin-deploy`, releases avec commit et run, event trigger DDL qui signale les changements de schéma hors release ; outils de publication retirés aux PAT de builder quand `DIRECT_DEPLOY=admins`. Volet control plane fait (OIDC, `link_repo`, releases, API `/ci/*`, `DIRECT_DEPLOY`). `platform-deploy` (`packages/deploy-cli`, modes OIDC et PAT) et workflow réutilisable (`ci/`) faits, testés de bout en bout sans GitHub (émetteur OIDC simulé). Event trigger DDL fait (e2e : `execute_sql` et Studio signalés, migrations et démarrage de GoTrue non). Skills `deploy` (chemins CI et direct) et `admin-deploy` écrites ; vérifié localement : les scripts et commandes des deux skills (test shell et e2e), et une exécution réelle de Claude Code avec le plugin installé (chemin direct de `deploy`, refus puis déploiement d'`admin-deploy`). Reste : le chemin CI de la skill et un vrai run GitHub Actions (création du repo, `link_repo`, protection de branche, PR, `gh run watch`). Critère : sur `examples/todo-app`, « déploie l'app sur la plateforme » depuis un repo vierge aboutit à un déploiement par GitHub Actions, et un push d'un workflow modifié pour sauter les contrôles est refusé |
 | M4 | **Admin shadcn-admin-kit** | Users, tokens, vue de toutes les apps (propriétaire, repo, dernier déploiement, charge), stop/start/delete, releases, rollback, logs |
 | M5 | **Storage + Realtime multi-tenant** | Upload de fichiers et abonnement realtime fonctionnels sur 2 apps |
 | M6 | **Auth avancée** | SMTP, SSO plateforme (OIDC puis SAML), politique de signup |

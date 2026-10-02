@@ -21,7 +21,7 @@ packages/
   shared/             zod schemas and types shared by the API and the MCP server
   sql/                template database, per-app roles, linter queries
   deploy-cli/         platform-deploy: checks or deploys an app repo (GitHub OIDC in CI, or a PAT)
-plugin/               Claude Code plugin (deploy skill + MCP config)
+plugin/               Claude Code plugin (deploy and admin-deploy skills + MCP config)
 ci/                   reusable GitHub Actions deploy workflow, and an example caller for app repos
 deploy/               docker-compose stack ("plat"), Caddy bootstrap, install.sh
 examples/todo-app/    example app: personal todo list (Vite + React + supabase-js)
@@ -127,9 +127,9 @@ An app builder only sees, in Studio and through MCP, the apps they are a member 
    claude "deploy the app to the platform"
    ```
 
-Claude creates the app, applies the migrations (the linter rejects unsafe ones), deploys the Edge Functions, builds and deploys the frontend, then prints the app URL (for instance http://todo-app.localhost:8100) and its Studio link.
+On a local install (`DIRECT_DEPLOY=everyone`, no CI configured), the `deploy` skill takes the direct path: it creates the app, writes and commits `.platform.json`, checks the secrets the functions read, runs `platform-deploy check` (migrations dry run with the security linter, build), then `platform-deploy deploy` (migrations, Edge Functions, frontend, smoke test), and prints the app URL (for instance http://todo-app.localhost:8100) and its Studio link.
 
-> This direct deployment from the builder's machine is the M3 prototype. The target is deployment by GitHub Actions only, with direct deployment reserved to admins (see [docs/USER_JOURNEYS.md](docs/USER_JOURNEYS.md) B2 and [PLAN_1.md](PLAN_1.md) §6, milestone M3bis).
+> In production (`DIRECT_DEPLOY=admins`, `CI_ALLOWED_WORKFLOWS` set), the same request takes the CI path: the skill creates or links the GitHub repository, installs the workflow that calls the platform's reusable workflow, opens a PR and watches the GitHub Actions run; direct deployment is reserved to admins (`admin-deploy` skill, with a reason). See [docs/USER_JOURNEYS.md](docs/USER_JOURNEYS.md) B2 and A10, and [PLAN_1.md](PLAN_1.md) §6. The CI path has not run against GitHub yet.
 
 Without Claude, the same deployment runs from a terminal with the deploy CLI (it reads `.platform.json`, which the skill writes):
 
