@@ -1,6 +1,7 @@
 // Admin CLI, run inside the control-plane container:
 //   node src/cli.ts init
 //   node src/cli.ts create-user <email> [admin|developer] [token-name]   -> prints a new PAT
+//   node src/cli.ts delete-user <email>         (also deletes the user's sessions, tokens and memberships)
 //   node src/cli.ts set-password <email>        (password read from stdin: docker exec -i ... < file)
 //   node src/cli.ts set-password <email> --generate                     -> prints a generated password
 //   node src/cli.ts add-member <slug> <email> [owner|developer]
@@ -13,7 +14,7 @@ import { one, platform } from "./db.ts";
 import { initCluster } from "./init.ts";
 import { setPassword } from "./sessions.ts";
 
-const USAGE = "usage: cli.ts init | create-user <email> [admin|developer] [token-name] | " +
+const USAGE = "usage: cli.ts init | create-user <email> [admin|developer] [token-name] | delete-user <email> | " +
   "set-password <email> [--generate] | add-member <slug> <email> [owner|developer] | delete-app <slug>";
 
 const [command, ...args] = process.argv.slice(2);
@@ -26,6 +27,10 @@ if (command === "init") {
   if (!email || !["admin", "developer"].includes(role)) throw new Error("usage: create-user <email> [admin|developer]");
   const user = await upsertUser(email, role as "admin" | "developer");
   console.log(await createToken(user.id, tokenName));
+} else if (command === "delete-user" && args[0]) {
+  const deleted = await one<{ id: string }>("delete from users where email = $1 returning id", [args[0].toLowerCase()]);
+  if (!deleted) throw new Error(`unknown user ${args[0]}`);
+  console.log(`user ${args[0]} deleted`);
 } else if (command === "set-password" && args[0]) {
   const generate = args[1] === "--generate";
   const password = generate ? randomBytes(18).toString("base64url") : (await text(process.stdin)).trim();
