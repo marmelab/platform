@@ -29,6 +29,10 @@ export interface AppRoles {
   authenticator: string;
   authAdmin: string;
   owner: string;
+  /** Storage API (M5): owns storage.*, member of the API roles (Storage SET ROLEs to the JWT's role). */
+  storageAdmin: string;
+  /** Realtime (M5): logical replication of the app database, member of the API roles (RLS checks). */
+  realtime: string;
 }
 
 export function appRoles(appId: string): AppRoles {
@@ -38,13 +42,60 @@ export function appRoles(appId: string): AppRoles {
     authenticator: `app_${id}_authenticator`,
     authAdmin: `app_${id}_auth_admin`,
     owner: `app_${id}_owner`,
+    storageAdmin: `app_${id}_storage_admin`,
+    realtime: `app_${id}_realtime`,
   };
 }
+
+/** Login roles of an app, all of them (sessions to terminate, roles to drop). */
+export const appLoginRoles = (r: AppRoles) => [r.owner, r.authenticator, r.authAdmin, r.storageAdmin, r.realtime];
 
 export interface AppPasswords {
   authenticator: string;
   authAdmin: string;
   owner: string;
+  storageAdmin: string;
+  realtime: string;
+}
+
+/**
+ * Global NOLOGIN role that owns the realtime.* objects of every app database once Realtime's tenant migrations ran
+ * (they create and GRANT it; reserved by supautils: created by the control plane at init). Each app's realtime role is
+ * a member, and can only use it in the one database it may connect to.
+ */
+export const REALTIME_ADMIN_ROLE = "supabase_realtime_admin";
+
+/**
+ * Realtime's tenant migrations must run as a superuser (they GRANT the reserved supabase_realtime_admin role). This
+ * role is given LOGIN and a one-time password only while the control plane registers a tenant, then locked again.
+ */
+export const REALTIME_MIGRATOR_ROLE = "platform_realtime_migrator";
+
+export function realtimeAdminRoleSql(): string[] {
+  return [
+    `do $$ begin if not exists (select from pg_roles where rolname = '${REALTIME_ADMIN_ROLE}') then
+       create role ${REALTIME_ADMIN_ROLE} noinherit nologin noreplication; end if; end $$`,
+    ensureRole(REALTIME_MIGRATOR_ROLE),
+    `alter role ${REALTIME_MIGRATOR_ROLE} with nologin superuser password null`,
+  ];
+}
+
+/** Opens (password) or locks (null) the realtime migrator role. Run as supabase_admin. */
+export function realtimeMigratorSql(password: string | null): string[] {
+  return password === null
+    ? [
+      `alter role ${REALTIME_MIGRATOR_ROLE} with nologin password null`,
+      `select pg_terminate_backend(pid) from pg_stat_activity where usename = '${REALTIME_MIGRATOR_ROLE}'`,
+    ]
+    : [`alter role ${REALTIME_MIGRATOR_ROLE} with login superuser connection limit 10 password ${secret(password)}`];
+}
+
+/** Metadata database and role of a shared service (Storage's tenants, Realtime's tenants). Run in "postgres". */
+export function serviceDatabaseRoleSql(role: string, password: string): string[] {
+  return [
+    ensureRole(ident(role)),
+    `alter role ${role} with login nosuperuser nocreatedb nocreaterole noreplication connection limit 30 password ${secret(password)}`,
+  ];
 }
 
 const ensureRole = (role: string) =>
@@ -71,6 +122,19 @@ export function clusterRolesSql(appId: string, passwords: AppPasswords): string[
     // Owner role: owns the database and the public schema; used for migrations, execute_sql and edge functions
     `alter role ${r.owner} with login inherit nocreaterole nocreatedb connection limit 15 password ${secret(passwords.owner)}`,
     `alter role ${r.owner} set statement_timeout = '60s'`,
+    // Storage API: same shape as the image's supabase_storage_admin, without createrole
+    ensureRole(r.storageAdmin),
+    `alter role ${r.storageAdmin} with login noinherit nocreaterole nocreatedb connection limit 10 password ${secret(passwords.storageAdmin)}`,
+    `grant anon, authenticated, service_role to ${r.storageAdmin}`,
+    `alter role ${r.storageAdmin} set search_path = storage`,
+    // Realtime: REPLICATION for the logical decoding of its own database only (CONNECT is per database, and pg_hba
+    // has no "replication" line: no physical streaming of the cluster)
+    ensureRole(r.realtime),
+    `alter role ${r.realtime} with login noinherit nocreaterole nocreatedb replication connection limit 10 password ${secret(passwords.realtime)}`,
+    `grant anon, authenticated, service_role to ${r.realtime}`,
+    `grant ${REALTIME_ADMIN_ROLE} to ${r.realtime} with inherit true`,
+    // realtime.list_changes() is declared with SET log_min_messages (a superuser setting)
+    `grant set on parameter log_min_messages to ${r.realtime}`,
   ];
 }
 
@@ -88,6 +152,7 @@ export function databaseGrantsSql(appId: string): string[] {
     `revoke all on database ${r.database} from public`,
     `grant connect, temporary on database ${r.database} to ${r.authenticator}`,
     `grant connect on database ${r.database} to ${r.authAdmin}`,
+    `grant connect on database ${r.database} to ${r.storageAdmin}, ${r.realtime}`,
     `grant all on database ${r.database} to ${r.owner}`,
   ];
 }
@@ -112,6 +177,54 @@ export function appDatabaseSql(appId: string): string[] {
     `alter default privileges for role ${r.owner} in schema public grant all on tables to ${apiRoles}`,
     `alter default privileges for role ${r.owner} in schema public grant all on sequences to ${apiRoles}`,
     `alter default privileges for role ${r.owner} in schema public grant all on functions to ${apiRoles}`,
+    // Storage (M5): storage.* is created by the Storage API's own migrations, run as the storage role when the tenant
+    // is registered. The owner role writes storage policies (CREATE POLICY needs the table owner's privileges), as
+    // Supabase's "postgres" does.
+    `alter schema storage owner to ${r.storageAdmin}`,
+    `grant usage on schema storage to ${apiRoles}, ${r.owner}`,
+    `grant ${r.storageAdmin} to ${r.owner}`,
+    `grant usage on schema auth to ${r.storageAdmin}, ${r.realtime}`,
+    // Realtime (M5): the owner adds its tables to the publication (alter publication ... add table needs its owner)
+    `alter publication supabase_realtime owner to ${r.owner}`,
+    `grant usage on schema realtime to ${apiRoles}, ${r.owner}`,
+  ];
+}
+
+/**
+ * Run inside the app database as supabase_admin after Realtime's tenant migrations (run by the migrator role, or by
+ * Realtime's schema dump which hardcodes supabase_admin): the objects they own go to supabase_realtime_admin, then
+ * the publication of Realtime's "broadcast changes" (Realtime would create it itself, which needs CREATE on the
+ * database). Re-runnable.
+ */
+export function realtimeDatabaseSql(appId: string): string[] {
+  const r = appRoles(appId);
+  const migrators = `'supabase_admin', '${REALTIME_MIGRATOR_ROLE}'`;
+  return [
+    `do $$ declare q text; begin
+      for q in select case c.relkind when 'c' then format('alter type %s owner to ${REALTIME_ADMIN_ROLE}', c.reltype::regtype)
+          else format('alter %s %s owner to ${REALTIME_ADMIN_ROLE}',
+            case c.relkind when 'S' then 'sequence' when 'v' then 'view' else 'table' end, c.oid::regclass) end
+        from pg_class c where c.relnamespace = 'realtime'::regnamespace and c.relkind in ('r', 'p', 'v', 'S', 'c')
+          and pg_get_userbyid(c.relowner) in (${migrators})
+      loop execute q; end loop;
+      for q in select format('alter routine %s owner to ${REALTIME_ADMIN_ROLE}', p.oid::regprocedure)
+        from pg_proc p where p.pronamespace = 'realtime'::regnamespace and pg_get_userbyid(p.proowner) in (${migrators})
+      loop execute q; end loop;
+      for q in select format('alter type %s owner to ${REALTIME_ADMIN_ROLE}', t.oid::regtype)
+        from pg_type t where t.typnamespace = 'realtime'::regnamespace and t.typrelid = 0 and t.typelem = 0
+          and pg_get_userbyid(t.typowner) in (${migrators})
+      loop execute q; end loop;
+    end $$`,
+    `alter schema realtime owner to ${REALTIME_ADMIN_ROLE}`,
+    `do $$ begin
+      if to_regclass('realtime.messages') is not null
+         and not exists (select from pg_publication where pubname = 'supabase_realtime_messages_publication') then
+        create publication supabase_realtime_messages_publication for table realtime.messages;
+      end if;
+      if exists (select from pg_publication where pubname = 'supabase_realtime_messages_publication') then
+        alter publication supabase_realtime_messages_publication owner to ${r.realtime};
+      end if;
+    end $$`,
   ];
 }
 
@@ -143,9 +256,10 @@ export function dropAppSql(appId: string): string[] {
   const r = appRoles(appId);
   return [
     `drop database if exists ${r.database} with (force)`,
-    `drop role if exists ${r.authenticator}`,
-    `drop role if exists ${r.authAdmin}`,
-    `drop role if exists ${r.owner}`,
+    // the parameter privilege is a cluster-level object owned by the role grant: revoke it first
+    `do $$ begin if exists (select from pg_roles where rolname = '${r.realtime}') then
+       revoke set on parameter log_min_messages from ${r.realtime}; end if; end $$`,
+    ...appLoginRoles(r).map((role) => `drop role if exists ${role}`),
   ];
 }
 

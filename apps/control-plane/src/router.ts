@@ -214,6 +214,36 @@ export class CaddyRouter implements Router {
         ],
       },
       {
+        // Storage API (shared, multi-tenant): the tenant is the app's slug, in X-Forwarded-Host (set here: a value sent
+        // by the client is replaced), matched by Storage's REQUEST_X_FORWARDED_HOST_REGEXP
+        match: [{ path: ["/storage/v1/*"] }],
+        handle: [
+          { handler: "rewrite", strip_path_prefix: "/storage/v1" },
+          {
+            handler: "reverse_proxy",
+            upstreams: [{ dial: config.storage.upstream }],
+            headers: { request: { set: { "X-Forwarded-Host": [SLUG], "X-Forwarded-Prefix": ["/storage/v1"] } } },
+          },
+        ],
+      },
+      {
+        // Realtime (shared, multi-tenant): the tenant is the first label of the Host header. Only the websocket and
+        // the broadcast REST endpoints are public (not the tenant management API, metrics or dashboard).
+        match: [{ path: ["/realtime/v1/websocket"] }],
+        handle: [
+          { handler: "rewrite", uri: "/socket/websocket?{http.request.uri.query}" },
+          this.realtimeProxy(),
+        ],
+      },
+      {
+        match: [{ path: ["/realtime/v1/api/broadcast", "/realtime/v1/api/broadcast/*", "/realtime/v1/api/ping"] }],
+        handle: [{ handler: "rewrite", strip_path_prefix: "/realtime/v1" }, this.realtimeProxy()],
+      },
+      {
+        match: [{ path: ["/realtime/v1", "/realtime/v1/*"] }],
+        handle: [{ handler: "static_response", status_code: 404, body: "not found\n" }],
+      },
+      {
         match: [{ path: ["/functions/v1/*"] }],
         handle: [
           { handler: "rewrite", strip_path_prefix: "/functions/v1" },
@@ -232,6 +262,14 @@ export class CaddyRouter implements Router {
         ],
       },
     ];
+  }
+
+  private realtimeProxy() {
+    return {
+      handler: "reverse_proxy",
+      upstreams: [{ dial: config.realtime.upstream }],
+      headers: { request: { set: { Host: [`${SLUG}.realtime`] } } },
+    };
   }
 
   private staticRoutes() {
@@ -302,7 +340,11 @@ export class CaddyRouter implements Router {
               this.whenMarker(STOPPED, [{ handler: "log_append", key: MAINTENANCE_FIELD, value: "1" }, {
                 handler: "subroute",
                 routes: [
-                  { match: [{ path: ["/auth/v1/*", "/rest/v1/*", "/functions/v1/*"] }], handle: [api], terminal: true },
+                  {
+                    match: [{ path: ["/auth/v1/*", "/rest/v1/*", "/functions/v1/*", "/storage/v1/*", "/realtime/v1/*"] }],
+                    handle: [api],
+                    terminal: true,
+                  },
                   { handle: [page] },
                 ],
               }]),

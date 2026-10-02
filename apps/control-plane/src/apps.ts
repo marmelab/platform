@@ -2,6 +2,7 @@ import { mkdir, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
   appDatabaseSql,
+  appLoginRoles,
   appRoles,
   clusterRolesSql,
   createDatabaseSql,
@@ -25,6 +26,7 @@ import { DockerOrchestrator, type Orchestrator } from "./orchestrator.ts";
 import { CaddyRouter, type Router } from "./router.ts";
 import { lastRelease } from "./releases.ts";
 import { MultiHeadStudio, type StudioRegistry } from "./studio/registry.ts";
+import { deleteRealtime, deleteStorage, disconnectRealtime, registerRealtime, registerStorage } from "./storage-realtime.ts";
 
 export const orchestrator: Orchestrator = new DockerOrchestrator();
 export const router: Router = new CaddyRouter();
@@ -71,7 +73,8 @@ export interface AppSecrets {
   jwt_secret: string;
   anon_key: string;
   service_role_key: string;
-  passwords: { authenticator: string; authAdmin: string; owner: string };
+  /** storageAdmin and realtime: added by M5, generated on the next provisioning for older apps (ensurePasswords). */
+  passwords: { authenticator: string; authAdmin: string; owner: string; storageAdmin: string; realtime: string };
 }
 
 export const dbId = (slug: string) => slug.replace(/-/g, "_");
@@ -86,7 +89,13 @@ function generateSecrets(slug: string): AppSecrets {
     jwt_secret: jwtSecret,
     anon_key: signJwt({ iss: "supabase", ref: slug, role: "anon", iat, exp }, jwtSecret),
     service_role_key: signJwt({ iss: "supabase", ref: slug, role: "service_role", iat, exp }, jwtSecret),
-    passwords: { authenticator: randomHex(16), authAdmin: randomHex(16), owner: randomHex(16) },
+    passwords: {
+      authenticator: randomHex(16),
+      authAdmin: randomHex(16),
+      owner: randomHex(16),
+      storageAdmin: randomHex(16),
+      realtime: randomHex(16),
+    },
   };
 }
 
@@ -273,10 +282,21 @@ async function prepareDirectories(slug: string) {
   await mkdir(join(config.dataDir.functions, slug), { recursive: true });
 }
 
-/** Runs every provisioning step (PLAN §4.2, without Storage/Realtime/Studio). Each step is idempotent. */
-export async function provision(app: AppRow) {
+/** Apps created before M5 have no Storage and Realtime role passwords: generate and store them. */
+async function ensurePasswords(app: AppRow) {
   const secrets = appSecrets(app);
+  const missing = (["storageAdmin", "realtime"] as const).filter((key) => !secrets.passwords[key]);
+  if (missing.length === 0) return;
+  for (const key of missing) secrets.passwords[key] = randomHex(16);
+  app.secrets_enc = encrypt(JSON.stringify(secrets));
+  await platform.query("update apps set secrets_enc = $2, updated_at = now() where id = $1", [app.id, app.secrets_enc]);
+}
+
+/** Runs every provisioning step (PLAN §4.2). Each step is idempotent. */
+export async function provision(app: AppRow) {
   try {
+    await ensurePasswords(app);
+    const secrets = appSecrets(app);
     await provisionDatabase(app.slug, secrets);
     await startServices(app.slug, secrets);
     await prepareDirectories(app.slug);
@@ -284,6 +304,9 @@ export async function provision(app: AppRow) {
     await router.upsertApp(app.slug);
     await waitHealthy(`http://${containerName(app.slug, "auth")}:9999/health`);
     await waitHealthy(`http://${containerName(app.slug, "rest")}:3000/`);
+    // after GoTrue's migrations: Storage's and Realtime's run in the same database
+    await registerStorage(app);
+    await registerRealtime(app);
     await studio.register(app);
     await platform.query("update apps set status = 'running', error = null, updated_at = now() where id = $1", [app.id]);
   } catch (error) {
@@ -347,8 +370,31 @@ export async function syncAll() {
     }
   }
   await studio.syncAll(apps).catch((error) => console.error("studio sync failed", error));
+  // Storage and Realtime tenants (apps created before M5, a reset service): in the background, since both services
+  // may still be starting (they wait for the databases created by initCluster)
+  void syncServiceTenants(apps.filter((app) => app.status === "running"));
   await router.upsertAdmin({ host: config.adminHost, upstream: `control-plane:${config.port}` })
     .catch((error) => console.error("admin route failed", error));
+}
+
+async function syncServiceTenants(apps: AppRow[], attempts = 30) {
+  let pending = apps;
+  for (let attempt = 1; pending.length > 0 && attempt <= attempts; attempt++) {
+    const failed: AppRow[] = [];
+    for (const app of pending) {
+      try {
+        await ensurePasswords(app);
+        await provisionDatabase(app.slug, appSecrets(app));
+        await registerStorage(app);
+        await registerRealtime(app);
+      } catch (error) {
+        if (attempt === attempts) console.error(`storage/realtime tenant of ${app.slug} failed`, error);
+        failed.push(app);
+      }
+    }
+    pending = failed;
+    if (pending.length > 0) await new Promise((resolve) => setTimeout(resolve, 10_000));
+  }
 }
 
 /** Links the app to its GitHub repository (owner or admin, checked by the caller). Audited. */
@@ -383,7 +429,7 @@ export async function setDatabaseReadOnly(slug: string, readOnly: boolean, termi
     const current = (await c.query(databaseIsReadOnlySql, [roles.database])).rowCount === 1;
     if (current !== readOnly) await c.query(databaseReadOnlySql(id, readOnly));
     if (readOnly && (terminate || !current)) {
-      await c.query(terminateAppSessionsSql, [roles.database, [roles.owner, roles.authenticator, roles.authAdmin]]);
+      await c.query(terminateAppSessionsSql, [roles.database, appLoginRoles(roles)]);
     }
   });
 }
@@ -399,6 +445,8 @@ export async function stopApp(actor: User | null, app: AppRow) {
   }
   await router.maintenanceApp(app.slug);
   await orchestrator.stopApp(app.slug);
+  // open websockets survive the route change: close them (clients that reconnect get the maintenance response)
+  await disconnectRealtime(app.slug).catch((error) => console.error(`realtime disconnect of ${app.slug} failed`, error));
   await setDatabaseReadOnly(app.slug, true, true);
   await platform.query("update apps set status = 'stopped', updated_at = now() where id = $1", [app.id]);
   await audit(actor?.id ?? null, app.id, "stop_app", { slug: app.slug });
@@ -435,6 +483,9 @@ export async function deleteApp(actor: User | null, slug: string, { backup: with
   await router.removeApp(slug);
   await studio.unregister(slug);
   await orchestrator.removeApp(slug);
+  // the Realtime tenant first: its replication slot is dropped through the app database
+  await deleteRealtime(slug);
+  await deleteStorage(slug);
   await withAdmin("postgres", (c) => runAll(c, dropAppSql(dbId(slug))));
   await rm(join(config.dataDir.appsConfig, `${slug}.json`), { force: true });
   await rm(join(config.dataDir.sites, slug), { recursive: true, force: true });

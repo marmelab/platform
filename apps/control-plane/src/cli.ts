@@ -14,13 +14,16 @@
 //   node src/cli.ts set-setting <key> <value>      (overrides the environment, e.g. direct_deploy admins)
 //   node src/cli.ts unset-setting <key>            (back to the environment's value)
 //   node src/cli.ts sample-metrics                 (samples app_metrics now, as the control plane does every minute)
+//   node src/cli.ts realtime-migrate <slug>|--all  (after a Realtime upgrade: recreates the app's Realtime tenant, which
+//                                                  runs the new tenant migrations; its clients reconnect)
 import { randomBytes } from "node:crypto";
 import { text } from "node:stream/consumers";
 import type { MemberRole } from "@platform/shared";
 import { type AppRow, deleteApp, startApp, stopApp } from "./apps.ts";
 import { createToken, upsertUser } from "./auth.ts";
-import { one, platform } from "./db.ts";
+import { many, one, platform } from "./db.ts";
 import { initCluster } from "./init.ts";
+import { registerRealtime } from "./storage-realtime.ts";
 import { sampleMetrics } from "./metrics.ts";
 import { addMember, removeMember } from "./members.ts";
 import { setPassword } from "./sessions.ts";
@@ -28,7 +31,7 @@ import { getSettings, setSetting, unsetSetting } from "./settings.ts";
 
 const USAGE = "usage: cli.ts init | create-user <email> [admin|developer] [token-name] | delete-user <email> | " +
   "set-password <email> [--generate] | add-member <slug> <email> [owner|collaborator] | remove-member <slug> <email> | stop-app <slug> | start-app <slug> | delete-app <slug> [--no-backup] | " +
-  "settings | set-setting <key> <value> | unset-setting <key> | sample-metrics";
+  "settings | set-setting <key> <value> | unset-setting <key> | sample-metrics | realtime-migrate <slug>|--all";
 
 const [command, ...args] = process.argv.slice(2);
 
@@ -88,6 +91,15 @@ if (command === "init") {
   console.log(`${args[0]} unset`);
 } else if (command === "sample-metrics") {
   console.log(JSON.stringify(await sampleMetrics()));
+} else if (command === "realtime-migrate" && args[0]) {
+  const apps = args[0] === "--all"
+    ? await many<AppRow>("select * from apps where status = 'running' order by slug")
+    : [await appBySlug(args[0])];
+  for (const app of apps) {
+    if (app.status !== "running") throw new Error(`app ${app.slug} is ${app.status}: start it first`);
+    await registerRealtime(app, { migrate: true });
+    console.log(`realtime tenant of ${app.slug} migrated`);
+  }
 } else {
   console.error(USAGE);
   process.exitCode = 1;

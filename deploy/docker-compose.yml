@@ -17,6 +17,12 @@ services:
       - "log_line_prefix=%m [%p] db=%d user=%u app=%a "
       - -c
       - max_connections=500
+      # Realtime (M5): one temporary logical replication slot per app with postgres_changes subscribers, plus one
+      # walsender for Realtime's "broadcast changes" slot (spikes/m5-storage-realtime/REPORT.md)
+      - -c
+      - max_replication_slots=100
+      - -c
+      - max_wal_senders=20
     volumes:
       - db-data:/var/lib/postgresql/data
     healthcheck:
@@ -110,6 +116,11 @@ services:
       # A6: an app without request nor release for this many days is flagged "abandoned"; app_metrics retention
       ABANDONED_AFTER_DAYS: ${ABANDONED_AFTER_DAYS:-}
       METRICS_RETENTION_DAYS: ${METRICS_RETENTION_DAYS:-}
+      # Storage and Realtime (M5): tenant management (admin APIs on the internal network) and metadata databases
+      STORAGE_ADMIN_KEY: ${STORAGE_ADMIN_KEY}
+      STORAGE_DB_PASSWORD: ${STORAGE_DB_PASSWORD}
+      REALTIME_API_JWT_SECRET: ${REALTIME_API_JWT_SECRET}
+      REALTIME_DB_PASSWORD: ${REALTIME_DB_PASSWORD}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - sites:/data/sites
@@ -120,8 +131,78 @@ services:
       - backups:/data/backups
       # Caddy's access log (requests and 5xx per app, app_metrics)
       - caddy-logs:/data/caddy-logs:ro
+      # Storage files (<bucket>/<slug>/...): final backups (B8) and deletion
+      - storage-data:/data/storage
     labels:
       platform.service: control-plane
+
+  # Storage API (M5), one shared multi-tenant instance: one tenant per app (registered by the control plane through the
+  # admin API on :5001), the tenant taken from X-Forwarded-Host, set by Caddy to the app's slug. Files on the
+  # storage-data volume, under tenants/<slug>/. No published port.
+  storage:
+    image: supabase/storage-api:v1.74.0
+    container_name: plat-storage
+    restart: unless-stopped
+    mem_limit: 512m
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      IS_MULTITENANT: "true"
+      # tenants metadata database, created by the control plane (init)
+      MULTITENANT_DATABASE_URL: postgres://platform_storage:${STORAGE_DB_PASSWORD}@db:5432/platform_storage
+      MULTITENANT_DATABASE_MAX_CONNECTIONS: "5"
+      ADMIN_API_KEYS: ${STORAGE_ADMIN_KEY}
+      ENCRYPTION_KEY: ${STORAGE_ENCRYPTION_KEY}
+      REQUEST_X_FORWARDED_HOST_REGEXP: ^([a-z][a-z0-9-]{1,30}[a-z0-9])$$
+      REQUEST_ALLOW_X_FORWARDED_PATH: "true"
+      STORAGE_BACKEND: file
+      FILE_STORAGE_BACKEND_PATH: /var/lib/storage
+      GLOBAL_S3_BUCKET: tenants
+      FILE_SIZE_LIMIT: "52428800"
+      REGION: local
+      # roles are created by the control plane (app_<id>_storage_admin), never by Storage's migrations
+      DB_INSTALL_ROLES: "false"
+      DATABASE_FREE_POOL_AFTER_INACTIVITY: "60000"
+      S3_PROTOCOL_ENABLED: "false"
+      PG_QUEUE_ENABLE: "false"
+    volumes:
+      - storage-data:/var/lib/storage
+    labels:
+      platform.service: storage
+
+  # Realtime (M5), one shared multi-tenant instance: one tenant per app (registered by the control plane through its
+  # API), the tenant taken from the first label of the Host header, set by Caddy to <slug>.realtime. No published port.
+  realtime:
+    image: supabase/realtime:v2.134.10
+    container_name: plat-realtime
+    restart: unless-stopped
+    mem_limit: 1g
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PORT: "4000"
+      # tenants metadata database (schema _realtime), created by the control plane (init)
+      DB_HOST: db
+      DB_PORT: "5432"
+      DB_USER: platform_realtime
+      DB_PASSWORD: ${REALTIME_DB_PASSWORD}
+      DB_NAME: platform_realtime
+      DB_AFTER_CONNECT_QUERY: SET search_path TO _realtime
+      DB_ENC_KEY: ${REALTIME_DB_ENC_KEY}
+      API_JWT_SECRET: ${REALTIME_API_JWT_SECRET}
+      METRICS_JWT_SECRET: ${REALTIME_API_JWT_SECRET}
+      SECRET_KEY_BASE: ${REALTIME_SECRET_KEY_BASE}
+      ERL_AFLAGS: -proto_dist inet_tcp
+      DNS_NODES: "''"
+      RLIMIT_NOFILE: "10000"
+      APP_NAME: realtime
+      SEED_SELF_HOST: "false"
+      RUN_JANITOR: "true"
+      DISABLE_HEALTHCHECK_LOGGING: "true"
+    labels:
+      platform.service: realtime
 
   # Multi-head Studio (apps/studio, image built on the host by apps/studio/build.sh). No published port:
   # reachable only through Caddy (studio.localhost:8100) behind the control plane's forward auth.
@@ -181,6 +262,7 @@ volumes:
   backups:
   deno-cache:
   caddy-logs:
+  storage-data:
 
 networks:
   default:

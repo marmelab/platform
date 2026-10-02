@@ -1,5 +1,7 @@
 import {
   bootstrapSql,
+  realtimeAdminRoleSql,
+  serviceDatabaseRoleSql,
   platformSql,
   schemaChangesSql,
   STUDIO_META_DEFAULT,
@@ -86,6 +88,24 @@ async function ensureStudioMetaDefault() {
   await withAdmin(STUDIO_META_DEFAULT, (c) => c.query("revoke all on schema public from public"));
 }
 
+/**
+ * Metadata databases of the shared Storage (its tenants) and Realtime (its tenants, in the `_realtime` schema its
+ * migrations expect), each owned by its own role; the global roles Realtime's tenant migrations need (M5).
+ */
+async function ensureServiceDatabases() {
+  for (const { role, password } of [config.storage, config.realtime].map((s) => ({ role: s.dbRole, password: s.dbPassword }))) {
+    await withAdmin("template1", async (c) => {
+      await runAll(c, serviceDatabaseRoleSql(role, password));
+      const exists = (await c.query("select 1 from pg_database where datname = $1", [role])).rowCount === 1;
+      if (!exists) await c.query(`create database ${role} owner ${role}`);
+      await c.query(`revoke all on database ${role} from public`);
+    });
+  }
+  await withAdmin(config.realtime.dbRole, (c) =>
+    c.query(`create schema if not exists _realtime authorization ${config.realtime.dbRole}`));
+  await withAdmin("postgres", (c) => runAll(c, realtimeAdminRoleSql()));
+}
+
 export async function initCluster() {
   await waitForPostgres();
   await withAdmin("postgres", (c) => c.query(bootstrapSql()));
@@ -93,4 +113,5 @@ export async function initCluster() {
   await upgradeTemplate();
   await ensurePlatformDb();
   await ensureStudioMetaDefault();
+  await ensureServiceDatabases();
 }
