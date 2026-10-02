@@ -25,6 +25,8 @@ export interface RawLogLine {
 
 export interface Orchestrator {
   ensure(spec: ServiceSpec): Promise<void>;
+  /** Pulls the image unless it is already present (DEP-1). */
+  ensureImage(image: string): Promise<void>;
   removeApp(app: string): Promise<void>;
   /** Stops the app's containers without removing them (ensure() restarts them). */
   stopApp(app: string): Promise<void>;
@@ -54,6 +56,27 @@ function demux(buffer: Buffer): RawLogLine[] {
 
 export class DockerOrchestrator implements Orchestrator {
   private docker = new Docker({ socketPath: "/var/run/docker.sock" });
+  /** Concurrent ensure() calls for the same missing image share one pull. */
+  private pulls = new Map<string, Promise<void>>();
+
+  async ensureImage(image: string): Promise<void> {
+    if (await this.docker.getImage(image).inspect().then(() => true, () => false)) return;
+    let pull = this.pulls.get(image);
+    if (!pull) {
+      pull = this.pull(image).finally(() => this.pulls.delete(image));
+      this.pulls.set(image, pull);
+    }
+    await pull;
+  }
+
+  private async pull(image: string) {
+    console.log(`pulling ${image}`);
+    const stream = await this.docker.pull(image);
+    await new Promise<void>((resolve, reject) =>
+      this.docker.modem.followProgress(stream, (error: Error | null) => (error ? reject(error) : resolve()))
+    );
+    console.log(`pulled ${image}`);
+  }
 
   async ensure(spec: ServiceSpec): Promise<void> {
     const hash = createHash("sha256").update(JSON.stringify(spec)).digest("hex").slice(0, 16);
@@ -66,6 +89,7 @@ export class DockerOrchestrator implements Orchestrator {
       }
       await existing.remove({ force: true });
     }
+    await this.ensureImage(spec.image);
     const container = await this.docker.createContainer({
       name: spec.name,
       Image: spec.image,
