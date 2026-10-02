@@ -4,7 +4,7 @@ import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createHmac, randomBytes } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { appendFileSync, readFileSync } from "node:fs";
 import { request } from "node:http";
 
 const ROOT = new URL("../../../", import.meta.url);
@@ -14,6 +14,15 @@ const readEnv = (file: string) =>
       .map((l) => [l.slice(0, l.indexOf("=")), l.slice(l.indexOf("=") + 1)]),
   );
 const local = readEnv("deploy/.env.local");
+/** Test builders' passwords are kept in deploy/.env.local (git-ignored) so that they can also sign in by hand. */
+const testPassword = (name: string) => {
+  const key = `STUDIO_TEST_${name.toUpperCase()}_PASSWORD`;
+  if (!local[key]) {
+    local[key] = randomBytes(18).toString("base64url");
+    appendFileSync(new URL("deploy/.env.local", ROOT), `${key}=${local[key]}\n`);
+  }
+  return local[key]!;
+};
 const secrets = readEnv("deploy/.env");
 
 const STUDIO = "http://studio.localhost:8100";
@@ -77,8 +86,8 @@ const projectRefs = async (cookie: string) => {
 
 describe("Studio for app builders", () => {
   const users = {
-    alice: { email: `alice@example.com`, password: randomBytes(18).toString("base64url") },
-    bob: { email: `bob@example.com`, password: randomBytes(18).toString("base64url") },
+    alice: { email: "alice@example.com", password: testPassword("alice") },
+    bob: { email: "bob@example.com", password: testPassword("bob") },
   };
   let alice = "";
   let bob = "";

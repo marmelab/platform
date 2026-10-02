@@ -29,11 +29,18 @@ Après une modification du code : `docker compose -p plat -f deploy/docker-compo
 
 Chaque app `<slug>` est servie sur `http://<slug>.localhost:8100` : `/` (statique, fallback SPA), `/auth/v1`, `/rest/v1`, `/functions/v1`.
 
+## Studio
+
+`http://studio.localhost:8100` : Studio multi-head (`apps/studio`), ref de projet = slug de l'app, lien profond `studio_url` dans `get_app`. Login plateforme sur `/_platform/login` (compte local avec mot de passe), puis forward auth (`/studio/verify` sur le listener interne `:3001`) : un builder ne voit que les apps dont il est membre, un admin voit tout. Détails : `spikes/m0ter-studio-builders/REPORT.md`.
+
 ## CLI d'administration (dans le conteneur)
 
 ```bash
 docker exec plat-control-plane node src/cli.ts create-user bob@example.com developer   # affiche un nouveau PAT
 docker exec plat-control-plane node src/cli.ts delete-app demo
+docker exec plat-control-plane node src/cli.ts set-password bob@example.com --generate         # affiche un mot de passe Studio
+docker exec -i plat-control-plane node src/cli.ts set-password bob@example.com < password.txt  # ou le lit sur stdin
+docker exec plat-control-plane node src/cli.ts add-member demo bob@example.com developer
 docker exec plat-control-plane node src/cli.ts init                                     # idempotent, fait aussi au démarrage
 ```
 
@@ -41,7 +48,9 @@ docker exec plat-control-plane node src/cli.ts init                             
 
 ```bash
 pnpm -r typecheck
-pnpm --filter @platform/control-plane e2e     # nécessite la stack démarrée et deploy/.env.local
+pnpm --filter @platform/control-plane test        # politique d'accès Studio (unitaire)
+pnpm --filter @platform/control-plane e2e         # nécessite la stack démarrée et deploy/.env.local
+pnpm --filter @platform/control-plane e2e:studio  # Studio : login, filtrage, isolation (crée alice et bob)
 ```
 
 ## Accès techniques (dev)
@@ -51,4 +60,4 @@ pnpm --filter @platform/control-plane e2e     # nécessite la stack démarrée e
 | Postgres | `127.0.0.1:54350`, `supabase_admin` / `POSTGRES_PASSWORD` de `deploy/.env` ; base `platform` |
 | Caddy admin | `http://127.0.0.1:2030` (routes `app-<slug>` et `app-<slug>-internal`) |
 | Volumes | `plat_sites`, `plat_functions`, `plat_apps-config`, `plat_uploads`, `plat_deno-cache`, `plat_db-data` |
-| Conteneurs | `plat-db`, `plat-caddy`, `plat-edge`, `plat-control-plane`, et par app `plat-<slug>-auth` et `plat-<slug>-rest` |
+| Conteneurs | `plat-db`, `plat-caddy`, `plat-edge`, `plat-control-plane`, `plat-studio`, `plat-studio-meta`, et par app `plat-<slug>-auth` et `plat-<slug>-rest` |
