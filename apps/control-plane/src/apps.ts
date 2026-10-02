@@ -343,6 +343,8 @@ export async function syncAll() {
     }
   }
   await studio.syncAll(apps).catch((error) => console.error("studio sync failed", error));
+  await router.upsertAdmin({ host: config.adminHost, upstream: `control-plane:${config.port}` })
+    .catch((error) => console.error("admin route failed", error));
 }
 
 /** Links the app to its GitHub repository (owner or admin, checked by the caller). Audited. */

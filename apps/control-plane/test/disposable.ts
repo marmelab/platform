@@ -56,7 +56,6 @@ export async function cleanup(apps: string[], users: string[]) {
   const existing = psql(`select id || ' ' || email from users where email in (${list(users)})`)
     .split("\n").filter(Boolean).map((line) => line.split(" ") as [string, string]);
   const userIds = list(existing.map(([id]) => id));
-  for (const [, email] of existing) attempt(() => cli(["delete-user", email]));
   if (KEEP) {
     console.log(`E2E_KEEP=1: kept ${apps.join(", ")}`);
   } else {
@@ -67,6 +66,8 @@ export async function cleanup(apps: string[], users: string[]) {
       attempt(() => execFileSync("docker", ["exec", "plat-control-plane", "sh", "-c", `rm -rf /data/backups/${slug}-*`]));
     }
   }
+  // after the apps: an app's creator (apps.owner_id) cannot be deleted while the app exists
+  for (const [, email] of existing) attempt(() => cli(["delete-user", email]));
   if (errors.length > 0) throw new AggregateError(errors, "cleanup failed");
 
   const left = psql(`select concat_ws(' ',

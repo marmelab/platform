@@ -87,6 +87,8 @@ services:
       PLATFORM_STUDIO_CONFIG_TOKEN: ${PLATFORM_STUDIO_CONFIG_TOKEN}
       STUDIO_META_DEFAULT_PASSWORD: ${STUDIO_META_DEFAULT_PASSWORD}
       STUDIO_HOST: studio.localhost
+      # admin console and its API (apps/admin, built into this image), proxied by Caddy (route "admin")
+      ADMIN_HOST: admin.localhost
       PGHOST: db
       APPS_DOMAIN: localhost
       PUBLIC_PORT: "8100"
