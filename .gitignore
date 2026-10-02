@@ -4,3 +4,4 @@ deploy/.env
 deploy/.env.local
 *.tsbuildinfo
 .next/
+apps/admin/dist/

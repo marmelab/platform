@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Dev installer: generates secrets, builds Studio, starts the "plat" stack, initialises the cluster
+# Dev installer: generates secrets, builds Studio, starts the "plat" stack (the control plane image also builds the
+# admin console, apps/admin), initialises the cluster
 # (template_supabase + platform database) and creates the first admin with a PAT and a Studio password.
 # Re-runnable: secrets and the admin credentials are kept in deploy/.env and deploy/.env.local.
 #   STUDIO_BUILD=1 deploy/install.sh    rebuilds the Studio image even if it exists
@@ -19,6 +20,7 @@ done
 ADMIN_EMAIL="${ADMIN_EMAIL:-admin@example.com}"
 API_URL="http://api.localhost:8100"
 STUDIO_URL="http://studio.localhost:8100"
+ADMIN_URL="http://admin.localhost:8100"
 
 umask 077
 touch .env
@@ -71,11 +73,12 @@ if ! grep -q '^PLATFORM_ADMIN_PASSWORD=' .env.local; then
   ADMIN_EMAIL_SAVED="$(sed -n 's/^PLATFORM_ADMIN_EMAIL=//p' .env.local)"
   PASSWORD="$(docker exec plat-control-plane node src/cli.ts set-password "${ADMIN_EMAIL_SAVED:-$ADMIN_EMAIL}" --generate)"
   echo "PLATFORM_ADMIN_PASSWORD=$PASSWORD" >> .env.local
-  echo "Studio password of the admin saved in deploy/.env.local (PLATFORM_ADMIN_PASSWORD)"
+  echo "Password of the admin (Studio, admin console) saved in deploy/.env.local (PLATFORM_ADMIN_PASSWORD)"
 fi
 echo
 echo "MCP endpoint: $API_URL/mcp  (Authorization: Bearer \$PLATFORM_TOKEN)"
 echo "Studio:       $STUDIO_URL  (admin: PLATFORM_ADMIN_EMAIL / PLATFORM_ADMIN_PASSWORD from deploy/.env.local)"
+echo "Admin:        $ADMIN_URL  (same credentials; admins only)"
 
 if [ "$SEED" = 1 ]; then
   node ../apps/control-plane/scripts/seed.ts

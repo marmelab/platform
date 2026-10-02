@@ -5,6 +5,7 @@
   "packageManager": "pnpm@10.28.0",
   "scripts": {
     "typecheck": "pnpm -r typecheck",
-    "e2e": "pnpm --filter @platform/control-plane e2e"
+    "e2e": "pnpm --filter @platform/control-plane e2e",
+    "e2e:admin": "pnpm --filter @platform/control-plane e2e:admin"
   }
 }

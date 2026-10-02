@@ -6,3 +6,5 @@ deploy
 apps/studio
 apps/edge-main-worker
 **/.next
+apps/admin/dist
+apps/admin/screenshots

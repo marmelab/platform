@@ -1,0 +1,34 @@
+import { Resource } from "ra-core";
+import { AppWindow, KeyRound, ScrollText, Users } from "lucide-react";
+import { Admin } from "@/components/admin";
+import { authProvider, dataProvider } from "./providers";
+import { Dashboard } from "./resources/dashboard";
+import { LoginPage } from "./resources/login";
+import { AppList, AppShow } from "./resources/apps";
+import { UserCreate, UserEdit, UserList } from "./resources/users";
+import { TokenCreate, TokenList } from "./resources/tokens";
+import { AuditList } from "./resources/audit";
+
+const App = () => (
+  <Admin
+    title="Platform admin"
+    dataProvider={dataProvider}
+    authProvider={authProvider}
+    loginPage={LoginPage}
+    dashboard={Dashboard}
+    requireAuth
+    disableTelemetry
+  >
+    <Resource name="apps" list={AppList} show={AppShow} icon={AppWindow} recordRepresentation="slug" />
+    <Resource name="users" list={UserList} create={UserCreate} edit={UserEdit} icon={Users} recordRepresentation="email" />
+    <Resource name="tokens" list={TokenList} create={TokenCreate} icon={KeyRound} recordRepresentation="name" />
+    <Resource name="audit_log" list={AuditList} icon={ScrollText} options={{ label: "Audit log" }} />
+    <Resource name="app_members" />
+    <Resource name="releases" />
+    <Resource name="deployments" />
+    <Resource name="secrets" />
+    <Resource name="schema_changes" />
+  </Admin>
+);
+
+export default App;
