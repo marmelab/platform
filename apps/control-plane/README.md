@@ -17,7 +17,7 @@ PLATFORM_ADMIN_EMAIL=admin@example.com
 PLATFORM_TOKEN=plat_...
 ```
 
-After a code change: `docker compose -p plat -f deploy/docker-compose.yml up -d --build control-plane`.
+After a code change: `docker compose -p plat -f deploy/docker-compose.yml up -d --build control-plane` (the image also builds the admin console, `apps/admin`).
 
 The per-app images (`GOTRUE_IMAGE`, `POSTGREST_IMAGE`) are pulled by the control plane when missing: in the background at startup, and before creating a container (concurrent provisionings share one pull). A failed pull (registry unreachable, Docker Hub rate limit) fails the provisioning with the registry's error.
 
@@ -113,6 +113,40 @@ The app's own users (accounts of its GoTrue, not platform members) are managed b
 
 Writes go to the app's GoTrue admin API directly on the `plat` network (`http://plat-<slug>-auth:9999`), with a `service_role` JWT signed by the control plane with the app's JWT secret and valid one minute: no key or secret is returned. They are refused on a stopped app (`APP_STOPPED`, `requireWritable`; its GoTrue is stopped anyway), and an unreachable GoTrue gives an explicit error. They are audited (`invite_user`, `delete_user`, `ban_user`, `unban_user`) with the acting user, the target email and user id, never the invite link.
 
+## Admin REST API
+
+The admin console (`apps/admin`, [README](../admin/README.md)) and its API are served by the control plane on the admin host, same origin: `http://admin.localhost:8100` (`ADMIN_HOST`), API under **`/api`** (`src/admin/`). Same origin rather than `api.<domain>/admin`: no CORS to configure, and the session cookie stays host-only on the admin host. Caddy proxies the whole admin host to the control plane (route `admin`, installed at startup with the Studio route); on that host the control plane serves only the SPA (`ADMIN_STATIC_DIR`, built into the image) and `/api/*` (no MCP, CI API or uploads), and the API is not served on the other hosts.
+
+**Authentication.** Admins only (`users.role = 'admin'`, active), checked on every request:
+
+- `Authorization: Bearer <PAT>` of an admin (scripts, tests);
+- or the platform session cookie: `POST /api/auth/login {email, password}` reuses the sessions of Studio's `/_platform/login` (`sessions` table, `platform_session` cookie, `SESSION_TTL_SECONDS`), refuses non-admins (403, no session), and sets the cookie host-only, `HttpOnly`, `SameSite=Strict`. `GET /api/auth/me` returns the identity, `POST /api/auth/logout` deletes the session.
+
+**CSRF.** Every `<app>.<domain>` is same-site with the admin host, so `SameSite` does not stop a builder's frontend from sending requests with an admin's cookie. With the cookie (not with a PAT), the API refuses any request whose `Sec-Fetch-Site` is neither `same-origin` nor `none`, and every mutation (and the login) must carry `Origin: <admin origin>` and `X-Platform-Admin: 1`: a cross-origin page cannot send that header without a CORS preflight, which the API never grants. The SPA sends it on every request. Login has no rate limiting yet (TECH_DEBT SEC-3).
+
+**Conventions** ([ra-data-simple-rest](https://github.com/marmelab/react-admin/tree/master/packages/ra-data-simple-rest)): `GET /api/<resource>?sort=["field","ASC"]&range=[0,24]&filter={...}` returns an array and `Content-Range: <resource> 0-24/<total>`; `filter={"id":[...]}` (getMany) and `filter={"<field>": value}` (getManyReference) are supported; `GET|PUT|DELETE /api/<resource>/<id>`, `POST /api/<resource>` return the record. Errors are `{message}` with 400 (validation, guard refused, e.g. last owner), 401, 403, 404, 405, 409 (conflict; `code: "APP_STOPPED"` for a write on a stopped app). Lists are filtered, sorted and paginated in memory except the audit log (SQL).
+
+| Resource | Operations | Notes |
+|---|---|---|
+| `users` | list (`q`, `role`, `active`), get, create `{email, name?, role, password?, active?}`, update `{name, role, active, password?}`, delete | Computed: `has_password`, `app_count`, `owned_app_count`, `active_token_count`, `last_token_use`, `last_login`. Disabling (`active: false`) deletes the account's sessions; its PATs stop working (`authenticate` checks `active`). An admin cannot disable, demote or delete themselves. Delete is refused (409) while the account is the last owner of an app; the apps it created move to another owner. Audited: `create_user`, `update_user` (changes), `set_password`, `delete_user` |
+| `tokens` | list (`q`, `user_id`, `status`), get, create `{user_id, name, expires_at?}`, delete = revoke | The value is returned once, in `token`, on creation (only its hash is stored). `status`: `active`, `revoked`, `expired`. Revoking keeps the row. Scopes and per-app restrictions exist in the schema but are not enforced yet. Audited: `create_token`, `revoke_token` (never the value) |
+| `apps` | list, get (id = slug) | Filters: `q` (slug, name, repository, owner), `status`, `owner_id`, and the flags `outside_ci`, `admin_exception`, `schema_drift`, `accepted_lints`, `no_repo`, `last_release_failed`, `stopped`. Fields: `url`, `studio_url`, `owners` (`{id, email, name}`), `github_repo`, `github_url`, `last_release` (`source`, `status`, `commit_sha`, `commit_url`, `ci_run_url`, `github_actor`, `created_by`, `admin_exception`, `reason`, dates), `last_release_at`, `frontend_version`, `functions_version`, `db_size`, `flags` (`outside_ci`: the last release was published with a PAT; `schema_drift`: count of DDL outside releases, as `get_app`, computed for the returned page only unless filtered or sorted on; `accepted_lints`: ERROR lints accepted by migrations; `no_repo`). `get` adds `services` (containers and state). No create, update or delete: see the actions |
+| `POST /api/apps/<slug>/stop`, `/start` | | `stopApp` / `startApp` (B8), returns `{changed, status, data: <app>}` |
+| `POST /api/apps/<slug>/delete` | `{confirm: <slug>, backup?: true}` | `deleteAppConfirmed`: final backup unless `backup: false` |
+| `POST /api/apps/<slug>/rollback` | `{kind: frontend\|functions, version?}` | `rollback` (refused on a stopped app) |
+| `GET /api/apps/<slug>/logs` | `?service=&since_minutes=60&limit=200&q=` | `get_logs` |
+| `app_members` | list (`app`, `user_id`, `q`), get, create `{app, email \| user_id, role}`, update `{role}`, delete | id `<slug>:<user id>`. `addMember` / `removeMember`: the app always keeps an owner |
+| `releases` | list (`app`, `q`), get | With `deployments` (`kind`, `version`, `status`), `commit_url` and `compare_url` (GitHub diff since the previous succeeded release with a commit). GitHub links use github.com, or the GHES host of `oidc_issuer` |
+| `deployments` | list (`app`, `kind`) | `live`, `rollbackable` (a `ready` frontend or functions version) |
+| `secrets` | list (`app`) | Names and `updated_at` only, never the values |
+| `schema_changes` | list (`app` required, `all`) | `list_schema_changes`: outside releases since the last succeeded release, or every recorded change |
+| `audit_log` | list (`app`: slug, also matches deleted apps through `details.slug`; `user_id`; `action`: one or several; `q`; `created_at_gte` / `created_at_lte`), get | Sort: `created_at`, `id`, `action`, `user_email`, `app` |
+| `GET /api/dashboard` | | Apps by status, accounts, active tokens, flagged apps, failures of the last 7 days, Postgres cluster and app databases size, host memory, CPUs, load and volumes disk (seen from the control plane container, `os` module and `statfs`) |
+
+Every action reuses the domain functions of the MCP tools and the CLI (`stopApp`, `deleteAppConfirmed`, `rollback`, `addMember`...), with their guards, and is audited with the admin as `user_id`.
+
+Example: `curl -H "Authorization: Bearer $PLATFORM_TOKEN" 'http://admin.localhost:8100/api/apps?filter={"outside_ci":true}'`.
+
 ## Admin CLI (inside the container)
 
 ```bash
@@ -145,19 +179,20 @@ Stopping and deleting (journey B8): `stop_app`, `start_app` and `delete_app` are
 ```bash
 pnpm -r typecheck
 pnpm --filter @platform/control-plane test        # Studio access policy (unit), then plugin/test/scripts.test.sh (skills' scripts, no stack)
-pnpm --filter @platform/control-plane e2e         # requires the running stack and deploy/.env.local; also runs test/ci.e2e.test.ts, test/deploy-cli.e2e.test.ts and test/plugin.e2e.test.ts
+pnpm --filter @platform/control-plane e2e         # requires the running stack and deploy/.env.local; also runs test/ci.e2e.test.ts, test/deploy-cli.e2e.test.ts, test/plugin.e2e.test.ts and test/admin.e2e.test.ts
 pnpm --filter @platform/control-plane e2e:deploy-cli  # platform-deploy alone (direct and CI modes, builds examples/todo-app: needs npm registry access)
 pnpm --filter @platform/control-plane e2e:plugin  # the plugin skills' commands on examples/todo-app (direct path of deploy, admin-deploy)
 pnpm --filter @platform/control-plane e2e:studio  # Studio: login, filtering, isolation
+pnpm --filter @platform/control-plane e2e:admin   # admin REST API (test/admin.e2e.test.ts, also part of e2e), then the admin console in Chromium (apps/admin)
 ```
 
-The e2e suites never touch existing apps or users. Each run creates disposable resources named after a run id: one app `e2e-<id>` for `e2e` (plus `e2e-<id>-ci` and its owner and collaborator for the CI suite, `e2e-<id>-cli` for the `platform-deploy` suite, `e2e-<id>-plg` and its builder for the plugin suite), two apps `e2e-<id>-a` / `e2e-<id>-b` and two builders `e2e-<id>-alice@example.com` / `e2e-<id>-bob@example.com` (random passwords, kept in memory) for `e2e:studio`. They are deleted at the end of the run, even when a test fails, with `delete-app --no-backup` and `delete-user`; the `after` hook then checks that nothing is left (platform rows, sessions, tokens, memberships, containers, sites directory with its routing marker, database and roles) and fails the suite otherwise. The CI suite (`test/ci.e2e.test.ts`) acts as a fake GitHub OIDC issuer: it generates an RS256 key pair, sets `oidc_issuer`, `oidc_jwks` and `ci_allowed_workflows`, toggles `direct_deploy`, and restores the previous settings in its `after` hook. It expects `DIRECT_DEPLOY=everyone` and `ALLOW_TEST_OIDC_JWKS=1` in the environment (local install). The `platform-deploy` suite (`test/deploy-cli.e2e.test.ts`) uses the same fake issuer, and also serves its tokens on a local `ACTIONS_ID_TOKEN_REQUEST_URL`, so that the CLI runs unchanged as in GitHub Actions. Every suite first waits for the control plane to answer through Caddy (`waitForControlPlane`), so it can start right after `docker compose up` returns. Suites that change settings must not run concurrently (two runs at once overwrite each other's issuer, and can restore each other's values). `e2e` test 12 deletes its app with the final backup (checked with `pg_restore --list`) and test 13 deletes a second app (`e2e-<id>-nb`) with `backup: false` and checks that no backup directory is created; the cleanup also removes the run's own backups (`/data/backups/<slug>-*`). Set `E2E_KEEP=1` to keep the apps for inspection (their slugs are printed), then remove them with `delete-app`.
+The e2e suites never touch existing apps or users. Each run creates disposable resources named after a run id: one app `e2e-<id>` for `e2e` (plus `e2e-<id>-ci` and its owner and collaborator for the CI suite, `e2e-<id>-cli` for the `platform-deploy` suite, `e2e-<id>-plg` and its builder for the plugin suite, `e2e-<id>-adm` and two builders for the admin API suite, `e2e-<id>-ui` and its builder for the admin console smoke test), two apps `e2e-<id>-a` / `e2e-<id>-b` and two builders `e2e-<id>-alice@example.com` / `e2e-<id>-bob@example.com` (random passwords, kept in memory) for `e2e:studio`. They are deleted at the end of the run, even when a test fails, with `delete-app --no-backup`, then `delete-user` (after the apps: a user who created an app cannot be deleted while it exists); the `after` hook then checks that nothing is left (platform rows, sessions, tokens, memberships, containers, sites directory with its routing marker, database and roles) and fails the suite otherwise. The CI suite (`test/ci.e2e.test.ts`) acts as a fake GitHub OIDC issuer: it generates an RS256 key pair, sets `oidc_issuer`, `oidc_jwks` and `ci_allowed_workflows`, toggles `direct_deploy`, and restores the previous settings in its `after` hook. It expects `DIRECT_DEPLOY=everyone` and `ALLOW_TEST_OIDC_JWKS=1` in the environment (local install). The `platform-deploy` suite (`test/deploy-cli.e2e.test.ts`) uses the same fake issuer, and also serves its tokens on a local `ACTIONS_ID_TOKEN_REQUEST_URL`, so that the CLI runs unchanged as in GitHub Actions. Every suite first waits for the control plane to answer through Caddy (`waitForControlPlane`), so it can start right after `docker compose up` returns. Suites that change settings must not run concurrently (two runs at once overwrite each other's issuer, and can restore each other's values). `e2e` test 12 deletes its app with the final backup (checked with `pg_restore --list`) and test 13 deletes a second app (`e2e-<id>-nb`) with `backup: false` and checks that no backup directory is created; the cleanup also removes the run's own backups (`/data/backups/<slug>-*`). Set `E2E_KEEP=1` to keep the apps for inspection (their slugs are printed), then remove them with `delete-app`.
 
 ## Technical access (dev)
 
 | Item | Value |
 |---|---|
 | Postgres | `127.0.0.1:54350`, `supabase_admin` / `POSTGRES_PASSWORD` from `deploy/.env`; `platform` database |
-| Caddy admin | `http://127.0.0.1:2030` (generic routes `apps-by-host`, `apps-by-path` and `studio`; per-app state in the `.running` / `.stopped` markers of `plat_sites`) |
+| Caddy admin | `http://127.0.0.1:2030` (generic routes `apps-by-host`, `apps-by-path`, `studio` and `admin`; per-app state in the `.running` / `.stopped` markers of `plat_sites`) |
 | Volumes | `plat_sites`, `plat_functions`, `plat_apps-config`, `plat_uploads`, `plat_backups`, `plat_deno-cache`, `plat_db-data` |
 | Containers | `plat-db`, `plat-caddy`, `plat-edge`, `plat-control-plane`, `plat-studio`, `plat-studio-meta`, and per app `plat-<slug>-auth` and `plat-<slug>-rest` |
