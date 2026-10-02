@@ -13,7 +13,7 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 
 const ROOT = new URL("../../../", import.meta.url);
 const ENV_LOCAL = new URL("deploy/.env.local", ROOT);
-const SCRIPTS = fileURLToPath(new URL("plugin/skills/deploy/scripts/", ROOT));
+const DEPLOY_CLI = fileURLToPath(new URL("packages/deploy-cli/src/main.ts", ROOT));
 const STUDIO_URL = "http://studio.localhost:8100";
 const DEMO_USER = { email: "demo-user@example.com", password: "demo-password" };
 const DEMO_USER_2 = { email: "demo-user-2@example.com", password: "demo-password" };
@@ -120,21 +120,15 @@ function saveEnv() {
   writeFileSync(ENV_LOCAL, [...env].map(([k, v]) => `${k}=${v}\n`).join(""));
 }
 
-async function deploy(client: Client, slug: string, name: string, example: string) {
-  const cwd = fileURLToPath(new URL(`examples/${example}/`, ROOT));
-  const sh = (script: string, args: string[]) =>
-    execFileSync(`${SCRIPTS}${script}`, args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] });
-  const app = await tool(client, "create_app", { name, slug });
-  const migrations = await tool(client, "apply_migrations", { app: slug, migrations: JSON.parse(sh("migrations.sh", [])) });
-  console.log(`  migrations: ${migrations.status} (applied ${migrations.applied.length}, skipped ${migrations.skipped.length})`);
-  sh("build.sh", [app.supabase_url, app.anon_key]);
-  for (const kind of ["functions", "frontend"]) {
-    const { deployment_id, upload_url } = await tool(client, "create_deployment", { app: slug, kind });
-    sh("upload.sh", [kind, upload_url]);
-    const done = await tool(client, "finalize_deployment", { deployment_id });
-    console.log(`  ${kind}: version ${done.version ?? "?"} ${done.status ?? ""}`.trimEnd());
-  }
-  return app as App;
+async function deploy(client: Client, token: string, slug: string, name: string, example: string) {
+  await tool(client, "create_app", { name, slug });
+  // the examples have no .platform.json: --app names the app (requires DIRECT_DEPLOY=everyone, written by install.sh)
+  execFileSync(process.execPath, [DEPLOY_CLI, "deploy", "--auth", "token", "--app", slug,
+    "--dir", fileURLToPath(new URL(`examples/${example}/`, ROOT))], {
+    env: { ...process.env, PLATFORM_TOKEN: token, PLATFORM_URL: mcpUrl, GITHUB_STEP_SUMMARY: "" },
+    stdio: ["ignore", "inherit", "inherit"],
+  });
+  return (await tool(client, "get_app", { app: slug })) as App;
 }
 
 async function signIn(app: App, user: { email: string; password: string }) {
@@ -230,7 +224,7 @@ for (const builder of builders) {
     const { slug, name, example, seed } = builder.app;
     console.log(`  deploying ${slug} (examples/${example})`);
     try {
-      const app = await deploy(client, slug, name, example);
+      const app = await deploy(client, env.get(tokenKey)!, slug, name, example);
       await seed(app);
       summary.push(`  ${slug.padEnd(10)} ${app.url}  (owner ${builder.email})`);
     } catch (error) {

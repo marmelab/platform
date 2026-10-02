@@ -321,6 +321,8 @@ describe("CI deployment API (GitHub OIDC) and DIRECT_DEPLOY", () => {
       const reserved = /reserved to admins/;
       const builder = await call(owner, "whoami");
       assert.deepEqual([builder.direct_deploy, builder.direct_deploy_setting], [false, "admins"]);
+      // the deploy skill writes the app's caller workflow from the first allowed reusable workflow
+      assert.deepEqual(builder.ci, { uses: `${WORKFLOW}@main`, github_org: "e2e-org" });
       assert.equal((await call(admin, "whoami")).direct_deploy, true);
       await refused(owner, "create_deployment", { app: APP, kind: "frontend" }, reserved);
       await refused(owner, "apply_migrations", { app: APP, migrations: [todos] }, reserved);

@@ -16,6 +16,7 @@ const USAGE = `Usage: platform-deploy <check|deploy> [options]
 
 Options:
   --dir <path>       app repository (default: current directory)
+  --app <slug>       app slug, instead of the "app" of .platform.json (which may then be absent)
   --url <url>        platform API URL (default: $PLATFORM_URL; a trailing /mcp is ignored)
   --auth <oidc|token>
                      oidc: GitHub Actions OIDC token on the CI API (ACTIONS_ID_TOKEN_REQUEST_URL/_TOKEN)
@@ -39,6 +40,7 @@ async function main() {
       allowPositionals: true,
       options: {
         dir: { type: "string" },
+        app: { type: "string" },
         url: { type: "string" },
         auth: { type: "string" },
         reason: { type: "string" },
@@ -61,7 +63,7 @@ async function main() {
   if (auth !== "oidc" && auth !== "token") usage(`--auth must be oidc or token, not ${auth}`);
 
   const dir = resolve(values.dir ?? ".");
-  const config = readConfig(dir);
+  const config = readConfig(dir, values.app);
   let platform: Platform;
   if (auth === "token") {
     const pat = process.env.PLATFORM_TOKEN;
