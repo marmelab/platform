@@ -21,6 +21,7 @@ const ID = runId();
 const APP = `e2e-${ID}-adm`;
 const BUILDER = `e2e-${ID}-builder@example.com`;
 const COLLAB = `e2e-${ID}-collab@example.com`;
+const LOCKED = `e2e-${ID}-locked@example.com`;
 const PASSWORD = randomBytes(18).toString("base64url");
 
 async function connect(token: string) {
@@ -126,7 +127,7 @@ describe("admin API e2e", () => {
 
   after(async () => {
     await builder?.close();
-    await cleanup([APP], [BUILDER, COLLAB]);
+    await cleanup([APP], [BUILDER, COLLAB, LOCKED]);
   });
 
   test("1. SPA and API are served on the admin host only", async () => {
@@ -172,6 +173,30 @@ describe("admin API e2e", () => {
     });
     assert.equal(wrong.status, 401);
     await Promise.all([login.body?.cancel(), wrong.body?.cancel()]);
+  });
+
+  test("2b. login throttling: the right password is refused while the email is locked out (SEC-3)", async () => {
+    const email = LOCKED;
+    const created = ok(await request("POST", "/users", { body: { email, role: "admin", password: PASSWORD } }), 201);
+    try {
+      const attempt = (password: string) => fetch(`${ADMIN}/api/auth/login`, {
+        method: "POST",
+        headers: { "content-type": "application/json", origin: ADMIN, "x-platform-admin": "1" },
+        body: JSON.stringify({ email, password }),
+      });
+      for (let i = 0; i < 6; i++) {
+        const reply = await attempt("wrong password!!");
+        await reply.body?.cancel();
+        assert.equal(reply.status, 401, `attempt ${i + 1}`);
+      }
+      const locked = await attempt(PASSWORD);
+      assert.equal(locked.status, 429, "checked before the password");
+      assert.ok(Number(locked.headers.get("retry-after")) > 0, "Retry-After");
+      assert.match((await locked.json()).message, /Too many failed sign-in attempts/);
+      assert.equal(locked.headers.getSetCookie().length, 0, "no session");
+    } finally {
+      ok(await request("DELETE", `/users/${created.id}`));
+    }
   });
 
   test("3. users: list, filter, update, disable, self guards", async () => {

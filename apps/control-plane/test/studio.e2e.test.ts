@@ -163,6 +163,27 @@ describe("Studio for app builders", () => {
     assert.equal((await raw("GET", "/api/platform/projects", { cookie: "platform_session=sess_forged" })).status, 401);
   });
 
+  test("1b. login throttling: after 5 failures, the email is locked out with Retry-After (SEC-3)", async () => {
+    // a disposable address that matches no account: the throttle does not depend on the account existing
+    const email = `e2e-${ID}-ghost@example.com`;
+    const attempt = () => fetch(`${STUDIO}/_platform/login`, {
+      method: "POST",
+      redirect: "manual",
+      headers: { origin: STUDIO },
+      body: new URLSearchParams({ email, password: "not-the-password" }),
+    });
+    for (let i = 0; i < 6; i++) {
+      const reply = await attempt();
+      await reply.body?.cancel();
+      assert.equal(reply.status, 401, `attempt ${i + 1}`);
+    }
+    const locked = await attempt();
+    assert.equal(locked.status, 429);
+    assert.ok(Number(locked.headers.get("retry-after")) > 0, "Retry-After");
+    assert.match(await locked.text(), /Too many failed sign-in attempts/);
+    assert.equal(locked.headers.getSetCookie().length, 0);
+  });
+
   test("2. project lists are filtered", async () => {
     assert.deepEqual(await projectRefs(alice), [A]);
     assert.deepEqual(await projectRefs(bob), [B]);

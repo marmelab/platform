@@ -100,6 +100,15 @@ Routing (`router.ts`): two generic Caddy routes serve every app, installed once 
 
 `http://studio.localhost:8100`: multi-head Studio (`apps/studio`), project ref = app slug, `studio_url` deep link in `get_app`. Platform login on `/_platform/login` (local account with password), then forward auth (`/studio/verify` on the internal `:3001` listener): a builder only sees the apps they are a member of, an admin sees everything. Details: `spikes/m0ter-studio-builders/REPORT.md`.
 
+### Login throttling
+
+Both logins (`/_platform/login` and the admin console's `POST /api/auth/login`) go through `src/login-limit.ts` (TECH_DEBT SEC-3), checked **before** the password: while locked, the right password is refused too (HTTP 429 with `Retry-After`; Studio shows the wait on its login page).
+
+- **Per email**: 5 failures are free, then each further failure locks the address for 30 s, 1 min, 2 min... up to 15 min, from any IP. A successful login clears the email's failures.
+- **Per client IP**: same backoff after 30 failures (people behind one company NAT share an IP), against password spraying over many accounts. A success does not clear it.
+- Failures are forgotten after 15 minutes without a new failure. Counters are in memory (one control plane; a restart clears them, TECH_DEBT SEC-11).
+- **Client IP**: the TCP peer, or the last `X-Forwarded-For` entry when the peer is Caddy (`TRUSTED_PROXIES`, default `caddy`, resolved on the Docker network). Caddy replaces any `X-Forwarded-For` sent by the client, and another container that calls the control plane directly cannot choose its IP with the header.
+
 Studio and `execute_sql` connect as `app_<id>_owner`, which does **not** have `BYPASSRLS`. It owns the `public` tables, so their RLS does not apply to it (as for Supabase's `postgres`). In `auth`, it only reads `auth.users` and `auth.identities` (Auth > Users), through a `platform_owner_read` policy (`FOR SELECT TO app_<id>_owner`); every other `auth` table is denied. `register` (app creation, `syncAll` at control plane startup) re-applies the grants and recreates missing policies: after a GoTrue upgrade whose migrations recreate an `auth` table, restart the control plane (or re-run `create_app`) to repair them.
 
 ## App users (B5)
@@ -122,7 +131,7 @@ The admin console (`apps/admin`, [README](../admin/README.md)) and its API are s
 - `Authorization: Bearer <PAT>` of an admin (scripts, tests);
 - or the platform session cookie: `POST /api/auth/login {email, password}` reuses the sessions of Studio's `/_platform/login` (`sessions` table, `platform_session` cookie, `SESSION_TTL_SECONDS`), refuses non-admins (403, no session), and sets the cookie host-only, `HttpOnly`, `SameSite=Strict`. `GET /api/auth/me` returns the identity, `POST /api/auth/logout` deletes the session.
 
-**CSRF.** Every `<app>.<domain>` is same-site with the admin host, so `SameSite` does not stop a builder's frontend from sending requests with an admin's cookie. With the cookie (not with a PAT), the API refuses any request whose `Sec-Fetch-Site` is neither `same-origin` nor `none`, and every mutation (and the login) must carry `Origin: <admin origin>` and `X-Platform-Admin: 1`: a cross-origin page cannot send that header without a CORS preflight, which the API never grants. The SPA sends it on every request. Login has no rate limiting yet (TECH_DEBT SEC-3).
+**CSRF.** Every `<app>.<domain>` is same-site with the admin host, so `SameSite` does not stop a builder's frontend from sending requests with an admin's cookie. With the cookie (not with a PAT), the API refuses any request whose `Sec-Fetch-Site` is neither `same-origin` nor `none`, and every mutation (and the login) must carry `Origin: <admin origin>` and `X-Platform-Admin: 1`: a cross-origin page cannot send that header without a CORS preflight, which the API never grants. The SPA sends it on every request. Login is throttled as Studio's (see [Login throttling](#login-throttling)).
 
 **Conventions** ([ra-data-simple-rest](https://github.com/marmelab/react-admin/tree/master/packages/ra-data-simple-rest)): `GET /api/<resource>?sort=["field","ASC"]&range=[0,24]&filter={...}` returns an array and `Content-Range: <resource> 0-24/<total>`; `filter={"id":[...]}` (getMany) and `filter={"<field>": value}` (getManyReference) are supported; `GET|PUT|DELETE /api/<resource>/<id>`, `POST /api/<resource>` return the record. Errors are `{message}` with 400 (validation, guard refused, e.g. last owner), 401, 403, 404, 405, 409 (conflict; `code: "APP_STOPPED"` for a write on a stopped app). Lists are filtered, sorted and paginated in memory except the audit log (SQL).
 
@@ -178,7 +187,7 @@ Stopping and deleting (journey B8): `stop_app`, `start_app` and `delete_app` are
 
 ```bash
 pnpm -r typecheck
-pnpm --filter @platform/control-plane test        # Studio access policy (unit), then plugin/test/scripts.test.sh (skills' scripts, no stack)
+pnpm --filter @platform/control-plane test        # Studio access policy and login throttling (unit), then plugin/test/scripts.test.sh (skills' scripts, no stack)
 pnpm --filter @platform/control-plane e2e         # requires the running stack and deploy/.env.local; also runs test/ci.e2e.test.ts, test/deploy-cli.e2e.test.ts, test/plugin.e2e.test.ts and test/admin.e2e.test.ts
 pnpm --filter @platform/control-plane e2e:deploy-cli  # platform-deploy alone (direct and CI modes, builds examples/todo-app: needs npm registry access)
 pnpm --filter @platform/control-plane e2e:plugin  # the plugin skills' commands on examples/todo-app (direct path of deploy, admin-deploy)

@@ -65,6 +65,11 @@ export const config = {
     /** Password of the unprivileged role behind postgres-meta's default connection. */
     metaDefaultPassword: env("STUDIO_META_DEFAULT_PASSWORD"),
   },
+  /**
+   * Reverse proxies whose X-Forwarded-For is trusted for the client IP (login throttling, SEC-3): host names resolved
+   * on the Docker network, or IPs. Every public request arrives through Caddy.
+   */
+  trustedProxies: env("TRUSTED_PROXIES", "caddy").split(",").map((s) => s.trim()).filter(Boolean),
   sessionTtlSeconds: Number(env("SESSION_TTL_SECONDS", String(12 * 3600))),
   uploadTtlSeconds: Number(env("UPLOAD_TTL_SECONDS", "900")),
   maxUploadBytes: Number(env("MAX_UPLOAD_BYTES", String(200 * 1024 * 1024))),

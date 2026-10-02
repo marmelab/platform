@@ -1,9 +1,12 @@
 import { randomBytes, scrypt, timingSafeEqual } from "node:crypto";
 import { promisify } from "node:util";
+import { getConnInfo } from "@hono/node-server/conninfo";
+import type { Context } from "hono";
 import type { User } from "./auth.ts";
 import { config } from "./config.ts";
 import { randomToken, sha256 } from "./crypto.ts";
 import { one, platform } from "./db.ts";
+import { clientIp, throttledLogin, trustedProxyAddresses } from "./login-limit.ts";
 
 const scryptAsync = promisify(scrypt) as (password: string, salt: Buffer, keylen: number, options: object) => Promise<Buffer>;
 const SCRYPT = { N: 16384, r: 8, p: 1, keylen: 64 };
@@ -65,10 +68,23 @@ export async function createSession(userId: string): Promise<string> {
   return token;
 }
 
-/** Returns a new session token, or null if the credentials are wrong. */
-export async function login(email: string, password: string): Promise<string | null> {
-  const user = await verifyCredentials(email, password);
-  return user ? createSession(user.id) : null;
+/** The client's IP for a request received through Caddy (login-limit.ts). */
+export async function requestIp(c: Context): Promise<string> {
+  let peer: string | undefined;
+  try {
+    peer = getConnInfo(c).remote.address;
+  } catch {
+    peer = undefined;
+  }
+  return clientIp(peer, c.req.header("x-forwarded-for"), await trustedProxyAddresses(config.trustedProxies));
+}
+
+/**
+ * verifyCredentials behind the login throttling (SEC-3): throws TooManyAttempts while the email or the IP is locked
+ * out, without checking the password.
+ */
+export async function throttledCredentials(c: Context, email: string, password: string): Promise<User | null> {
+  return throttledLogin(email, await requestIp(c), () => verifyCredentials(email, password));
 }
 
 export async function userForSession(token: string | undefined): Promise<User | null> {
