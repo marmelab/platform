@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Usage: platform-deploy <check|deploy> [--reason "<why>"] [other platform-deploy options]  (run from the project root)
+# Direct mode of platform-deploy (packages/deploy-cli, shipped in the plugin as the deploy-cli symlink) with the
+# builder's PAT: the same CLI as the CI workflow. check publishes nothing (migrations dry run, lints, build).
+set -euo pipefail
+cli="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)/deploy-cli/main.ts"
+[ -f "$cli" ] || { echo "platform-deploy not found at $cli" >&2; exit 2; }
+[ -n "${PLATFORM_TOKEN:-}" ] || { echo "PLATFORM_TOKEN is not set: export the personal access token given by a platform admin" >&2; exit 2; }
+command -v node > /dev/null || { echo "node not found: Node.js >= 22.18 is required" >&2; exit 2; }
+node -e 'const [a, b] = process.versions.node.split(".").map(Number); process.exit(a > 22 || (a === 22 && b >= 18) ? 0 : 1)' ||
+  { echo "Node.js >= 22.18 is required (found $(node --version))" >&2; exit 2; }
+export PLATFORM_URL="${PLATFORM_URL:-http://api.localhost:8100/mcp}"
+exec node "$cli" "$@" --auth token
