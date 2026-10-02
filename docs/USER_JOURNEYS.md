@@ -58,7 +58,7 @@ Trigger: "deploy the app to the platform" in a Vite + Supabase repo.
 7. The skill shows the URL, the Studio link and the run link. On failure, it reads the run logs and `get_logs`, then proposes a fix (B3).
 
 Channel: Claude Code + MCP + GitHub.
-Status: 🟡. Direct deployment from the builder's machine works (✅ M3, about 45 s), and stays the path when `DIRECT_DEPLOY=everyone`. Control plane side ✅ (M3bis): `link_repo` (owner or admin, audited, shown by `get_app`), the CI API `/ci/*` authenticated by GitHub OIDC (linked `repository_id`, protected default branch, allowed `job_workflow_ref`; check mode for other refs), releases with commit, run URL and GitHub actor, and `DIRECT_DEPLOY=admins` refusing the publishing tools to builder PATs. Missing ❌: the deploy CLI (`platform-deploy`), the reusable workflow and the new `deploy` skill. The quota is not enforced yet ❌.
+Status: 🟡. Direct deployment from the builder's machine works (✅ M3, about 45 s), and stays the path when `DIRECT_DEPLOY=everyone`. Control plane side ✅ (M3bis): `link_repo` (owner or admin, audited, shown by `get_app`), the CI API `/ci/*` authenticated by GitHub OIDC (linked `repository_id`, protected default branch, allowed `job_workflow_ref`; check mode for other refs), releases with commit, run URL and GitHub actor, and `DIRECT_DEPLOY=admins` refusing the publishing tools to builder PATs. Deploy CLI and reusable workflow ✅ (M3bis): `platform-deploy` (`packages/deploy-cli`) runs check and deploy with a GitHub OIDC token or a PAT, and `ci/.github/workflows/deploy.yml` calls it after a placeholder company checks job; tested end to end without GitHub (fake OIDC issuer and token endpoint), never run on GitHub yet. Missing ❌: the new `deploy` skill (repo, `link_repo`, secrets, workflow file, push and `gh run watch`). The quota is not enforced yet ❌.
 
 ### B3. Iteration
 Trigger: the builder changes the schema, the functions or the frontend.
@@ -68,7 +68,7 @@ Trigger: the builder changes the schema, the functions or the frontend.
 4. `rollback` of the frontend or the functions if needed, through MCP: it only re-points to a version that CI already deployed. Migrations are never rolled back; a fix goes through a new migration.
 
 Channel: Claude Code + GitHub, MCP for rollback.
-Status: 🟡. The control plane accepts PR checks (check mode: `get_app` and migrations `dry_run`) and CI deployments from the protected default branch (see B2). Missing: the deploy CLI, the reusable workflow (PR comment with the lints), `list_migrations` and a bundle hash (unchanged functions are redeployed). A migration that contains its own `COMMIT` escapes the rollback (CP-1).
+Status: 🟡. The control plane accepts PR checks (check mode: `get_app` and migrations `dry_run`) and CI deployments from the protected default branch (see B2). The deploy CLI and the reusable workflow run the PR check (company checks placeholder, migrations dry run with the lints and `acceptedLints`, build) and report it in the run summary. Missing: the PR comment with the lints (the run summary only), `list_migrations` and a bundle hash (unchanged functions are redeployed). A migration that contains its own `COMMIT` escapes the rollback (CP-1).
 
 ### B4. Debugging in production
 Trigger: a user reports a bug, or an alert comes in.
@@ -200,7 +200,7 @@ Trigger: an emergency fix while CI is broken, an app whose repo cannot run CI, o
 3. The deployment is audited and the app is flagged "deployed outside CI" in A9 until the next CI deployment.
 
 Channel: Claude Code + MCP (admin only).
-Status: 🟡. Control plane ✅: with `DIRECT_DEPLOY=admins`, only admins publish with a PAT; `begin_release(reason)` groups the publications, and the release is recorded as `source = direct`, `admin_exception = true`, with the reason and the admin, and audited. Missing ❌: the `admin-deploy` skill (dirty tree and unpushed commit checks), the deploy CLI, and the flag in the admin view (M4).
+Status: 🟡. Control plane ✅: with `DIRECT_DEPLOY=admins`, only admins publish with a PAT; `begin_release(reason)` groups the publications, and the release is recorded as `source = direct`, `admin_exception = true`, with the reason and the admin, and audited. The deploy CLI ✅ runs a direct deployment with the admin's PAT (`--reason`, commit of the checkout; it only flags uncommitted changes in its summary). Missing ❌: the `admin-deploy` skill (dirty tree and unpushed commit checks), and the flag in the admin view (M4).
 
 ## App user journeys
 
