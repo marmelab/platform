@@ -1,0 +1,22 @@
+# .github/workflows/platform.yml of an app repository: deploys to the platform on push to the default branch,
+# checks pull requests (company checks, migrations dry run with the security linter, build). Nothing else is
+# needed in the repository: no deploy secret (GitHub OIDC), PLATFORM_URL comes from an organization variable.
+#
+# The platform only deploys from the default branch linked to the app (link_repo) when it is protected.
+name: Platform
+
+on:
+  push:
+    branches: [main] # the app's default branch
+  pull_request:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  platform:
+    # replace YOUR-ORG/platform and the ref with the reusable workflow allowed by the platform admin
+    uses: YOUR-ORG/platform/.github/workflows/deploy.yml@main
+    with:
+      mode: ${{ github.event_name == 'push' && 'deploy' || 'check' }}
