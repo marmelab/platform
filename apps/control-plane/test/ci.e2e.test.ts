@@ -11,7 +11,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { exportJWK, generateKeyPair, type JWTPayload, SignJWT } from "jose";
 import * as tar from "tar";
-import { cleanup, cli, psql, runId } from "./disposable.ts";
+import { cleanup, cli, psql, runId, waitForControlPlane } from "./disposable.ts";
 
 const ROOT = new URL("../../../", import.meta.url);
 const env = Object.fromEntries(
@@ -155,6 +155,7 @@ describe("CI deployment API (GitHub OIDC) and DIRECT_DEPLOY", () => {
   let saved: Record<string, string>;
 
   before(async () => {
+    await waitForControlPlane(MCP_URL);
     saved = settingsSnapshot();
     const jwk = { ...(await exportJWK(keys.publicKey)), kid: KID, alg: "RS256", use: "sig" };
     cli(["set-setting", "oidc_issuer", ISSUER]);

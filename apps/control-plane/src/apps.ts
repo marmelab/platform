@@ -17,7 +17,7 @@ import { type AppInfo, SLUG_RE } from "@platform/shared";
 import { audit } from "./audit.ts";
 import type { User } from "./auth.ts";
 import { backupApp } from "./backups.ts";
-import { appHost, appUrl, config, internalAppUrl } from "./config.ts";
+import { appUrl, config, internalAppUrl } from "./config.ts";
 import { decrypt, encrypt, randomHex, signJwt } from "./crypto.ts";
 import { many, one, platform, runAll, withAdmin } from "./db.ts";
 import { currentTarget, switchCurrent, writeFileAtomic } from "./fsutil.ts";
@@ -281,12 +281,7 @@ export async function provision(app: AppRow) {
     await startServices(app.slug, secrets);
     await prepareDirectories(app.slug);
     await writeEdgeConfig(app);
-    await router.upsertApp({
-      slug: app.slug,
-      host: appHost(app.slug),
-      gotrue: `${containerName(app.slug, "auth")}:9999`,
-      postgrest: `${containerName(app.slug, "rest")}:3000`,
-    });
+    await router.upsertApp(app.slug);
     await waitHealthy(`http://${containerName(app.slug, "auth")}:9999/health`);
     await waitHealthy(`http://${containerName(app.slug, "rest")}:3000/`);
     await studio.register(app);
@@ -339,15 +334,10 @@ export async function syncAll() {
       // apps stopped before B8 made them read-only, or a stop/start interrupted half-way
       await setDatabaseReadOnly(app.slug, app.status === "stopped");
       if (app.status === "stopped") {
-        await router.maintenanceApp(app.slug, appHost(app.slug));
+        await router.maintenanceApp(app.slug);
         continue;
       }
-      await router.upsertApp({
-        slug: app.slug,
-        host: appHost(app.slug),
-        gotrue: `${containerName(app.slug, "auth")}:9999`,
-        postgrest: `${containerName(app.slug, "rest")}:3000`,
-      });
+      await router.upsertApp(app.slug);
     } catch (error) {
       console.error(`sync ${app.slug} failed`, error);
     }
@@ -401,7 +391,7 @@ export async function stopApp(actor: User | null, app: AppRow) {
     await setDatabaseReadOnly(app.slug, true);
     return { slug: app.slug, status: "stopped", changed: false };
   }
-  await router.maintenanceApp(app.slug, appHost(app.slug));
+  await router.maintenanceApp(app.slug);
   await orchestrator.stopApp(app.slug);
   await setDatabaseReadOnly(app.slug, true, true);
   await platform.query("update apps set status = 'stopped', updated_at = now() where id = $1", [app.id]);

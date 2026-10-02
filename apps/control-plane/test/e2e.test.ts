@@ -10,7 +10,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { createClient } from "@supabase/supabase-js";
 import * as tar from "tar";
-import { cleanup, cli, psql, runId } from "./disposable.ts";
+import { cleanup, cli, psql, runId, waitForControlPlane } from "./disposable.ts";
 
 const ROOT = new URL("../../../", import.meta.url);
 const env = Object.fromEntries(
@@ -92,6 +92,7 @@ describe("control plane M2 e2e", () => {
   let app: any;
 
   before(async () => {
+    await waitForControlPlane(MCP_URL);
     admin = await connect(env.PLATFORM_TOKEN);
   });
 
