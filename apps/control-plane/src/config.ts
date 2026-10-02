@@ -24,6 +24,10 @@ export const config = {
   appsDomain: env("APPS_DOMAIN", "localhost"),
   publicPort: env("PUBLIC_PORT", "8100"),
   apiHost: env("API_HOST", "api.localhost"),
+  /** Admin SPA and its API (admin.<domain>/api/*), same origin (M4). */
+  adminHost: env("ADMIN_HOST", "admin.localhost"),
+  /** Built admin SPA (apps/admin/dist), copied into the control plane image. */
+  adminStaticDir: env("ADMIN_STATIC_DIR", "/repo/apps/admin/dist"),
   caddyAdmin: env("CADDY_ADMIN_URL", "http://caddy:2019"),
   /** Internal Caddy listener used by edge functions to reach their app's API (SUPABASE_URL). */
   internalGateway: env("INTERNAL_GATEWAY_URL", "http://caddy:8180"),
@@ -89,5 +93,6 @@ const portSuffix = () => (["80", "443", ""].includes(config.publicPort) ? "" : `
 export const appHost = (slug: string) => `${slug}.${config.appsDomain}`;
 export const appUrl = (slug: string) => `${config.publicScheme}://${appHost(slug)}${portSuffix()}`;
 export const apiUrl = () => `${config.publicScheme}://${config.apiHost}${portSuffix()}`;
+export const adminUrl = (path = "") => `${config.publicScheme}://${config.adminHost}${portSuffix()}${path}`;
 export const studioUrl = (path = "") => `${config.publicScheme}://${config.studio.host}${portSuffix()}${path}`;
 export const internalAppUrl = (slug: string) => `${config.internalGateway}/${slug}`;

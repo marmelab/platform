@@ -17,6 +17,8 @@ export interface Router {
   maintenanceApp(slug: string): Promise<void>;
   removeApp(slug: string): Promise<void>;
   upsertStudio(route: StudioRoute): Promise<void>;
+  /** admin.<domain> -> the control plane (admin SPA and API, M4). */
+  upsertAdmin(route: { host: string; upstream: string }): Promise<void>;
 }
 
 /** Headers set from the forward auth response; any value sent by the client is dropped first. */
@@ -293,6 +295,18 @@ export class CaddyRouter implements Router {
 
   async removeApp(slug: string): Promise<void> {
     await this.setMarker(slug, null);
+  }
+
+  async upsertAdmin(route: { host: string; upstream: string }): Promise<void> {
+    await this.change({
+      public: {
+        admin: {
+          match: [{ host: [route.host] }],
+          terminal: true,
+          handle: [{ handler: "reverse_proxy", upstreams: [{ dial: route.upstream }] }],
+        },
+      },
+    });
   }
 
   /** Studio behind the control plane's forward auth (equivalent of `forward_auth ... copy_headers`). */

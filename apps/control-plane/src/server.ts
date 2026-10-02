@@ -1,6 +1,7 @@
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { Hono } from "hono";
 import type { ReadableStream as WebReadableStream } from "node:stream/web";
+import { adminSite, isAdminHost } from "./admin/site.ts";
 import { authenticate } from "./auth.ts";
 import { ciRoutes } from "./ci.ts";
 import { receiveUpload } from "./deployments.ts";
@@ -8,6 +9,12 @@ import { buildMcpServer } from "./mcp.ts";
 import { studioPublicRoutes } from "./studio/routes.ts";
 
 export const app = new Hono();
+
+// admin.<domain> only serves the admin SPA and its API (admin/site.ts)
+app.use("*", async (c, next) => {
+  if (isAdminHost(c.req.header("host"))) return adminSite.fetch(c.req.raw);
+  await next();
+});
 
 app.get("/health", (c) => c.json({ ok: true }));
 app.route("/", studioPublicRoutes);

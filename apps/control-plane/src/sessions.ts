@@ -43,21 +43,32 @@ export async function setPassword(email: string, password: string) {
   ]);
 }
 
-/** Returns a new session token, or null if the credentials are wrong. */
-export async function login(email: string, password: string): Promise<string | null> {
-  const user = await one<{ id: string; password_hash: string | null }>(
-    "select id, password_hash from users where email = $1 and active",
+/** The active user with these credentials, or null (same cost for unknown emails). */
+export async function verifyCredentials(email: string, password: string): Promise<User | null> {
+  const user = await one<User & { password_hash: string | null }>(
+    "select id, email, name, role, password_hash from users where email = $1 and active",
     [email.trim().toLowerCase()],
   );
   const ok = await verifyPassword(password, user?.password_hash ?? DUMMY_HASH);
   if (!user?.password_hash || !ok) return null;
+  return { id: user.id, email: user.email, name: user.name, role: user.role };
+}
+
+/** Opens a browser session (Studio, admin) and returns its token. */
+export async function createSession(userId: string): Promise<string> {
   const token = randomToken("sess");
   await platform.query(
     "insert into sessions (user_id, token_hash, expires_at) values ($1, $2, now() + make_interval(secs => $3))",
-    [user.id, sha256(token), config.sessionTtlSeconds],
+    [userId, sha256(token), config.sessionTtlSeconds],
   );
   await platform.query("delete from sessions where expires_at < now()");
   return token;
+}
+
+/** Returns a new session token, or null if the credentials are wrong. */
+export async function login(email: string, password: string): Promise<string | null> {
+  const user = await verifyCredentials(email, password);
+  return user ? createSession(user.id) : null;
 }
 
 export async function userForSession(token: string | undefined): Promise<User | null> {
