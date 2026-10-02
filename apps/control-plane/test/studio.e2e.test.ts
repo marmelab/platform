@@ -6,6 +6,8 @@ import { execFileSync } from "node:child_process";
 import { createHmac, randomBytes } from "node:crypto";
 import { appendFileSync, readFileSync } from "node:fs";
 import { request } from "node:http";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 
 const ROOT = new URL("../../../", import.meta.url);
 const readEnv = (file: string) =>
@@ -244,6 +246,68 @@ describe("Studio for app builders", () => {
     assert.ok(reply.status >= 400 && reply.status < 600, `${reply.status} ${reply.body}`);
     assert.doesNotThrow(() => JSON.parse(reply.body));
     assert.equal((await raw("GET", "/api/platform/storage/todo-app/buckets", { cookie: alice })).status, 403);
+  });
+
+  test("9b. owner role: no BYPASSRLS, auth.* read through targeted policies only", async () => {
+    const rows = async (query: string) => {
+      const reply = await sql(alice, "demo", query);
+      assert.equal(reply.status, 200, reply.body);
+      return JSON.parse(reply.body) as Record<string, unknown>[];
+    };
+    assert.deepEqual(await rows("select rolbypassrls from pg_roles where rolname = current_user"), [{ rolbypassrls: false }]);
+    // Auth > Users (pg-meta get-users-paginated: auth.users joined with auth.identities)
+    const listed = await rows(`select u.email, coalesce((select array_agg(distinct i.provider) from auth.identities i
+      where i.user_id = u.id), '{}') as providers from auth.users u order by u.created_at desc limit 20`);
+    assert.ok(listed.length > 0, "demo users visible");
+    assert.ok(listed.some((u) => (u.providers as string[]).includes("email")), JSON.stringify(listed));
+    for (const table of ["sessions", "refresh_tokens", "mfa_factors", "one_time_tokens", "oauth_clients"]) {
+      const reply = await sql(alice, "demo", `select count(*) from auth.${table}`);
+      assert.notEqual(reply.status, 200, `${table}: ${reply.body}`);
+      assert.match(reply.body, /permission denied/, table);
+    }
+    assert.deepEqual(await rows(`select tablename::text as t, roles::text[] as roles, cmd from pg_policies
+      where schemaname = 'auth' order by 1`), [
+      { t: "identities", roles: ["app_demo_owner"], cmd: "SELECT" },
+      { t: "users", roles: ["app_demo_owner"], cmd: "SELECT" },
+    ]);
+    assert.deepEqual(await rows(`select bool_and(relrowsecurity) as rls from pg_class
+      where oid in ('auth.users'::regclass, 'auth.identities'::regclass)`), [{ rls: true }]);
+    assert.deepEqual(await rows(`select r, has_schema_privilege(r, 'auth', 'usage') and
+      (has_table_privilege(r, 'auth.users', 'select') or has_table_privilege(r, 'auth.identities', 'select')) as reads
+      from unnest(array['anon', 'authenticated', 'service_role', 'app_demo_authenticator']) r`), [
+      { r: "anon", reads: false },
+      { r: "authenticated", reads: false },
+      { r: "service_role", reads: false },
+      { r: "app_demo_authenticator", reads: false },
+    ]);
+    // Assumed: the owner owns its public tables, so their RLS does not apply to it (as for Supabase's "postgres").
+    const probe = `public.rls_probe_${RUN}`;
+    try {
+      assert.deepEqual(await rows(`create table ${probe} (x int); alter table ${probe} enable row level security;
+        insert into ${probe} values (1); select count(*)::int as n from ${probe}`), [{ n: 1 }]);
+    } finally {
+      await rows(`drop table if exists ${probe}`);
+    }
+  });
+
+  test("9c. execute_sql (owner role) still reads auth.users for diagnostics", async () => {
+    const client = new Client({ name: "studio-e2e", version: "0.0.0" });
+    await client.connect(new StreamableHTTPClientTransport(new URL(local.PLATFORM_URL ?? "http://api.localhost:8100/mcp"), {
+      requestInit: { headers: { Authorization: `Bearer ${local.PLATFORM_TOKEN}` } },
+    }));
+    try {
+      const run = async (query: string) =>
+        (await client.callTool({ name: "execute_sql", arguments: { app: "demo", sql: query } })) as
+          { isError?: boolean; content: { text: string }[] };
+      const users = await run("select count(*)::int as n, (select rolbypassrls from pg_roles where rolname = current_user) as b from auth.users");
+      assert.ok(!users.isError, users.content[0]?.text);
+      const [row] = JSON.parse(users.content[0]!.text).rows as { n: number; b: boolean }[];
+      assert.ok(row!.n > 0 && row!.b === false, JSON.stringify(row));
+      const sessions = await run("select count(*) from auth.sessions");
+      assert.ok(sessions.isError && /permission denied/.test(sessions.content[0]!.text), sessions.content[0]?.text);
+    } finally {
+      await client.close();
+    }
   });
 
   test("10. logout ends the session", async () => {

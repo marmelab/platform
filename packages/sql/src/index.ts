@@ -124,26 +124,52 @@ export function dropAppSql(appId: string): string[] {
 }
 
 /**
- * Studio connects as the owner role (SQL editor, table editor, Auth > Users). Like Supabase's "postgres" it needs
- * BYPASSRLS (auth.* tables have RLS enabled without policies), read access to every auth table and the RLS roles
- * for impersonation (SET ROLE, without inheriting their privileges). Cluster-level, run in "postgres".
+ * auth.* tables Studio reads in SQL (pg-meta: Auth > Users list, user detail and count). Every other auth table stays
+ * out of reach: user writes go through GoTrue's admin API with the service key.
+ */
+export const STUDIO_AUTH_TABLES = ["users", "identities"] as const;
+
+export const STUDIO_AUTH_POLICY = "platform_owner_read";
+
+/**
+ * Studio connects as the owner role (SQL editor, table editor, Auth > Users). Unlike Supabase's "postgres" it does not
+ * bypass RLS: it reads STUDIO_AUTH_TABLES through a dedicated policy (see studioDatabaseSql). It gets the RLS roles for
+ * impersonation (SET ROLE, without inheriting their privileges). Cluster-level, run in "postgres".
  */
 export function studioClusterSql(appId: string): string[] {
   const r = appRoles(appId);
   return [
-    `alter role ${r.owner} bypassrls`,
+    `alter role ${r.owner} nobypassrls`,
     `grant anon, authenticated, service_role to ${r.owner} with inherit false, set true`,
   ];
 }
 
-/** Run inside the app database as supabase_admin. Re-runnable. */
+/**
+ * Run inside the app database as supabase_admin, once GoTrue has migrated auth.*. Re-runnable: it also repairs the
+ * policies if a GoTrue migration recreated a table. Tables that do not exist yet are skipped.
+ */
 export function studioDatabaseSql(appId: string): string[] {
   const r = appRoles(appId);
+  const tables = STUDIO_AUTH_TABLES.map((t) => `'${t}'`).join(", ");
   return [
     `grant usage on schema graphql, graphql_public to ${r.owner}`,
-    `grant select on all tables in schema auth to ${r.owner}`,
-    `alter default privileges for role ${r.authAdmin} in schema auth grant select on tables to ${r.owner}`,
+    `revoke select on all tables in schema auth from ${r.owner}`,
+    `alter default privileges for role ${r.authAdmin} in schema auth revoke select on tables from ${r.owner}`,
     `grant trigger on auth.users to ${r.owner}`,
+    `do $$
+declare t text;
+begin
+  foreach t in array array[${tables}] loop
+    if to_regclass(format('auth.%I', t)) is null then continue; end if;
+    execute format('grant select on auth.%I to ${r.owner}', t);
+    if not (select relrowsecurity from pg_class where oid = format('auth.%I', t)::regclass) then
+      execute format('alter table auth.%I enable row level security', t);
+    end if;
+    if not exists (select from pg_policies where schemaname = 'auth' and tablename = t and policyname = '${STUDIO_AUTH_POLICY}') then
+      execute format('create policy ${STUDIO_AUTH_POLICY} on auth.%I for select to ${r.owner} using (true)', t);
+    end if;
+  end loop;
+end $$`,
   ];
 }
 

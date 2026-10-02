@@ -235,7 +235,6 @@ export async function provision(app: AppRow) {
   const secrets = appSecrets(app);
   try {
     await provisionDatabase(app.slug, secrets);
-    await studio.register(app);
     await startServices(app.slug, secrets);
     await prepareDirectories(app.slug);
     await writeEdgeConfig(app);
@@ -247,6 +246,7 @@ export async function provision(app: AppRow) {
     });
     await waitHealthy(`http://${containerName(app.slug, "auth")}:9999/health`);
     await waitHealthy(`http://${containerName(app.slug, "rest")}:3000/`);
+    await studio.register(app);
     await platform.query("update apps set status = 'running', error = null, updated_at = now() where id = $1", [app.id]);
   } catch (error) {
     await platform.query("update apps set status = 'error', error = $2, updated_at = now() where id = $1", [
