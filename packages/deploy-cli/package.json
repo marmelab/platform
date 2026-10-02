@@ -1,0 +1,14 @@
+{
+  "name": "@platform/deploy-cli",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "platform-deploy: checks or deploys an app repository to the platform (GitHub OIDC or PAT)",
+  "bin": { "platform-deploy": "./src/main.ts" },
+  "engines": { "node": ">=22.18" },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "start": "node src/main.ts"
+  },
+  "devDependencies": { "@types/node": "^26.6.3", "typescript": "^7.0.2" }
+}

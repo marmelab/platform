@@ -1436,6 +1436,14 @@ importers:
       vitest:
         specifier: 'catalog:'
         version: 3.2.4(@types/node@22.13.14)(@vitest/ui@3.2.4)(jiti@2.6.1)(jsdom@28.1.0(@noble/hashes@1.8.0))(msw@2.11.3(@types/node@22.13.14)(typescript@6.0.2))(sass@1.77.4)(terser@5.39.0)(tsx@4.20.3)(yaml@2.8.3)
+  packages/deploy-cli:
+    devDependencies:
+      '@types/node':
+        specifier: ^26.6.3
+        version: 26.6.3
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
   packages/shared:
     dependencies:
       zod:
