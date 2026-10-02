@@ -15,7 +15,7 @@ export interface Settings {
   oidcAudience: string;
   /** Defaults to `<issuer>/.well-known/jwks` (github.com and GHES). */
   oidcJwksUrl: string;
-  /** TEST ONLY: inline JWKS (JSON) trusted instead of fetching oidcJwksUrl. Never set in production. */
+  /** TEST ONLY: inline JWKS (JSON) trusted instead of fetching oidcJwksUrl. Ignored without ALLOW_TEST_OIDC_JWKS=1. */
   oidcJwks: string | null;
 }
 
@@ -26,7 +26,7 @@ export const SETTING_KEYS = {
   oidc_issuer: "OIDC_ISSUER",
   oidc_audience: "OIDC_AUDIENCE",
   oidc_jwks_url: "OIDC_JWKS_URL",
-  oidc_jwks: "(none, test only)",
+  oidc_jwks: "(none, test only: requires ALLOW_TEST_OIDC_JWKS=1)",
 } as const;
 export type SettingKey = keyof typeof SETTING_KEYS;
 
@@ -35,7 +35,12 @@ export function validateSetting(key: string, value: string): asserts key is Sett
   if (key === "direct_deploy" && !["admins", "everyone"].includes(value)) {
     throw new Error("direct_deploy must be admins or everyone");
   }
-  if (key === "oidc_jwks") JSON.parse(value);
+  if (key === "oidc_jwks") {
+    if (!config.allowTestOidcJwks) {
+      throw new Error("oidc_jwks is test only: it requires ALLOW_TEST_OIDC_JWKS=1 on the control plane (local installs)");
+    }
+    JSON.parse(value);
+  }
 }
 
 export async function getSettings(): Promise<Settings> {
@@ -55,7 +60,8 @@ export async function getSettings(): Promise<Settings> {
     oidcIssuer: issuer,
     oidcAudience: rows.get("oidc_audience") ?? d.oidcAudience ?? apiUrl(),
     oidcJwksUrl: rows.get("oidc_jwks_url") ?? d.oidcJwksUrl ?? `${issuer}/.well-known/jwks`,
-    oidcJwks: rows.get("oidc_jwks") ?? null,
+    // SEC-10: a test value left behind is ignored unless the environment explicitly allows it
+    oidcJwks: config.allowTestOidcJwks ? rows.get("oidc_jwks") ?? null : null,
   };
 }
 

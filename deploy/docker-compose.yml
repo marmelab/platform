@@ -100,12 +100,17 @@ services:
       OIDC_ISSUER: ${OIDC_ISSUER:-https://token.actions.githubusercontent.com}
       OIDC_AUDIENCE: ${OIDC_AUDIENCE:-}
       OIDC_JWKS_URL: ${OIDC_JWKS_URL:-}
+      # Test only (SEC-10): honour the inline oidc_jwks setting. install.sh writes 1 for local installs; never in
+      # production.
+      ALLOW_TEST_OIDC_JWKS: ${ALLOW_TEST_OIDC_JWKS:-}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - sites:/data/sites
       - functions:/data/functions
       - apps-config:/data/config/apps
       - uploads:/data/uploads
+      # final backups taken by delete_app (<slug>-<timestamp>/): restore, retention and off-site copy are M7
+      - backups:/data/backups
     labels:
       platform.service: control-plane
 
@@ -164,6 +169,7 @@ volumes:
   functions:
   apps-config:
   uploads:
+  backups:
   deno-cache:
 
 networks:

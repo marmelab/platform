@@ -267,7 +267,9 @@ export function buildMcpServer(user: User): McpServer {
     "stop_app",
     {
       description: "Stop the app (owner or admin only): its Auth and REST containers are stopped, functions no longer " +
-        "run and every URL of the app answers 503 with a maintenance page. The database and Studio stay available.",
+        "run and every URL of the app answers 503 with a maintenance page. The app becomes read-only: its database " +
+        "can still be read (Studio, execute_sql, migrations dry_run, logs), but writes, migrations, secrets, " +
+        "deployments, rollbacks and releases are refused (APP_STOPPED) until start_app.",
       inputSchema: t.stop_app,
     },
     ({ app }) =>
@@ -280,7 +282,10 @@ export function buildMcpServer(user: User): McpServer {
 
   server.registerTool(
     "start_app",
-    { description: "Restart a stopped app (owner or admin only) and restore its routes", inputSchema: t.start_app },
+    {
+      description: "Restart a stopped app (owner or admin only), make it writable again and restore its routes",
+      inputSchema: t.start_app,
+    },
     ({ app }) =>
       run(async () => {
         const target = await appForUser(user, app);
@@ -293,7 +298,9 @@ export function buildMcpServer(user: User): McpServer {
     "delete_app",
     {
       description: "Irreversibly delete the app (owner or admin only): database, users, files, functions, secrets, " +
-        "deployments and members. No backup is taken. Only with the user's explicit consent; confirm must repeat the slug.",
+        "deployments and members. A final backup (database dump and deployed files, kept on the platform host) is " +
+        "taken first and its path returned; if it fails, nothing is deleted. Only with the user's explicit consent; " +
+        "confirm must repeat the slug.",
       inputSchema: t.delete_app,
     },
     ({ app, confirm }) =>

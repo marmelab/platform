@@ -523,9 +523,13 @@ describe("control plane M2 e2e", () => {
   const runningContainers = () =>
     execFileSync("docker", ["ps", "-q", "--filter", `label=platform.app=${APP}`], { encoding: "utf8" }).trim();
 
-  test("11. stop_app / start_app: maintenance page, no API or functions, then back", async () => {
+  test("11. stop_app / start_app: maintenance page, no API or functions, read-only, then back", async () => {
     await refused(collab, "stop_app", { app: APP }, /only an owner/);
     await refused(collab, "start_app", { app: APP }, /only an owner/);
+    // uploaded before the stop, finalized only once started
+    const created = await call(owner, "create_deployment", { app: APP, kind: "functions" });
+    const put = await fetch(created.upload_url, { method: "PUT", body: await pack(join(work, "project"), ["supabase"]) });
+    assert.equal(put.status, 200);
 
     assert.deepEqual(await call(owner, "stop_app", { app: APP }), { slug: APP, status: "stopped", changed: true });
     assert.equal((await call(owner, "stop_app", { app: APP })).changed, false, "stop_app is idempotent");
@@ -543,15 +547,31 @@ describe("control plane M2 e2e", () => {
       assert.equal(response.status, 503, path);
       assert.equal((await response.json()).code, "APP_STOPPED", path);
     }
-    // the functions warm-up would boot them: functions deployments wait for start_app
-    const created = await call(owner, "create_deployment", { app: APP, kind: "functions" });
-    const put = await fetch(created.upload_url, { method: "PUT", body: await pack(join(work, "project"), ["supabase"]) });
-    assert.equal(put.status, 200);
-    await refused(owner, "finalize_deployment", { deployment_id: created.deployment_id }, /is stopped: start_app/);
+
+    // read-only: the database default for every new session, and the control plane refuses every write
+    const database = `app_${APP.replace(/-/g, "_")}`;
+    assert.equal(psql("show default_transaction_read_only", database), "on");
+    assert.equal((await call(collab, "execute_sql", { app: APP, sql: "select count(*)::int as n from public.todos" })).rows.length, 1);
+    const stopped = /APP_STOPPED: app .* is stopped and read-only/;
+    await refused(owner, "execute_sql", { app: APP, sql: "comment on table public.todos is 'x'", write: true }, stopped);
+    const probe = { version: `${RUN}3`, name: "stopped_probe", sql: "create table public.stopped_probe (id int primary key);" +
+      "alter table public.stopped_probe enable row level security;" };
+    const dry = await call(owner, "apply_migrations", { app: APP, migrations: [probe], dry_run: true });
+    assert.equal(dry.status, "dry_run", "dry_run keeps working on a read-only database");
+    assert.deepEqual(dry.would_apply, [probe.version]);
+    await refused(owner, "apply_migrations", { app: APP, migrations: [probe] }, stopped);
+    await refused(owner, "set_secrets", { app: APP, secrets: { GREETING: "no" } }, stopped);
+    await refused(owner, "create_deployment", { app: APP, kind: "frontend" }, stopped);
+    await refused(owner, "finalize_deployment", { deployment_id: created.deployment_id }, stopped);
+    await refused(owner, "rollback", { app: APP, kind: "frontend" }, stopped);
+    assert.ok((await call(collab, "list_secrets", { app: APP })).length > 0, "reads stay available");
+    assert.ok((await call(collab, "list_deployments", { app: APP })).length > 0);
+    assert.equal(psql(`select count(*) from pg_tables where tablename = 'stopped_probe'`, database), "0");
 
     assert.deepEqual(await call(owner, "start_app", { app: APP }), { slug: APP, status: "running", changed: true });
     assert.equal((await call(owner, "start_app", { app: APP })).changed, false, "start_app is idempotent");
     assert.equal((await call(admin, "get_app", { app: APP })).status, "running");
+    assert.equal(psql("show default_transaction_read_only", database), "off");
     assert.notEqual(runningContainers(), "");
     assert.match((await getPage("/")).text, /Demo v2/);
     const rest = await fetch(`${APP_URL}/rest/v1/todos?select=title`, { headers: { apikey: app.anon_key } });
@@ -561,23 +581,41 @@ describe("control plane M2 e2e", () => {
     assert.deepEqual(await ping.json(), { pong: true });
     const finalized = await call(owner, "finalize_deployment", { deployment_id: created.deployment_id });
     assert.equal(finalized.status, "live", "the upload kept while stopped can be published once started");
+    await call(owner, "execute_sql", { app: APP, sql: "comment on table public.todos is 'writable again'", write: true });
 
     const audited = psql(`select string_agg(l.action, ',' order by l.id) from audit_log l join apps a on a.id = l.app_id
       where a.slug = '${APP}' and l.action in ('stop_app', 'start_app')`);
     assert.equal(audited, "stop_app,start_app");
   });
 
-  test("12. delete_app: owner only, explicit confirmation", async () => {
+  test("12. delete_app: owner only, explicit confirmation, final backup first", async () => {
     await refused(collab, "delete_app", { app: APP, confirm: APP }, /only an owner/);
     await refused(owner, "delete_app", { app: APP, confirm: "yes" }, new RegExp(`irreversible: pass confirm="${APP}"`));
     assert.equal((await call(owner, "get_app", { app: APP })).status, "running", "a refused delete changes nothing");
 
-    assert.deepEqual(await call(owner, "delete_app", { app: APP, confirm: APP }), { slug: APP, deleted: true });
+    const deleted = await call(owner, "delete_app", { app: APP, confirm: APP });
+    assert.equal(deleted.slug, APP);
+    assert.equal(deleted.deleted, true);
+    assert.match(deleted.backup, new RegExp(`^/data/backups/${APP}-\\d{4}-\\d\\d-\\d\\dT[\\d-]+Z$`));
     await refused(owner, "get_app", { app: APP }, /not found/);
     assert.equal((await getPage("/")).status, 404, "Caddy no longer routes the app");
     assert.equal(
-      psql(`select count(*) from audit_log where action = 'delete_app' and app_id is null and details->>'slug' = '${APP}'`),
-      "1",
+      psql(`select details->>'backup' from audit_log where action = 'delete_app' and app_id is null and details->>'slug' = '${APP}'`),
+      deleted.backup,
     );
+
+    // the backup: a restorable dump of the database (schema, data, auth users) and the deployed files
+    const inCp = (...args: string[]) => execFileSync("docker", ["exec", "plat-control-plane", ...args]);
+    assert.deepEqual(inCp("ls", deleted.backup).toString().trim().split("\n").sort(),
+      ["database.dump", "functions.tar.gz", "manifest.json", "sites.tar.gz"]);
+    const dump = inCp("cat", `${deleted.backup}/database.dump`);
+    assert.ok(dump.length > 10_000, `dump of ${dump.length} bytes`);
+    const listing = execFileSync("docker", ["exec", "-i", "plat-db", "pg_restore", "--list"], { input: dump, encoding: "utf8" });
+    assert.match(listing, /TABLE public todos /);
+    assert.match(listing, /TABLE DATA auth users /);
+    assert.match(listing, /TABLE DATA supabase_migrations schema_migrations /);
+    assert.match(inCp("tar", "-tzf", `${deleted.backup}/sites.tar.gz`).toString(), new RegExp(`^${APP}/current`, "m"));
+    assert.match(inCp("tar", "-tzf", `${deleted.backup}/functions.tar.gz`).toString(), /\/ping\//);
+    assert.equal(JSON.parse(inCp("cat", `${deleted.backup}/manifest.json`).toString()).slug, APP);
   });
 });

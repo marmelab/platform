@@ -1,7 +1,7 @@
 // Releases (PLAN_1 §4.1): one per CI run attempt (source "ci"), or per direct deployment with a PAT (source
 // "direct"). A release groups the deployments (migrations, functions, frontend) it published.
 import type { ReleaseInfo } from "@platform/shared";
-import { type AppRow, UserError } from "./apps.ts";
+import { type AppRow, requireWritable, UserError } from "./apps.ts";
 import { audit } from "./audit.ts";
 import type { User } from "./auth.ts";
 import { one } from "./db.ts";
@@ -120,6 +120,7 @@ export async function requireDirectDeploy(user: User): Promise<{ adminException:
 }
 
 export async function beginDirectRelease(user: User, app: AppRow, options: { commitSha?: string; reason?: string }) {
+  requireWritable(app, "begin_release");
   const { adminException } = await requireDirectDeploy(user);
   return createRelease(app, {
     source: "direct",

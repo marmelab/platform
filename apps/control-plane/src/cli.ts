@@ -6,9 +6,9 @@
 //   node src/cli.ts set-password <email> --generate                     -> prints a generated password
 //   node src/cli.ts add-member <slug> <email> [owner|collaborator]
 //   node src/cli.ts remove-member <slug> <email>   (idempotent, refuses to remove the last owner)
-//   node src/cli.ts stop-app <slug>            (maintenance page, containers stopped)
+//   node src/cli.ts stop-app <slug>            (maintenance page, containers stopped, database read-only)
 //   node src/cli.ts start-app <slug>
-//   node src/cli.ts delete-app <slug>
+//   node src/cli.ts delete-app <slug>          (final backup first, prints its path; aborted if the backup fails)
 //   node src/cli.ts settings                       (effective platform settings)
 //   node src/cli.ts set-setting <key> <value>      (overrides the environment, e.g. direct_deploy admins)
 //   node src/cli.ts unset-setting <key>            (back to the environment's value)
@@ -68,8 +68,8 @@ if (command === "init") {
   const { changed } = await startApp(null, await appBySlug(args[0]));
   console.log(changed ? `app ${args[0]} started` : `app ${args[0]} is already running`);
 } else if (command === "delete-app" && args[0]) {
-  await deleteApp(args[0]);
-  console.log(`app ${args[0]} deleted`);
+  const { backup } = await deleteApp(null, args[0]);
+  console.log(backup ? `app ${args[0]} deleted, backup in ${backup}` : `app ${args[0]} deleted (nothing to back up)`);
 } else if (command === "settings") {
   const settings = await getSettings();
   console.log(JSON.stringify({ ...settings, oidcJwks: settings.oidcJwks ? "(inline JWKS set: test only)" : null }, null, 2));

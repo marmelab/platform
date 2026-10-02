@@ -1,7 +1,7 @@
 import { appRoles, lintsSql } from "@platform/sql";
 import type { AcceptedLint, LintResult, Migration } from "@platform/shared";
 import type pg from "pg";
-import { type AppRow, appSecrets, dbId, UserError } from "./apps.ts";
+import { type AppRow, appSecrets, dbId, requireWritable, UserError } from "./apps.ts";
 import { audit } from "./audit.ts";
 import type { Actor, User } from "./auth.ts";
 import { platform, withClient } from "./db.ts";
@@ -52,6 +52,7 @@ export interface ApplyOptions {
  */
 export async function applyMigrations(user: Actor, app: AppRow, migrations: Migration[], options: ApplyOptions = {}) {
   const { dryRun = false, acceptLints = [] } = options;
+  if (!dryRun) requireWritable(app, "apply_migrations (dry_run stays available)");
   const sorted = [...migrations].sort((a, b) => a.version.localeCompare(b.version, "en", { numeric: true }));
   const versions = new Set<string>();
   for (const m of sorted) {
@@ -60,7 +61,8 @@ export async function applyMigrations(user: Actor, app: AppRow, migrations: Migr
   }
 
   const result = await withOwner(app, async (c) => {
-    await c.query("begin");
+    // explicit: a stopped app's database is read-only by default, and dry_run (always rolled back) must keep working
+    await c.query("begin read write");
     try {
       await c.query("select pg_advisory_xact_lock(hashtext('supabase_migrations'))");
       const { rows } = await c.query<{ version: string }>("select version from supabase_migrations.schema_migrations");
@@ -142,6 +144,7 @@ export async function applyMigrations(user: Actor, app: AppRow, migrations: Migr
 }
 
 export async function executeSql(user: User, app: AppRow, sql: string, write: boolean) {
+  if (write) requireWritable(app, "execute_sql with write=true (reads stay available)");
   const started = Date.now();
   const output = await withOwner(app, async (c) => {
     await c.query(write ? "begin" : "begin read only");
