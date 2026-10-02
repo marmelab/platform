@@ -39,6 +39,31 @@ export const config = {
     gotrueImage: env("GOTRUE_IMAGE", "supabase/gotrue:v2.196.0"),
     postgrestImage: env("POSTGREST_IMAGE", "postgrest/postgrest:v14.17"),
   },
+  /**
+   * Shared multi-tenant Storage API (M5): admin API (tenants, internal network only), upstream of the app routes,
+   * its tenants metadata database, and its file backend (volume also mounted in the control plane for backups).
+   */
+  storage: {
+    adminUrl: env("STORAGE_ADMIN_URL", "http://storage:5001"),
+    upstream: env("STORAGE_UPSTREAM", "storage:5000"),
+    adminKey: env("STORAGE_ADMIN_KEY"),
+    dbRole: env("STORAGE_DB_ROLE", "platform_storage"),
+    dbPassword: env("STORAGE_DB_PASSWORD"),
+    /** <dataDir>/<bucket>/<slug>/: the app's files (FILE_STORAGE_BACKEND_PATH and GLOBAL_S3_BUCKET of Storage). */
+    dataDir: env("STORAGE_DATA_DIR", "/data/storage"),
+    bucket: env("STORAGE_BUCKET", "tenants"),
+    fileSizeLimit: Number(env("STORAGE_FILE_SIZE_LIMIT", String(50 * 1024 * 1024))),
+    /** Postgres connections of Storage's pool per app (freed after a minute without requests). */
+    maxConnections: Number(env("STORAGE_TENANT_MAX_CONNECTIONS", "3")),
+  },
+  /** Shared multi-tenant Realtime (M5): tenant management API (internal network only) and its metadata database. */
+  realtime: {
+    url: env("REALTIME_URL", "http://realtime:4000"),
+    upstream: env("REALTIME_UPSTREAM", "realtime:4000"),
+    apiJwtSecret: env("REALTIME_API_JWT_SECRET"),
+    dbRole: env("REALTIME_DB_ROLE", "platform_realtime"),
+    dbPassword: env("REALTIME_DB_PASSWORD"),
+  },
   dataDir: {
     sites: env("SITES_DIR", "/data/sites"),
     functions: env("FUNCTIONS_DIR", "/data/functions"),

@@ -3,8 +3,9 @@
 -- function using SUPABASE_DB_URL...). Applied to template_supabase and, idempotently, to every app database at
 -- control plane startup and at provisioning. Run as supabase_admin (event triggers need a superuser).
 --
--- Who is recorded: every session except the platform's own (supabase_admin: provisioning, Studio registration) and
--- GoTrue's (app_<id>_auth_admin: auth migrations at boot). Whether a change belongs to a release is decided by the
+-- Who is recorded: every session except the platform's own (supabase_admin: provisioning, Studio registration;
+-- platform_realtime_migrator: Realtime's tenant migrations) and the services' (app_<id>_auth_admin: GoTrue's migrations
+-- at boot; app_<id>_storage_admin and app_<id>_realtime: Storage's and Realtime's migrations and partitions). Whether a change belongs to a release is decided by the
 -- control plane, not here: it records the transaction id (txid) of each migrations deployment it commits, and a
 -- change whose txid is not one of those is "outside release". The app roles can neither write that list nor this
 -- table.
@@ -35,7 +36,8 @@ create index if not exists schema_changes_at on _platform.schema_changes (at);
 -- Sessions whose DDL is not a builder's change.
 create or replace function _platform.ignored_session() returns boolean
 language sql stable set search_path = '' as $$
-  select session_user::text = 'supabase_admin' or session_user::text ~ '^app_[a-z0-9_]+_auth_admin$'
+  select session_user::text in ('supabase_admin', 'platform_realtime_migrator')
+      or session_user::text ~ '^app_[a-z0-9_]+_(auth_admin|storage_admin|realtime)$'
 $$;
 alter function _platform.ignored_session() owner to supabase_admin;
 

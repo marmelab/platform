@@ -35,6 +35,14 @@ add_secret PLATFORM_STUDIO_HEADER_SECRET 32
 add_secret PLATFORM_STUDIO_CONFIG_TOKEN 32
 add_secret PG_META_CRYPTO_KEY 32
 add_secret STUDIO_META_DEFAULT_PASSWORD 16
+# Storage and Realtime (M5). REALTIME_DB_ENC_KEY: 16 characters (AES-128 key of the tenants' database settings)
+add_secret STORAGE_DB_PASSWORD 16
+add_secret STORAGE_ADMIN_KEY 32
+add_secret STORAGE_ENCRYPTION_KEY 32
+add_secret REALTIME_DB_PASSWORD 16
+add_secret REALTIME_API_JWT_SECRET 32
+add_secret REALTIME_DB_ENC_KEY 8
+add_secret REALTIME_SECRET_KEY_BASE 32
 # Local installs: builders may still deploy from their machine with their PAT (the e2e suites, the seed and the
 # deploy skill rely on it). Production installs should use DIRECT_DEPLOY=admins (publishing through CI only).
 grep -q '^DIRECT_DEPLOY=' .env || { echo "DIRECT_DEPLOY=everyone" >> .env; echo "DIRECT_DEPLOY=everyone written to deploy/.env"; }

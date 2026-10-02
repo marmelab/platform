@@ -4,6 +4,8 @@
 //                     pg_dump always matches the server version
 //   sites.tar.gz      the app's frontend versions (sites/<slug>), when present
 //   functions.tar.gz  the app's functions versions (functions/<slug>), when present
+//   storage.tar.gz    the app's Storage files (M5: <storage>/<bucket>/<slug>/<bucket id>/<object>/<version>), when
+//                     present; their metadata (storage.buckets, storage.objects) is in database.dump
 //   manifest.json     what was backed up; no secret (the app's keys and function secrets are not kept)
 // Restore, retention and off-site copies are M7 (TECH_DEBT CP-14).
 import { mkdir, rm, stat, writeFile } from "node:fs/promises";
@@ -14,6 +16,7 @@ import { type AppRow, dbId, orchestrator, pathExists } from "./apps.ts";
 import { config } from "./config.ts";
 import { withAdmin } from "./db.ts";
 import { ROUTING_MARKERS } from "./router.ts";
+import { storageFilesDir } from "./storage-realtime.ts";
 
 export interface Backup {
   path: string;
@@ -53,7 +56,11 @@ export async function backupApp(slug: string, app?: AppRow): Promise<Backup | nu
         filter: (entry) => !markers.has(entry),
       }, [slug]);
     }
-    for (const name of ["database.dump", "sites.tar.gz", "functions.tar.gz"]) {
+    const storage = storageFilesDir(slug);
+    if (await pathExists(storage)) {
+      await tar.c({ gzip: true, cwd: join(storage, ".."), file: join(path, "storage.tar.gz"), portable: true }, [slug]);
+    }
+    for (const name of ["database.dump", "sites.tar.gz", "functions.tar.gz", "storage.tar.gz"]) {
       const size = await stat(join(path, name)).then((s) => s.size, () => null);
       if (size !== null) files[name] = size;
     }
