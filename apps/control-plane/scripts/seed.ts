@@ -45,20 +45,59 @@ const env = new Map(
 );
 const mcpUrl = env.get("PLATFORM_URL") ?? "http://api.localhost:8100/mcp";
 
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const isTransient = (error: unknown): boolean => {
+  const err = error as { code?: string; message?: string; cause?: unknown } | undefined;
+  if (!err) return false;
+  if (["ECONNRESET", "ECONNREFUSED", "EPIPE", "UND_ERR_SOCKET", "UND_ERR_CLOSED"].includes(err.code ?? "")) return true;
+  if (/socket|other side closed|fetch failed/i.test(err.message ?? "")) return true;
+  return isTransient(err.cause);
+};
+
+// Caddy closes idle keep-alive connections when the control plane reloads its config (e.g. on create_app),
+// so a reused socket can fail once: retry network errors, never HTTP or tool errors.
+async function retry<T>(fn: () => Promise<T>, attempts = 5): Promise<T> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await fn();
+    } catch (error) {
+      if (attempt >= attempts || !isTransient(error)) throw error;
+      await sleep(500 * attempt);
+    }
+  }
+}
+
+const http = (url: string, init?: RequestInit) => retry(() => fetch(url, init));
+
+async function waitForControlPlane() {
+  const health = new URL("/health", mcpUrl);
+  for (let i = 0; i < 60; i++) {
+    if (await fetch(health).then((r) => r.ok, () => false)) return;
+    await sleep(1000);
+  }
+  throw new Error(`control plane not ready at ${health}`);
+}
+
 const cli = (args: string[], input?: string) =>
   execFileSync("docker", ["exec", "-i", "plat-control-plane", "node", "src/cli.ts", ...args], { input, encoding: "utf8" })
     .trim();
 
 async function connect(token: string) {
-  const client = new Client({ name: "seed", version: "0.0.0" });
-  await client.connect(new StreamableHTTPClientTransport(new URL(mcpUrl), {
-    requestInit: { headers: { Authorization: `Bearer ${token}` } },
-  }));
-  return client;
+  return retry(async () => {
+    const client = new Client({ name: "seed", version: "0.0.0" });
+    await client.connect(new StreamableHTTPClientTransport(new URL(mcpUrl), {
+      requestInit: { headers: { Authorization: `Bearer ${token}` } },
+    }));
+    return client;
+  });
 }
 
 async function tool(client: Client, name: string, args: Record<string, unknown> = {}): Promise<any> {
-  const result = (await client.callTool({ name, arguments: args })) as { isError?: boolean; content: { text: string }[] };
+  const result = (await retry(() => client.callTool({ name, arguments: args }))) as {
+    isError?: boolean;
+    content: { text: string }[];
+  };
   if (result.isError) throw new Error(`${name} failed: ${result.content[0]?.text}`);
   return JSON.parse(result.content[0]!.text);
 }
@@ -100,7 +139,7 @@ async function deploy(client: Client, slug: string, name: string, example: strin
 
 async function signIn(app: App, user: { email: string; password: string }) {
   const auth = (path: string) =>
-    fetch(`${app.supabase_url}/auth/v1/${path}`, {
+    http(`${app.supabase_url}/auth/v1/${path}`, {
       method: "POST",
       headers: { apikey: app.anon_key, "content-type": "application/json" },
       body: JSON.stringify(user),
@@ -110,7 +149,7 @@ async function signIn(app: App, user: { email: string; password: string }) {
   if (!session.ok) throw new Error(`${user.email} sign in: ${session.status} ${await session.text()}`);
   const { access_token } = await session.json() as { access_token: string };
   return async <T>(path: string, init: RequestInit = {}): Promise<T> => {
-    const res = await fetch(`${app.supabase_url}${path}`, {
+    const res = await http(`${app.supabase_url}${path}`, {
       ...init,
       headers: {
         apikey: app.anon_key,
@@ -170,6 +209,8 @@ async function seedNotes(app: App) {
     }
   }
 }
+
+await waitForControlPlane();
 
 const summary: string[] = [];
 for (const builder of builders) {
