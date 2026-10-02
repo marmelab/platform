@@ -3,8 +3,18 @@
 # (template_supabase + platform database) and creates the first admin with a PAT and a Studio password.
 # Re-runnable: secrets and the admin credentials are kept in deploy/.env and deploy/.env.local.
 #   STUDIO_BUILD=1 deploy/install.sh    rebuilds the Studio image even if it exists
+#   deploy/install.sh --seed (or SEED=1) also seeds the app builders alice and bob and their example apps
+#                                        (apps/control-plane/scripts/seed.ts, idempotent)
 set -euo pipefail
 cd "$(dirname "$0")"
+
+SEED="${SEED:-0}"
+for arg in "$@"; do
+  case "$arg" in
+    --seed) SEED=1 ;;
+    *) echo "usage: deploy/install.sh [--seed]" >&2; exit 1 ;;
+  esac
+done
 
 ADMIN_EMAIL="${ADMIN_EMAIL:-admin@example.com}"
 API_URL="http://api.localhost:8100"
@@ -61,3 +71,7 @@ fi
 echo
 echo "MCP endpoint: $API_URL/mcp  (Authorization: Bearer \$PLATFORM_TOKEN)"
 echo "Studio:       $STUDIO_URL  (admin: PLATFORM_ADMIN_EMAIL / PLATFORM_ADMIN_PASSWORD from deploy/.env.local)"
+
+if [ "$SEED" = 1 ]; then
+  node ../apps/control-plane/scripts/seed.ts
+fi

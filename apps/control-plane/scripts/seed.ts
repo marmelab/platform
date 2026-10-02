@@ -1,0 +1,161 @@
+// Local dev seed, run by `deploy/install.sh --seed` once the stack is up. Idempotent.
+// Creates the app builders alice and bob (developer role, fixed local passwords, a PAT each saved in
+// deploy/.env.local), then deploys one example app per builder through the real API (MCP with the builder's
+// PAT, pre-signed upload, finalize), and signs up demo-user in each app with a few rows.
+// An app that already exists is redeployed (migrations already applied are skipped, new frontend and
+// functions versions). A slug already taken by someone else is skipped with a warning: memberships are never changed.
+import { execFileSync } from "node:child_process";
+import { readFileSync, writeFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+
+const ROOT = new URL("../../../", import.meta.url);
+const ENV_LOCAL = new URL("deploy/.env.local", ROOT);
+const SCRIPTS = fileURLToPath(new URL("plugin/skills/deploy/scripts/", ROOT));
+const EXAMPLE = fileURLToPath(new URL("examples/todo-app/", ROOT));
+const STUDIO_URL = "http://studio.localhost:8100";
+const DEMO_USER = { email: "demo-user@example.com", password: "demo-password" };
+
+const builders = [
+  {
+    key: "ALICE",
+    email: "alice@example.com",
+    password: process.env.SEED_ALICE_PASSWORD || "alice-password",
+    app: { slug: "todo-app", name: "Todo app", rows: ["Buy oat milk", "Book the dentist", "Water the plants"] },
+  },
+  {
+    key: "BOB",
+    email: "bob@example.com",
+    password: process.env.SEED_BOB_PASSWORD || "bob-password",
+    app: { slug: "notes-app", name: "Notes app", rows: ["Ideas for the team offsite", "Read the RLS docs"] },
+  },
+];
+
+const env = new Map(
+  readFileSync(ENV_LOCAL, "utf8").split("\n").filter((l) => l.includes("="))
+    .map((l) => [l.slice(0, l.indexOf("=")), l.slice(l.indexOf("=") + 1)] as const),
+);
+const mcpUrl = env.get("PLATFORM_URL") ?? "http://api.localhost:8100/mcp";
+
+const cli = (args: string[], input?: string) =>
+  execFileSync("docker", ["exec", "-i", "plat-control-plane", "node", "src/cli.ts", ...args], { input, encoding: "utf8" })
+    .trim();
+
+async function connect(token: string) {
+  const client = new Client({ name: "seed", version: "0.0.0" });
+  await client.connect(new StreamableHTTPClientTransport(new URL(mcpUrl), {
+    requestInit: { headers: { Authorization: `Bearer ${token}` } },
+  }));
+  return client;
+}
+
+async function tool(client: Client, name: string, args: Record<string, unknown> = {}): Promise<any> {
+  const result = (await client.callTool({ name, arguments: args })) as { isError?: boolean; content: { text: string }[] };
+  if (result.isError) throw new Error(`${name} failed: ${result.content[0]?.text}`);
+  return JSON.parse(result.content[0]!.text);
+}
+
+async function validToken(token: string | undefined) {
+  if (!token) return false;
+  try {
+    const client = await connect(token);
+    const me = await tool(client, "whoami");
+    await client.close();
+    return me.role === "developer";
+  } catch {
+    return false;
+  }
+}
+
+function saveEnv() {
+  env.delete("STUDIO_TEST_ALICE_PASSWORD");
+  env.delete("STUDIO_TEST_BOB_PASSWORD");
+  writeFileSync(ENV_LOCAL, [...env].map(([k, v]) => `${k}=${v}\n`).join(""));
+}
+
+async function deploy(client: Client, slug: string, name: string) {
+  const sh = (script: string, args: string[]) =>
+    execFileSync(`${SCRIPTS}${script}`, args, { cwd: EXAMPLE, encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] });
+  const app = await tool(client, "create_app", { name, slug });
+  const migrations = await tool(client, "apply_migrations", { app: slug, migrations: JSON.parse(sh("migrations.sh", [])) });
+  console.log(`  migrations: ${migrations.status} (applied ${migrations.applied.length}, skipped ${migrations.skipped.length})`);
+  sh("build.sh", [app.supabase_url, app.anon_key]);
+  for (const kind of ["functions", "frontend"]) {
+    const { deployment_id, upload_url } = await tool(client, "create_deployment", { app: slug, kind });
+    sh("upload.sh", [kind, upload_url]);
+    const done = await tool(client, "finalize_deployment", { deployment_id });
+    console.log(`  ${kind}: version ${done.version ?? "?"} ${done.status ?? ""}`.trimEnd());
+  }
+  return app as { url: string; supabase_url: string; anon_key: string };
+}
+
+async function seedAppUser(app: { supabase_url: string; anon_key: string }, rows: string[]) {
+  const auth = (path: string) =>
+    fetch(`${app.supabase_url}/auth/v1/${path}`, {
+      method: "POST",
+      headers: { apikey: app.anon_key, "content-type": "application/json" },
+      body: JSON.stringify(DEMO_USER),
+    });
+  let session = await auth("token?grant_type=password");
+  if (session.status === 400) session = await auth("signup");
+  if (!session.ok) throw new Error(`demo-user sign in: ${session.status} ${await session.text()}`);
+  const { access_token } = await session.json() as { access_token: string };
+  const rest = (init: RequestInit = {}) =>
+    fetch(`${app.supabase_url}/rest/v1/todos`, {
+      ...init,
+      headers: { apikey: app.anon_key, authorization: `Bearer ${access_token}`, "content-type": "application/json" },
+    });
+  const existing = await rest();
+  if (!existing.ok) throw new Error(`read todos: ${existing.status} ${await existing.text()}`);
+  if ((await existing.json() as unknown[]).length > 0) return;
+  const insert = await rest({ method: "POST", body: JSON.stringify(rows.map((title) => ({ title }))) });
+  if (!insert.ok) throw new Error(`insert todos: ${insert.status} ${await insert.text()}`);
+}
+
+const summary: string[] = [];
+for (const builder of builders) {
+  console.log(`\n== ${builder.email}`);
+  const tokenKey = `SEED_${builder.key}_TOKEN`;
+  if (!(await validToken(env.get(tokenKey)))) {
+    env.set(tokenKey, cli(["create-user", builder.email, "developer", "seed"]));
+    console.log("  personal access token issued");
+  }
+  console.log(`  ${cli(["set-password", builder.email], builder.password)}`);
+  env.set(`SEED_${builder.key}_EMAIL`, builder.email);
+  env.set(`SEED_${builder.key}_PASSWORD`, builder.password);
+  saveEnv();
+
+  const client = await connect(env.get(tokenKey)!);
+  try {
+    const { slug, name, rows } = builder.app;
+    console.log(`  deploying ${slug}`);
+    try {
+      const app = await deploy(client, slug, name);
+      await seedAppUser(app, rows);
+      summary.push(`  ${slug.padEnd(10)} ${app.url}  (owner ${builder.email})`);
+    } catch (error) {
+      if (!String(error).includes("already taken")) throw error;
+      console.warn(`  WARNING: slug ${slug} belongs to another user, skipped`);
+      summary.push(`  ${slug.padEnd(10)} skipped: the slug belongs to another user`);
+    }
+    const others = (await tool(client, "whoami")).apps.filter((a: { slug: string }) => a.slug !== slug);
+    if (others.length > 0) {
+      console.warn(`  WARNING: ${builder.email} is also a member of ${others.map((a: { slug: string }) => a.slug).join(", ")}`);
+    }
+  } finally {
+    await client.close();
+  }
+}
+
+console.log(`
+Seed done.
+Apps:
+${summary.join("\n")}
+Studio:  ${STUDIO_URL}
+MCP:     ${mcpUrl}
+Admin:   ${env.get("PLATFORM_ADMIN_EMAIL")} (password PLATFORM_ADMIN_PASSWORD in deploy/.env.local)
+App builders (Studio login, developer role):
+  ${builders.map((b) => `${b.email} / ${b.password}  -> ${b.app.slug}`).join("\n  ")}
+App user (sign in on each app): ${DEMO_USER.email} / ${DEMO_USER.password}
+Personal access tokens: SEED_ALICE_TOKEN and SEED_BOB_TOKEN in deploy/.env.local`);
