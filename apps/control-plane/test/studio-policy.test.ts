@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { studioAccess, type StudioUser } from "../src/studio/policy.ts";
+import { crossSiteRefusal, studioAccess, type StudioUser } from "../src/studio/policy.ts";
 
 const alice: StudioUser = { role: "developer", apps: ["demo"] };
 const admin: StudioUser = { role: "admin", apps: [] };
@@ -59,4 +59,27 @@ test("lists and shell pages are allowed", () => {
   assert.ok(allowed("GET", "/api/platform/profile"));
   assert.ok(allowed("GET", "/projects"));
   assert.ok(allowed("GET", "/_next/static/chunks/main.js"));
+});
+
+test("CSRF: writes need the Studio origin, API reads must not be cross-site, pages are not checked", () => {
+  const studioOrigin = "https://studio.example.com";
+  const refused = (method: string, uri: string, origin?: string, fetchSite?: string) =>
+    crossSiteRefusal({ method, uri, origin, fetchSite, studioOrigin }) !== null;
+  // Studio's own requests
+  assert.ok(!refused("POST", "/api/platform/pg-meta/demo/query?key=x", studioOrigin, "same-origin"));
+  assert.ok(!refused("PATCH", "/api/platform/auth/demo/users/1", studioOrigin, "same-origin"));
+  assert.ok(!refused("GET", "/api/platform/projects", undefined, "same-origin"));
+  assert.ok(!refused("POST", "/_platform/login", studioOrigin, "same-origin"));
+  // an app's frontend (same site) or no Origin at all
+  assert.ok(refused("POST", "/api/platform/pg-meta/demo/query", "https://demo.example.com", "same-site"));
+  assert.ok(refused("POST", "/api/platform/pg-meta/demo/query", undefined, undefined));
+  assert.ok(refused("DELETE", "/api/platform/auth/demo/users/1", "null", "cross-site"));
+  assert.ok(refused("POST", "/_platform/logout", "https://demo.example.com", "same-site"));
+  assert.ok(refused("POST", "/api/platform/pg-meta/demo/query", studioOrigin, "same-site"), "forged Origin cannot happen, but both must agree");
+  assert.ok(refused("GET", "/api/platform/projects", undefined, "same-site"));
+  assert.ok(refused("GET", "/api/platform/projects?x=1", undefined, "cross-site"));
+  // navigations and non-browser reads
+  assert.ok(!refused("GET", "/project/demo/editor", undefined, "same-site"), "link from the admin console");
+  assert.ok(!refused("GET", "/_platform/login", undefined, "cross-site"));
+  assert.ok(!refused("GET", "/api/platform/projects", undefined, undefined));
 });

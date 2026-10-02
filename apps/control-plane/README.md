@@ -100,9 +100,19 @@ Routing (`router.ts`): two generic Caddy routes serve every app, installed once 
 
 `http://studio.localhost:8100`: multi-head Studio (`apps/studio`), project ref = app slug, `studio_url` deep link in `get_app`. Platform login on `/_platform/login` (local account with password), then forward auth (`/studio/verify` on the internal `:3001` listener): a builder only sees the apps they are a member of, an admin sees everything. Details: `spikes/m0ter-studio-builders/REPORT.md`.
 
+### CSRF
+
+Every `<app>.<domain>` is same-site with Studio, so its `SameSite=Lax` session cookie is also sent with requests made by an app's frontend. The forward auth (`/studio/verify`) and the `/_platform/*` routes therefore check the request's origin first (`crossSiteRefusal` in `src/studio/policy.ts`), before the session:
+
+- a state-changing request (any method but `GET`, `HEAD`, `OPTIONS`: pg-meta queries, auth admin, content, login, logout) must carry `Origin: http://studio.localhost:8100` (browsers send it on every non-GET request, same-origin included), and a `Sec-Fetch-Site` other than `same-origin` or `none` is refused;
+- an API read (`/api/*`) with a `Sec-Fetch-Site` other than `same-origin` or `none` is refused;
+- page navigations are not checked, so links to Studio from the admin console or from an app keep working.
+
+Refusals are 403 (JSON on the API, text on `/_platform/*`). Unlike the admin console, Studio sends no custom header: vendored Studio would need a patch on every fetch, and the browsers' `Origin` and `Sec-Fetch-Site` headers are enough to tell Studio's own requests apart.
+
 ### Login throttling
 
-Both logins (`/_platform/login` and the admin console's `POST /api/auth/login`) go through `src/login-limit.ts` (TECH_DEBT SEC-3), checked **before** the password: while locked, the right password is refused too (HTTP 429 with `Retry-After`; Studio shows the wait on its login page).
+Both logins (`/_platform/login` and the admin console's `POST /api/auth/login`) go through `src/login-limit.ts`, checked **before** the password: while locked, the right password is refused too (HTTP 429 with `Retry-After`; Studio shows the wait on its login page).
 
 - **Per email**: 5 failures are free, then each further failure locks the address for 30 s, 1 min, 2 min... up to 15 min, from any IP. A successful login clears the email's failures.
 - **Per client IP**: same backoff after 30 failures (people behind one company NAT share an IP), against password spraying over many accounts. A success does not clear it.

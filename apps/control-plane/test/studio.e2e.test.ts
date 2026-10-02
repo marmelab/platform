@@ -49,8 +49,15 @@ const inNetwork = (url: string, init: Record<string, unknown> = {}) =>
 
 interface Reply { status: number; headers: Record<string, string | string[] | undefined>; body: string }
 
-/** Raw HTTP through Caddy: the path is sent as is (fetch would normalise "..", "%2e"...). */
+/**
+ * Raw HTTP through Caddy: the path is sent as is (fetch would normalise "..", "%2e"...). Writes carry Studio's Origin
+ * as a browser would send it (CSRF guard), unless `origin` is given; an empty value sends no Origin at all.
+ */
 function raw(method: string, path: string, headers: Record<string, string> = {}, body?: unknown): Promise<Reply> {
+  const safe = ["GET", "HEAD", "OPTIONS"].includes(method);
+  headers = Object.fromEntries(
+    Object.entries({ ...(safe ? {} : { origin: STUDIO }), ...headers }).filter(([, value]) => value !== ""),
+  );
   return new Promise((resolve, reject) => {
     const payload = body === undefined ? undefined : JSON.stringify(body);
     const req = request({
@@ -77,6 +84,7 @@ async function login(email: string, password: string): Promise<string> {
   const response = await fetch(`${STUDIO}/_platform/login`, {
     method: "POST",
     redirect: "manual",
+    headers: { origin: STUDIO },
     body: new URLSearchParams({ email, password, next: "/projects" }),
   });
   assert.equal(response.status, 303, `login ${email}`);
@@ -151,6 +159,7 @@ describe("Studio for app builders", () => {
     const wrong = await fetch(`${STUDIO}/_platform/login`, {
       method: "POST",
       redirect: "manual",
+      headers: { origin: STUDIO },
       body: new URLSearchParams({ email: users.alice.email, password: "not-the-password" }),
     });
     assert.equal(wrong.status, 401);
@@ -182,6 +191,34 @@ describe("Studio for app builders", () => {
     assert.ok(Number(locked.headers.get("retry-after")) > 0, "Retry-After");
     assert.match(await locked.text(), /Too many failed sign-in attempts/);
     assert.equal(locked.headers.getSetCookie().length, 0);
+  });
+
+  test("1c. CSRF: an app's frontend cannot use a Studio session (SEC-3)", async () => {
+    const appOrigin = `http://${A}.localhost:8100`;
+    const query = "select 1 as one";
+    const foreign = await sql(alice, A, query, { origin: appOrigin, "sec-fetch-site": "same-site" });
+    assert.equal(foreign.status, 403, foreign.body);
+    assert.match(foreign.body, /cross-origin request refused/);
+    assert.equal((await sql(alice, A, query, { origin: "" })).status, 403, "no Origin on a write");
+    assert.equal((await sql(alice, A, query, { origin: "null" })).status, 403, "opaque origin (sandboxed iframe)");
+    const crossSiteRead = await raw("GET", "/api/platform/projects", { cookie: alice, "sec-fetch-site": "same-site" });
+    assert.equal(crossSiteRead.status, 403, "API reads from another site");
+    // the same session still works from Studio itself, and links to Studio pages from another site still open
+    assert.equal((await sql(alice, A, query, { "sec-fetch-site": "same-origin" })).status, 200);
+    const link = await raw("GET", `/project/${A}`, { cookie: alice, accept: "text/html", "sec-fetch-site": "same-site" });
+    assert.notEqual(link.status, 403, "navigation from the admin console or an app");
+    // login CSRF and forced logout
+    const login = await fetch(`${STUDIO}/_platform/login`, {
+      method: "POST",
+      redirect: "manual",
+      headers: { origin: appOrigin },
+      body: new URLSearchParams({ email: users.alice.email, password: users.alice.password }),
+    });
+    assert.equal(login.status, 403);
+    assert.equal(login.headers.getSetCookie().length, 0);
+    await login.body?.cancel();
+    assert.equal((await raw("POST", "/_platform/logout", { cookie: alice, origin: appOrigin })).status, 403);
+    assert.deepEqual(await projectRefs(alice), [A], "the session survived the forced logout attempt");
   });
 
   test("2. project lists are filtered", async () => {
