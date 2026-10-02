@@ -22,7 +22,8 @@ packages/
   sql/                template database, per-app roles, linter queries
 plugin/               Claude Code plugin (deploy skill + MCP config)
 deploy/               docker-compose stack ("plat"), Caddy bootstrap, install.sh
-examples/todo-app/    Vite + React + supabase-js example app
+examples/todo-app/    example app: personal todo list (Vite + React + supabase-js)
+examples/notes-app/   example app: notes shared between users (Vite + React + supabase-js)
 spikes/               milestone reports and prototypes
 ```
 
@@ -53,7 +54,7 @@ deploy/install.sh
 
 Both files are gitignored.
 
-To start with sample data (two app builders, two deployed example apps, an app user; see [Test users](#test-users)), add `--seed`. It is safe to rerun:
+To start with sample data (two app builders, two deployed example apps, two app users; see [Test users](#test-users)), add `--seed`. It is safe to rerun:
 
 ```bash
 deploy/install.sh --seed
@@ -83,16 +84,18 @@ docker compose -p plat -f deploy/docker-compose.yml start
 | `admin@example.com` | admin, sees every app | `PLATFORM_ADMIN_PASSWORD` (Studio) and `PLATFORM_TOKEN` (MCP) in `deploy/.env.local` |
 | `alice@example.com` (seed) | app builder, sees `todo-app` only | `alice-password` (Studio), `SEED_ALICE_TOKEN` (MCP) in `deploy/.env.local` |
 | `bob@example.com` (seed) | app builder, sees `notes-app` only | `bob-password` (Studio), `SEED_BOB_TOKEN` (MCP) in `deploy/.env.local` |
-| `demo-user@example.com` (seed) | app user of `todo-app` and `notes-app`, sees their own todos | `demo-password`, on http://todo-app.localhost:8100 and http://notes-app.localhost:8100 |
+| `demo-user@example.com` (seed) | app user of `todo-app` (3 todos) and `notes-app` (3 notes, 2 of them shared with `demo-user-2`) | `demo-password`, on http://todo-app.localhost:8100 and http://notes-app.localhost:8100 |
+| `demo-user-2@example.com` (seed) | app user of `notes-app`, with one note shared read-only and one shared for editing | `demo-password`, on http://notes-app.localhost:8100 |
 
 Seed accounts exist only after `deploy/install.sh --seed`. Their passwords are fixed development credentials for the local stack only.
 
 ### Trying the seeded apps
 
-`todo-app` and `notes-app` are the same example ([examples/todo-app](examples/todo-app)) deployed twice: they look identical, but each is a separate instance with its own database and its own user accounts.
+`todo-app` ([examples/todo-app](examples/todo-app)) and `notes-app` ([examples/notes-app](examples/notes-app)) are two different example apps. Each is a separate instance with its own database and its own user accounts.
 
-- **As an app user**: open http://todo-app.localhost:8100 or http://notes-app.localhost:8100 and sign in as `demo-user@example.com` / `demo-password`. You can add, check and delete todos; the "x of y done" counter comes from the `summary` Edge Function. You can also sign up with a new account (email confirmation is automatic until SMTP is configured): it won't see `demo-user`'s todos (RLS), and it won't exist in the other app.
-- **As an app builder, in Studio**: sign in to http://studio.localhost:8100 as alice (only `todo-app` is listed) or bob (only `notes-app`). Users are under Auth > Users, todos under Table editor > `todos`. The admin sees every app.
+- **todo-app, as an app user**: open http://todo-app.localhost:8100 and sign in as `demo-user@example.com` / `demo-password`. You can add, check and delete todos; the "x of y done" counter comes from the `summary` Edge Function. You can also sign up with a new account (email confirmation is automatic until SMTP is configured): it won't see `demo-user`'s todos (RLS), and it won't exist in `notes-app`.
+- **notes-app, sharing between users**: open http://notes-app.localhost:8100 and sign in as `demo-user@example.com` / `demo-password`. "My notes" lists three notes: "Team offsite ideas" (shared read-only with `demo-user-2`), "Release checklist" (shared for editing) and "Personal reminders" (private). Open a note to edit it and to manage its sharing: share it with `demo-user-2@example.com`, change the permission, or remove the share. Sharing with an email that has no account in the app is refused. Then sign out, sign in as `demo-user-2@example.com` / `demo-password` and open "Shared with me": the shared notes are there, with their permission. You can edit "Release checklist" (the editor then shows you as the last editor), but "Team offsite ideas" is read-only, and you can neither delete a shared note nor reshare it. A new account sees no notes at all. `node apps/control-plane/scripts/verify-notes-app.ts` runs the same checks against the API.
+- **As an app builder, in Studio**: sign in to http://studio.localhost:8100 as alice (only `todo-app` is listed) or bob (only `notes-app`). Users are under Auth > Users; the data is under Table editor (`todos` for `todo-app`; `notes`, `note_shares` and `profiles` for `notes-app`). The admin sees every app.
 - **As an app builder, with Claude Code**: set `PLATFORM_TOKEN` to `SEED_ALICE_TOKEN`, install the plugin (see [Deploy an app with Claude Code](#deploy-an-app-with-claude-code)), then ask for instance "show me the logs of todo-app" or "add a priority column to the todos and redeploy". With alice's token, `notes-app` is reported as not found.
 
 To create other app builders for manual testing (the CLI runs inside the control plane container):
@@ -133,6 +136,7 @@ pnpm typecheck                                     # all workspace packages (Stu
 pnpm --filter @platform/control-plane test         # Studio access policy, unit
 pnpm --filter @platform/control-plane e2e          # MCP end to end: provisioning, migrations, deployments, isolation
 pnpm --filter @platform/control-plane e2e:studio   # Studio: login, per-app filtering, bypass attempts
+node apps/control-plane/scripts/verify-notes-app.ts # seeded notes-app: sharing rules, as its app users (after --seed)
 (cd apps/edge-main-worker && deno test --allow-read --allow-write)
 ```
 
