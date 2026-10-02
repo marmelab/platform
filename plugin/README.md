@@ -1,75 +1,75 @@
-# Plugin Claude Code « platform »
+# "platform" Claude Code plugin
 
-Déploie une app Vite + Supabase (migrations, edge functions, front statique) sur la plateforme, depuis Claude Code : « déploie l'app sur la plateforme ».
+Deploys a Vite + Supabase app (migrations, edge functions, static frontend) to the platform from Claude Code: "deploy the app to the platform".
 
-Contenu :
+Contents:
 
 ```
 plugin/
   .claude-plugin/plugin.json
-  .mcp.json                      # serveur MCP "platform" (HTTP), URL et token par variables d'env
-  skills/deploy/SKILL.md         # workflow de déploiement
+  .mcp.json                      # "platform" MCP server (HTTP), URL and token from env variables
+  skills/deploy/SKILL.md         # deployment workflow
   skills/deploy/scripts/
-    migrations.sh                # supabase/migrations/*.sql -> JSON pour apply_migrations
-    pack.sh                      # tar.gz du dist/ ou de supabase/functions (+ config.toml), COPYFILE_DISABLE=1
-    upload.sh                    # pack.sh + curl PUT vers l'URL pré-signée
+    migrations.sh                # supabase/migrations/*.sql -> JSON for apply_migrations
+    pack.sh                      # tar.gz of dist/ or supabase/functions (+ config.toml), COPYFILE_DISABLE=1
+    upload.sh                    # pack.sh + curl PUT to the presigned URL
 ```
 
-Le marketplace (`platform-local`) est déclaré dans `.claude-plugin/marketplace.json` à la racine du repo.
+The marketplace (`platform-local`) is declared in `.claude-plugin/marketplace.json` at the repo root.
 
 ## Installation
 
-1. Récupérer un token (PAT) auprès d'un admin de la plateforme, puis l'exporter dans le shell qui lance Claude Code (par exemple dans `~/.zshrc`) :
+1. Get a token (PAT) from a platform admin, then export it in the shell that starts Claude Code (for instance in `~/.zshrc`):
 
    ```bash
    export PLATFORM_TOKEN=plat_...
-   # optionnel, par défaut http://api.localhost:8100/mcp
-   export PLATFORM_URL=https://api.<domaine>/mcp
+   # optional, defaults to http://api.localhost:8100/mcp
+   export PLATFORM_URL=https://api.<domain>/mcp
    ```
 
-2. Ajouter le marketplace et installer le plugin :
+2. Add the marketplace and install the plugin:
 
    ```bash
-   claude plugin marketplace add /chemin/vers/platform     # ou l'URL git du repo
+   claude plugin marketplace add /path/to/platform     # or the repo's git URL
    claude plugin install platform@platform-local
    ```
 
-   Dans une session interactive : `/plugin marketplace add <chemin ou URL>` puis `/plugin install platform@platform-local`.
+   In an interactive session: `/plugin marketplace add <path or URL>` then `/plugin install platform@platform-local`.
 
-3. Vérifier : `/mcp` doit lister `plugin:platform:platform` à l'état « connected ». Sinon, vérifier que `PLATFORM_TOKEN` est bien exporté dans l'environnement de Claude Code.
+3. Check: `/mcp` should list `plugin:platform:platform` as "connected". Otherwise, check that `PLATFORM_TOKEN` is exported in Claude Code's environment.
 
-Pour tester sans installer : `claude --plugin-dir /chemin/vers/platform/plugin`.
+To try it without installing: `claude --plugin-dir /path/to/platform/plugin`.
 
-## Utilisation
+## Usage
 
-Dans un repo Vite + supabase-js (voir `examples/todo-app`) :
+In a Vite + supabase-js repo (see `examples/todo-app`):
 
 ```
-> déploie l'app sur la plateforme
+> deploy the app to the platform
 ```
 
-La skill `platform:deploy` :
+The `platform:deploy` skill:
 
-1. lit `.platform.json` (ou crée l'app avec `create_app`, écrit le fichier et le committe) ;
-2. vérifie que c'est une SPA Vite ;
-3. relit les nouvelles migrations (arrêt avant application si une table `public` est créée sans RLS), puis `apply_migrations` ; arrêt si le linter remonte un `ERROR`, sauf consentement explicite ;
-4. déploie `supabase/functions` (archive + URL pré-signée + `finalize_deployment`) ;
-5. build avec `VITE_SUPABASE_URL` et `VITE_SUPABASE_ANON_KEY` issus de `get_app` ;
-6. déploie `dist/` ;
-7. vérifie l'URL et affiche le récapitulatif ; en cas d'erreur, `get_logs` et diagnostic.
+1. reads `.platform.json` (or creates the app with `create_app`, writes the file and commits it);
+2. checks that the project is a Vite SPA;
+3. reviews the new migrations, then runs `apply_migrations`; the linter runs inside the transaction and rejects any new `ERROR`, which is only accepted (`accept_lints`) with the user's explicit consent;
+4. deploys `supabase/functions` (archive + presigned URL + `finalize_deployment`, which warms each function up before switching);
+5. builds with `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` from `get_app`;
+6. deploys `dist/`;
+7. checks the URL and prints a summary; on errors, calls `get_logs` and diagnoses.
 
-Conventions attendues dans le repo :
+Expected repo conventions:
 
-- `supabase/migrations/<version>_<name>.sql` (version numérique, ex. `20261001100000_create_todos.sql`) ;
-- `supabase/functions/<nom>/index.ts`, `supabase/config.toml` (`[functions.<nom>] verify_jwt`) ;
-- le front lit `import.meta.env.VITE_SUPABASE_URL` et `VITE_SUPABASE_ANON_KEY` ;
-- `.platform.json` à la racine : `{ "app": "<slug>", "url": "..." }`, à committer.
+- `supabase/migrations/<version>_<name>.sql` (numeric version, e.g. `20261001100000_create_todos.sql`);
+- `supabase/functions/<name>/index.ts`, `supabase/config.toml` (`[functions.<name>] verify_jwt`);
+- the frontend reads `import.meta.env.VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`;
+- `.platform.json` at the root: `{ "app": "<slug>", "url": "..." }`, committed.
 
-## Usage headless (CI, tests)
+## Headless usage (CI, tests)
 
 ```bash
-PLATFORM_TOKEN=... claude -p "déploie l'app sur la plateforme" \
-  --plugin-dir /chemin/vers/platform/plugin \
+PLATFORM_TOKEN=... claude -p "deploy the app to the platform" \
+  --plugin-dir /path/to/platform/plugin \
   --allowedTools "mcp__plugin_platform_platform__*" "Bash(npm *)" "Bash(git *)" "Bash(curl *)" \
-                 "Bash(/chemin/vers/platform/plugin/skills/deploy/scripts/*)" Read Write Edit Glob Grep Skill
+                 "Bash(/path/to/platform/plugin/skills/deploy/scripts/*)" Read Write Edit Glob Grep Skill
 ```

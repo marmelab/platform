@@ -1,191 +1,191 @@
 # User journeys
 
-Légende : ✅ fait · 🟡 partiel · ❌ absent. Le jalon renvoie à [PLAN_1.md](../PLAN_1.md) §11 ; M0ter désigne l'intégration de Studio pour les builders ([rapport](../spikes/m0ter-studio-builders/REPORT.md)).
+Legend: ✅ done · 🟡 partial · ❌ missing. Milestones refer to [PLAN_1.md](../PLAN_1.md) §11; M0ter is the Studio integration for app builders ([report](../spikes/m0ter-studio-builders/REPORT.md)).
 
 ## Personas
 
-- **App users** : utilisent les apps déployées, en anonyme ou avec un compte du GoTrue de l'app.
-- **App builders** : créent, modifient et inspectent leurs apps, et gèrent leurs utilisateurs. Ils ne voient que leurs apps.
-- **Admins** : voient toutes les apps et gèrent les builders.
+- **App users**: use the deployed apps, anonymously or with an account in the app's GoTrue.
+- **App builders**: create, modify and inspect their apps, and manage their users. They only see their own apps.
+- **Admins**: see all apps and manage app builders.
 
-## Décisions produit
+## Product decisions
 
-| Sujet | Décision |
+| Topic | Decision |
 |---|---|
-| Login web (Studio, admin) | Comptes locaux (email et mot de passe) gérés par la plateforme. Pas de SSO pour les builders et les admins. |
-| Création d'apps | Libre, avec un quota par builder que l'admin peut modifier. |
-| Rôles dans une app | **Owner** : tout, y compris gérer les membres, arrêter et supprimer l'app. **Collaborateur** : déployer, inspecter, gérer les utilisateurs de l'app. |
-| Visibilité | Un builder ne voit que les apps dont il est membre. Pas de catalogue. |
-| Configuration de l'auth d'une app | Partagée. Le builder gère le signup, les URLs de redirection et les providers simples. L'admin configure une fois le SSO d'entreprise ; le builder l'active sur son app d'un clic. |
-| Gestion des utilisateurs d'une app | Dans Studio (onglet Auth) et par des outils MCP. |
-| Environnements | Une seule instance par app, définitivement. Le staging, c'est le `supabase start` local du builder. |
-| Alertes | Dashboard admin, plus un email à l'owner de l'app concernée. |
-| Apps abandonnées | Après N jours sans trafic ni déploiement, l'app est signalée à l'admin et à l'owner. L'admin décide : mise en sommeil, ou suppression après un backup final. |
-| Builders sans Claude Code | Non supportés en V1. L'API REST et le MCP restent génériques, pour ouvrir à d'autres clients plus tard. |
-| Domaine personnalisé | Jamais. Les apps sont servies uniquement sur `<app>.<domaine>`. |
-| Studio | Ouvert aux builders pour leurs apps, via le fork multi-head vendoré (voir [CLAUDE.md](../CLAUDE.md)). |
+| Web login (Studio, admin) | Local accounts (email and password) managed by the platform. No SSO for builders and admins. |
+| App creation | Self-service, with a per-builder quota that admins can change. |
+| Roles within an app | **Owner**: everything, including managing members, stopping and deleting the app. **Collaborator**: deploy, inspect, manage the app's users. |
+| Members management | Both through MCP tools (for the owner) and through the admin UI. |
+| Visibility | A builder only sees the apps they are a member of. No catalog. |
+| App auth configuration | Shared. The builder manages signup, redirect URLs and simple providers. The admin configures the company SSO once; the builder enables it on their app with one click. |
+| App users management | In Studio (Auth tab) and through MCP tools. |
+| Environments | One instance per app, for good. Staging is the builder's local `supabase start`. |
+| Alerts | Admin dashboard, plus an email to the owner of the affected app. |
+| Abandoned apps | After N days without traffic or deployment, the app is flagged to the admin and the owner. The admin decides: put it to sleep, or delete it after a final backup. |
+| Builders without Claude Code | Not supported in V1. The REST API and the MCP server stay generic, to open up to other clients later. |
+| Custom domains | Never. Apps are only served on `<app>.<domain>`. |
+| Studio | Open to builders for their own apps, through the vendored multi-head fork (see [CLAUDE.md](../CLAUDE.md)). |
 
-## Parcours des app builders
+## App builder journeys
 
 ### B1. Onboarding
-Déclencheur : un collaborateur veut héberger sa première app.
-1. Un admin crée son compte (email + mot de passe) et lui émet un PAT.
-2. Le builder installe le plugin : `claude plugin marketplace add <repo>`, puis `claude plugin install platform@platform-local`.
-3. Il renseigne son token (`PLATFORM_TOKEN`).
-4. Il se connecte à Studio avec ses identifiants.
+Trigger: a team member wants to host their first app.
+1. An admin creates their account (email + password) and issues a PAT.
+2. The builder installs the plugin: `claude plugin marketplace add <repo>`, then `claude plugin install platform@platform-local`.
+3. They set their token (`PLATFORM_TOKEN`).
+4. They log into Studio with their credentials.
 
-Canal : admin, puis Claude Code + MCP, et Studio.
-État : 🟡. La CLI `create-user` existe, et les comptes locaux avec mot de passe sont faits (M0ter). Il manque l'écran admin pour les comptes et les tokens (M4), la transmission sécurisée du PAT, et le stockage du token dans le trousseau (`userConfig` sensible).
+Channel: admin, then Claude Code + MCP, and Studio.
+Status: 🟡. The `create-user` CLI exists, and local accounts with passwords are done (M0ter). Missing: the admin screen for accounts and tokens (M4), a secure way to hand over the PAT, and storing the token in the keychain (sensitive `userConfig`).
 
-### B2. Premier déploiement
-Déclencheur : « déploie l'app sur la plateforme » dans un repo Vite + Supabase.
-1. `create_app` (dans la limite du quota), puis écriture et commit de `.platform.json`.
-2. `apply_migrations` : le linter tourne dans la transaction et rejette toute nouvelle `ERROR`.
-3. Secrets, puis fonctions. Chaque fonction est préchauffée avant la bascule.
-4. Build avec les variables renvoyées par `get_app`, puis déploiement du front.
-5. Smoke test, puis affichage de l'URL et du lien Studio.
+### B2. First deployment
+Trigger: "deploy the app to the platform" in a Vite + Supabase repo.
+1. `create_app` (within the quota), then `.platform.json` is written and committed.
+2. `apply_migrations`: the linter runs inside the transaction and rejects any new `ERROR`.
+3. Secrets, then functions. Each function is warmed up before the switch.
+4. Build with the variables returned by `get_app`, then frontend deployment.
+5. Smoke test, then the URL and the Studio link are displayed.
 
-Canal : Claude Code + MCP.
-État : ✅ M3 (environ 45 s). Le quota n'est pas encore appliqué ❌.
+Channel: Claude Code + MCP.
+Status: ✅ M3 (about 45 s). The quota is not enforced yet ❌.
 
-### B3. Itération
-Déclencheur : le builder modifie le schéma ou le front, puis redemande un déploiement.
-1. Seules les nouvelles migrations sont appliquées. `dry_run` est possible, et `accept_lints` n'est utilisé qu'avec le consentement explicite du builder.
-2. Nouvelles versions des fonctions et du front.
-3. `rollback` du front ou des fonctions si besoin.
+### B3. Iteration
+Trigger: the builder changes the schema or the frontend, then asks for a new deployment.
+1. Only new migrations are applied. `dry_run` is available, and `accept_lints` is only used with the builder's explicit consent.
+2. New versions of the functions and the frontend.
+3. `rollback` of the frontend or the functions if needed.
 
-Canal : Claude Code + MCP.
-État : 🟡. Il manque `list_migrations` et le hash de bundle (les fonctions inchangées sont redéployées). Une migration qui contient elle-même un `COMMIT` échappe au rollback.
+Channel: Claude Code + MCP.
+Status: 🟡. Missing: `list_migrations` and a bundle hash (unchanged functions are redeployed). A migration that contains its own `COMMIT` escapes the rollback.
 
-### B4. Débogage en production
-Déclencheur : un utilisateur signale un bug, ou une alerte arrive.
-1. Le builder décrit le symptôme à Claude.
-2. `get_logs`, puis `execute_sql` en lecture.
-3. Diagnostic, puis correctif (B3) ou `rollback`.
-4. En option, inspection dans Studio (tables, SQL, RLS).
+### B4. Debugging in production
+Trigger: a user reports a bug, or an alert comes in.
+1. The builder describes the symptom to Claude.
+2. `get_logs`, then read-only `execute_sql`.
+3. Diagnosis, then a fix (B3) or a `rollback`.
+4. Optionally, inspection in Studio (tables, SQL, RLS).
 
-Canal : Claude Code + MCP, et Studio.
-État : 🟡. `get_logs` lit les logs Docker sans historique (Loki n'est pas fait). Studio est ✅ (M0ter). Les alertes sont ❌.
+Channel: Claude Code + MCP, and Studio.
+Status: 🟡. `get_logs` reads Docker logs with no history (Loki is not done). Studio is ✅ (M0ter). Alerts are ❌.
 
-### B5. Gestion des utilisateurs de l'app
-Déclencheur : inviter, supprimer ou débloquer un compte, compter les inscrits.
-1. Dans Studio : Auth > Users, pour lister, créer, inviter et supprimer.
-2. Ou dans Claude : outils MCP dédiés.
+### B5. Managing the app's users
+Trigger: invite, delete or unblock an account, count sign-ups.
+1. In Studio: Auth > Users, to list, create, invite and delete.
+2. Or in Claude: dedicated MCP tools.
 
-Canal : Studio et MCP.
-État : 🟡. Studio est ✅ (M0ter). Les outils MCP (`list_auth_users`, `invite_user`, `delete_user`) sont ❌.
+Channel: Studio and MCP.
+Status: 🟡. Studio is ✅ (M0ter). The MCP tools (`list_auth_users`, `invite_user`, `delete_user`) are ❌.
 
-### B6. Auth et SSO d'une app
-Déclencheur : une app interne réservée aux salariés, ou une app publique.
-1. `configure_auth` : signup on/off, domaine email autorisé, URLs de redirection, providers simples.
-2. Activation du SSO d'entreprise de la plateforme (configuré par l'admin, A7).
-3. Expéditeur et templates d'email.
+### B6. App auth and SSO
+Trigger: an internal app restricted to employees, or a public app.
+1. `configure_auth`: signup on/off, allowed email domain, redirect URLs, simple providers.
+2. Enabling the platform's company SSO (configured by the admin, A7).
+3. Sender and email templates.
 
-Canal : Claude Code + MCP.
-État : ❌ M6.
+Channel: Claude Code + MCP.
+Status: ❌ M6.
 
-### B7. Partage d'une app
-Déclencheur : un collègue doit co-maintenir l'app.
-1. L'owner ajoute le collègue comme collaborateur.
-2. Le collègue clone le repo (`.platform.json` est commité) et déploie avec son propre PAT.
-3. L'app apparaît dans son `whoami` et dans son Studio.
+### B7. Sharing an app
+Trigger: a colleague needs to co-maintain the app.
+1. The owner adds the colleague as a collaborator, through an MCP tool or through the admin UI.
+2. The colleague clones the repo (`.platform.json` is committed) and deploys with their own PAT.
+3. The app shows up in their `whoami` and in their Studio.
 
-Canal : à trancher (MCP pour l'owner, ou admin).
-État : ❌. `app_members.role` existe, mais aucun outil ni écran ne gère les membres.
+Channel: Claude Code + MCP (owner), and admin.
+Status: 🟡. The `add-member` admin CLI exists. The MCP tools (`add_member`, `remove_member`) and the admin screen (M4) are ❌.
 
-### B8. Arrêt et suppression
-Déclencheur : projet terminé, ou signalement d'abandon.
-1. `stop_app` : les conteneurs sont arrêtés et une page de maintenance est servie.
-2. Backup final.
-3. `delete_app` : opération symétrique du provisioning.
+### B8. Stopping and deleting an app
+Trigger: project over, or abandoned-app flag.
+1. `stop_app`: containers are stopped and a maintenance page is served.
+2. Final backup.
+3. `delete_app`: symmetric to provisioning.
 
-Canal : Claude Code + MCP (owner), ou admin.
-État : 🟡. Seul `cli.ts delete-app` existe, côté admin. Le reste est ❌.
+Channel: Claude Code + MCP (owner), or admin.
+Status: 🟡. Only the `cli.ts delete-app` admin command exists. The rest is ❌.
 
-## Parcours des admins
+## Admin journeys
 
 ### A1. Installation
-1. Prérequis : une VM de 16 Go ou plus, un DNS wildcard, les ports 80 et 443, un SMTP, un S3.
-2. `install.sh` : secrets, démarrage, initialisation, premier admin.
-3. Domaine et TLS à la demande.
-4. Publication du marketplace de plugins interne.
+1. Prerequisites: a VM with 16 GB or more, a wildcard DNS record, ports 80 and 443, an SMTP server, an S3 bucket.
+2. `install.sh`: secrets, startup, initialization, first admin.
+3. Domain and on-demand TLS.
+4. Publishing the internal plugin marketplace.
 
-Canal : shell.
-État : 🟡. `install.sh` fonctionne en local, mais `api.localhost` est figé, et il n'y a ni TLS `ask`, ni Loki.
+Channel: shell.
+Status: 🟡. `install.sh` works locally, but `api.localhost` is hardcoded, and there is neither the TLS `ask` endpoint nor Loki.
 
-### A2. Builders, tokens et quotas
-1. Créer un builder (email, mot de passe).
-2. Émettre ou révoquer un PAT, consulter `last_used_at`.
-3. Ajuster son quota d'apps.
-4. Désactiver le compte.
+### A2. Builders, tokens and quotas
+1. Create a builder (email, password).
+2. Issue or revoke a PAT, check `last_used_at`.
+3. Adjust their app quota.
+4. Disable the account.
 
-Canal : admin.
-État : 🟡 CLI / ❌ M4.
+Channel: admin.
+Status: 🟡 CLI / ❌ M4.
 
-### A3. Supervision et alertes
-1. Dashboard : apps par statut, ressources de la VM, taille du cluster.
-2. Apps en erreur, `BOOT_ERROR`, `accept_lints` audités, backups ratés.
-3. Alertes par email aux owners.
-4. Journal d'audit.
+### A3. Monitoring and alerts
+1. Dashboard: apps by status, VM resources, cluster size.
+2. Apps in error, `BOOT_ERROR`, audited `accept_lints`, failed backups.
+3. Email alerts to owners.
+4. Audit log.
 
-Canal : admin et email.
-État : ❌ M4/M7. Les données existent en partie (`apps.status`, `audit_log`).
+Channel: admin and email.
+Status: ❌ M4/M7. Part of the data already exists (`apps.status`, `audit_log`).
 
-### A4. Backups et restauration
-Backup quotidien de chaque base vers S3, avec rétention, suivi des échecs et restauration vers la même app.
+### A4. Backups and restore
+Daily backup of each database to S3, with retention, failure tracking and restore into the same app.
 
-Canal : admin.
-État : ❌ M7.
+Channel: admin.
+Status: ❌ M7.
 
-### A5. Reprise d'une app orpheline
-Déclencheur : départ d'un collaborateur.
-1. Désactiver son compte et révoquer ses tokens.
-2. Lister ses apps.
-3. Pour chacune : transférer l'ownership à un autre builder, la mettre en sommeil ou la supprimer.
+### A5. Taking over an orphaned app
+Trigger: a team member leaves.
+1. Disable their account and revoke their tokens.
+2. List their apps.
+3. For each one: transfer ownership to another builder, put it to sleep or delete it.
 
-Canal : admin.
-État : ❌ M4. Le code source vit dans le repo du builder, pas sur la plateforme.
+Channel: admin.
+Status: ❌ M4. The source code lives in the builder's repo, not on the platform.
 
-### A6. Apps abandonnées
-1. Après N jours sans trafic ni déploiement, l'app est signalée à l'admin et à l'owner.
-2. L'admin décide : mise en sommeil ou suppression après un backup final.
+### A6. Abandoned apps
+1. After N days without traffic or deployment, the app is flagged to the admin and the owner.
+2. The admin decides: put it to sleep, or delete it after a final backup.
 
-Canal : admin et email.
-État : ❌.
+Channel: admin and email.
+Status: ❌.
 
-### A7. SSO d'entreprise de la plateforme
-L'admin configure une fois les providers OIDC et SAML de l'entreprise. Les builders les activent ensuite sur leurs apps (B6).
+### A7. Platform company SSO
+The admin configures the company's OIDC and SAML providers once. Builders then enable them on their apps (B6).
 
-Canal : admin.
-État : ❌ M6.
+Channel: admin.
+Status: ❌ M6.
 
-### A8. Mise à jour de la plateforme
-1. Migration du control plane.
-2. Recyclage des conteneurs GoTrue et PostgREST, app par app.
-3. Rebuild de Studio : rejouer les patches documentés dans `apps/studio/PLATFORM_PATCHES.md`.
+### A8. Platform upgrade
+1. Control plane migration.
+2. Recycling the GoTrue and PostgREST containers, app by app.
+3. Rebuilding Studio: replay the patches documented in `apps/studio/PLATFORM_PATCHES.md`.
 
-Canal : shell.
-État : ❌ M7. La procédure de mise à jour de Studio est documentée (M0ter).
+Channel: shell.
+Status: ❌ M7. The Studio upgrade procedure is documented (M0ter).
 
-## Parcours des app users
+## App user journeys
 
-### U1. Inscription et connexion par email
-Signup, confirmation par email, login, puis accès aux données sous RLS.
-État : 🟡. Signup, login et RLS sont vérifiés. La confirmation est automatique tant qu'il n'y a pas de SMTP (M6).
+### U1. Email sign-up and login
+Sign-up, email confirmation, login, then access to data under RLS.
+Status: 🟡. Sign-up, login and RLS are verified. Confirmation is automatic as long as there is no SMTP (M6).
 
-### U2. Connexion par SSO d'entreprise
-« Se connecter avec Entra ID / Google », création du compte au premier login, refus si le domaine n'est pas autorisé.
-État : ❌ M6.
+### U2. Company SSO login
+"Sign in with Entra ID / Google", account created on first login, rejected if the domain is not allowed.
+Status: ❌ M6.
 
-### U3. Accès anonyme
-SPA et requêtes avec la clé anon, limitées par les policies `anon`. Fonctions avec `verify_jwt=false`.
-État : ✅.
+### U3. Anonymous access
+SPA and requests with the anon key, restricted by the `anon` policies. Functions with `verify_jwt=false`.
+Status: ✅.
 
-### U4. Réinitialisation du mot de passe
-Email envoyé par le SMTP mutualisé, puis page de reset dans l'app.
-État : ❌ M6.
+### U4. Password reset
+Email sent through the shared SMTP, then a reset page in the app.
+Status: ❌ M6.
 
-## Questions ouvertes
+## Open questions
 
-1. **Gestion des membres d'une app (B7)** : l'owner passe-t-il par un outil MCP (`add_member`, `remove_member`), par l'admin, ou par les deux ?
-2. **Seuils** : valeur par défaut du quota d'apps par builder, et nombre de jours avant le signalement d'une app abandonnée.
+1. **Thresholds**: default app quota per builder, and number of days before an app is flagged as abandoned.

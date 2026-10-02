@@ -1,15 +1,19 @@
-# Plateforme d'hébergement d'apps Supabase
+# Supabase app hosting platform
 
-Plan de référence : [PLAN_1.md](PLAN_1.md). Rapports des jalons : `spikes/*/REPORT.md`.
+Reference plan: [PLAN_1.md](PLAN_1.md). Milestone reports: `spikes/*/REPORT.md`.
+
+Main user journeys and the related product decisions: [docs/USER_JOURNEYS.md](docs/USER_JOURNEYS.md).
+
+## Conventions
+
+- Documentation (`docs/`, READMEs, this file) is written in English.
 
 ## Personas
 
-1. **App users** : utilisateurs des apps déployées. Anonymes, ou authentifiés via le GoTrue de l'instance de l'app.
-2. **App builders** : créent, modifient et inspectent leurs instances d'app, gèrent leurs utilisateurs. Ils accèdent à Studio pour leurs apps uniquement. Côté modèle : `users.role = 'developer'` + `app_members`.
-3. **Admins** : voient toutes les apps et gèrent les app builders. Côté modèle : `users.role = 'admin'`.
+1. **App users**: use the apps deployed on the platform. Anonymous, or authenticated through the app instance's GoTrue.
+2. **App builders**: create, modify and inspect their app instances, and manage their users. They access Studio for their own apps only. Data model: `users.role = 'developer'` + `app_members`.
+3. **Admins**: see all apps and manage app builders. Data model: `users.role = 'admin'`.
 
-Parcours principaux et décisions produit associées : [docs/USER_JOURNEYS.md](docs/USER_JOURNEYS.md).
+## Decisions
 
-## Décisions
-
-- **Studio** : le code de supabase-studio-multi-head est vendoré dans `apps/studio/` et modifié pour que les app builders n'accèdent qu'à leurs apps. Un Studio officiel par app est écarté (trop de RAM par instance ouverte). La licence (Sustainable Use License) n'est pas bloquante tant qu'on ne vise pas la revente.
+- **Studio**: the supabase-studio-multi-head code is vendored in `apps/studio/` and modified so that app builders only access their own apps. One official Studio per app is ruled out (too much RAM per open instance). The license (Sustainable Use License) is not a blocker as long as we don't aim to resell the product.
