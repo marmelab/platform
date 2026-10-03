@@ -122,6 +122,8 @@ function saveEnv() {
 
 async function deploy(client: Client, token: string, slug: string, name: string, example: string) {
   await tool(client, "create_app", { name, slug });
+  // demo users sign up and sign in at once (no email confirmation, M6); idempotent
+  await tool(client, "configure_auth", { app: slug, email_confirmation: false });
   // the examples have no .platform.json: --app names the app (requires DIRECT_DEPLOY=everyone, written by install.sh)
   execFileSync(process.execPath, [DEPLOY_CLI, "deploy", "--auth", "token", "--app", slug,
     "--dir", fileURLToPath(new URL(`examples/${example}/`, ROOT))], {

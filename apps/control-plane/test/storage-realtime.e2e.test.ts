@@ -161,6 +161,8 @@ describe("M5: Storage and Realtime on two apps", () => {
       assert.equal(app.status, "running");
       assert.equal(app.supabase_url, url(slug));
       apps[slug] = app;
+      // the test users sign up and use their session at once (no email confirmation, M6)
+      await call(admin, "configure_auth", { app: slug, email_confirmation: false });
       // registered in both services, Storage's migrations run in the app database as the app's storage role
       assert.equal(psql(`select count(*) from tenants where id = '${slug}'`, "platform_storage"), "1");
       assert.equal(psql(`select count(*) from _realtime.tenants where external_id = '${slug}'`, "platform_realtime"), "1");

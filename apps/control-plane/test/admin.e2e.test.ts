@@ -8,6 +8,7 @@ import { randomBytes } from "node:crypto";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { cleanup, psql, runId, waitForControlPlane } from "./disposable.ts";
+import { waitForMail } from "./mailpit.ts";
 
 const ROOT = new URL("../../../", import.meta.url);
 const env = Object.fromEntries(
@@ -153,6 +154,12 @@ describe("admin API e2e", () => {
     assert.equal(created.email, BUILDER);
     assert.equal(created.has_password, true);
     assert.equal(created.active, true);
+    // M6: a welcome email through the platform SMTP, without the password
+    assert.equal(created.welcome_email_sent, true);
+    const welcome = await waitForMail(`to:"${BUILDER}" subject:"Your account"`);
+    assert.equal(welcome.From.Address, "noreply@platform.localhost");
+    assert.match(welcome.Text, /studio\.localhost/);
+    assert.ok(!welcome.Text.includes(PASSWORD), "no password in the email");
     const token = ok(await request("POST", "/tokens", { body: { user_id: created.id, name: "e2e" } }), 201);
     assert.match(token.token, /^plat_/);
     users.builder = { id: created.id, token: token.token };
@@ -303,6 +310,12 @@ describe("admin API e2e", () => {
 
     const detail = ok(await request("GET", `/apps/${APP}`));
     assert.deepEqual(detail.services.map((s: any) => s.service).sort(), ["gotrue", "postgrest"]);
+    // M6: the auth policy, read-only, without any SMTP secret
+    assert.equal(detail.auth.signup_enabled, true);
+    assert.equal(detail.auth.smtp_configured, true);
+    assert.equal(detail.auth.email_confirmation_effective, true);
+    assert.deepEqual(detail.auth.uri_allow_list, [`http://${APP}.localhost:8100/**`]);
+    assert.doesNotMatch(JSON.stringify(detail.auth), /password|pass"/i);
     assert.equal((await request("GET", "/apps/does-not-exist")).status, 404);
   });
 

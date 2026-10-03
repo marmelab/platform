@@ -11,6 +11,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import * as tar from "tar";
 import { cleanup, cli, psql, runId, waitForControlPlane } from "./disposable.ts";
+import { deleteMails, searchMails, waitForMails } from "./mailpit.ts";
 
 const ROOT = new URL("../../../", import.meta.url);
 const env = Object.fromEntries(
@@ -18,6 +19,7 @@ const env = Object.fromEntries(
     .map((l) => [l.slice(0, l.indexOf("=")), l.slice(l.indexOf("=") + 1)]),
 );
 const MCP_URL = env.PLATFORM_URL ?? "http://api.localhost:8100/mcp";
+const ADMIN_EMAIL = env.PLATFORM_ADMIN_EMAIL ?? "admin@example.com";
 const ADMIN = "http://admin.localhost:8100";
 const APP = `e2e-${runId()}-met`;
 const APP_URL = `http://${APP}.localhost:8100`;
@@ -177,5 +179,46 @@ describe("app metrics e2e", () => {
     cli(["set-setting", "abandoned_after_days", "60"]);
     assert.equal((await appRecord()).flags.abandoned, false, "setting applied at once");
     assert.throws(() => cli(["set-setting", "abandoned_after_days", "0"]), /whole number of days/);
+  });
+
+  test("5. abandoned: the owners are emailed once per transition (A6, M6)", async () => {
+    const count = () => Number(psql(`select count(*) from audit_log l join apps a on a.id = l.app_id
+      where a.slug = '${APP}' and l.action = 'notify_abandoned'`));
+    const notifiedAt = () => psql(`select coalesce(abandoned_notified_at::text, '') from apps where slug = '${APP}'`);
+    const query = `to:"${ADMIN_EMAIL}" subject:"${APP}"`;
+    // a notice the in-process sampler may have sent during test 4's backdating does not count
+    psql(`update apps set abandoned_notified_at = null where slug = '${APP}'`);
+    await deleteMails(query);
+    const before = count();
+    const notices = () => String(count() - before);
+    // still flagged by test 4's backdating; abandoned_after_days back to 30 days
+    cli(["set-setting", "abandoned_after_days", "30"]);
+    assert.equal((await appRecord()).flags.abandoned, true);
+    await api("POST", "/metrics/sample", {}); // the in-process sampler may have sent it already
+    const [mail] = await waitForMails(query);
+    assert.match(mail!.Subject, /looks abandoned/);
+    assert.deepEqual(mail!.From, { Name: "Platform", Address: "noreply@platform.localhost" });
+    assert.ok(mail!.Text.includes(APP_URL), "the app's URL");
+    assert.match(mail!.Text, /more than 30 days/);
+    assert.equal(notices(), "1");
+    assert.notEqual(notifiedAt(), "");
+    const audit = JSON.parse(psql(`select l.details from audit_log l join apps a on a.id = l.app_id
+      where a.slug = '${APP}' and l.action = 'notify_abandoned' order by l.id desc limit 1`));
+    assert.deepEqual(audit.recipients, [ADMIN_EMAIL]);
+
+    // once: later samples do not send it again
+    const sample = await api("POST", "/metrics/sample", {});
+    assert.ok(!sample.abandoned_notified.includes(APP));
+    assert.equal((await searchMails(query)).length, 1);
+    assert.equal(notices(), "1");
+
+    // active again (here: a longer threshold), then abandoned again: a new notice
+    cli(["set-setting", "abandoned_after_days", "60"]);
+    await api("POST", "/metrics/sample", {});
+    assert.equal(notifiedAt(), "", "cleared when the app is no longer abandoned");
+    cli(["set-setting", "abandoned_after_days", "30"]);
+    await api("POST", "/metrics/sample", {});
+    await waitForMails(query, 2);
+    assert.equal(notices(), "2");
   });
 });
