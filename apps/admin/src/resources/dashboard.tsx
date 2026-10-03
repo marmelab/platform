@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { api } from "../providers";
 import { count, type Day, Sparkline } from "./charts";
 import { bytes, dateTime, StatusBadge } from "./fields";
+import type { BackupStatus } from "./backups";
 
 interface Stats {
   apps: { total: number; by_status: Record<string, number> };
@@ -13,6 +14,7 @@ interface Stats {
   flagged: { outside_ci: number; accepted_lints: number; abandoned: number };
   load: { requests_24h: number; errors_24h: number; memory: number; traffic_7d: Day[]; sampled_at: string | null };
   recent_failures: { at: string; app: string; kind: string; message: string | null }[];
+  backups: BackupStatus;
   database: { cluster_bytes: number; app_databases_bytes: number };
   host: {
     memory_total: number;
@@ -110,6 +112,23 @@ export const Dashboard = () => {
           </Big>
           <div className="text-muted-foreground">
             {host.cpus} CPUs, load {host.load.map((l) => l.toFixed(2)).join(" ")}
+          </div>
+        </Stat>
+        <Stat title="Backups">
+          <div data-testid="dashboard-backups">
+            <Link className={stats.backups.failed_7d ? "text-destructive underline" : "underline"} to={`/backups?filter=${encodeURIComponent(JSON.stringify({ status: "failed" }))}`}>
+              {stats.backups.failed_7d} failed in 7 days
+            </Link>
+          </div>
+          {stats.backups.stale_apps.length > 0 && (
+            <div className="text-destructive">
+              {stats.backups.stale_apps.length} app{stats.backups.stale_apps.length > 1 ? "s" : ""} without a backup for 36 h
+            </div>
+          )}
+          <div className="text-muted-foreground">
+            {stats.backups.enabled ? `daily at ${String(stats.backups.hour_utc).padStart(2, "0")}:00 UTC` : "scheduled backups off"} ·{" "}
+            {stats.backups.target === "s3" ? "S3" : "local volume only"}
+            {stats.backups.last_run?.run_started_at ? ` · last run ${dateTime(stats.backups.last_run.run_started_at)}` : ""}
           </div>
         </Stat>
         <Stat title="Volumes disk">

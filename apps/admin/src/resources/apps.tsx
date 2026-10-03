@@ -31,6 +31,7 @@ import { api } from "../providers";
 import { count, type Day, type Hour, HourlyChart, Sparkline } from "./charts";
 import { ActionButton } from "./actions";
 import { AuditTable } from "./audit";
+import { AppBackups } from "./backups";
 import {
   bytes,
   Commit,
@@ -229,7 +230,8 @@ function DeleteAppButton({ app }: { app: AppRecord }) {
       <CardContent className="flex flex-col gap-3 text-sm">
         <p>
           Irreversible: containers, database, roles, deployed files and platform rows are removed. A final backup
-          (database dump, sites and functions) is taken first unless unchecked.
+          (database, Storage files, live frontend and functions, secrets) is taken first unless unchecked: the app can
+          be recreated from it (Backups screen) during the final backup retention.
         </p>
         <label className="flex items-center gap-2">
           <Checkbox checked={backup} onCheckedChange={(v) => setBackup(Boolean(v))} aria-label="Take a final backup" />
@@ -640,6 +642,7 @@ function AppTabs() {
         <TabsTrigger value="members">Members</TabsTrigger>
         <TabsTrigger value="secrets">Secrets</TabsTrigger>
         <TabsTrigger value="schema">Schema changes</TabsTrigger>
+        <TabsTrigger value="backups">Backups</TabsTrigger>
         <TabsTrigger value="logs">Logs</TabsTrigger>
         <TabsTrigger value="audit">Audit</TabsTrigger>
       </TabsList>
@@ -658,6 +661,9 @@ function AppTabs() {
       </TabsContent>
       <TabsContent value="schema" className="pt-4">
         <SchemaChanges />
+      </TabsContent>
+      <TabsContent value="backups" className="pt-4">
+        <AppBackups />
       </TabsContent>
       <TabsContent value="logs" className="pt-4">
         <Logs app={app} />
