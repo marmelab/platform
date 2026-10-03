@@ -17,12 +17,12 @@ services:
       - "log_line_prefix=%m [%p] db=%d user=%u app=%a "
       - -c
       - max_connections=500
-      # Realtime (M5): one temporary logical replication slot per app with postgres_changes subscribers, plus one
-      # walsender for Realtime's "broadcast changes" slot (spikes/m5-storage-realtime/REPORT.md)
+      # Realtime (M5): per app with clients, one temporary logical replication slot for postgres_changes subscribers
+      # and one walsender with its temporary slot for "broadcast changes" (patched image, patches/realtime)
       - -c
-      - max_replication_slots=100
+      - max_replication_slots=128
       - -c
-      - max_wal_senders=20
+      - max_wal_senders=64
     volumes:
       - db-data:/var/lib/postgresql/data
     healthcheck:
@@ -173,8 +173,10 @@ services:
 
   # Realtime (M5), one shared multi-tenant instance: one tenant per app (registered by the control plane through its
   # API), the tenant taken from the first label of the Host header, set by Caddy to <slug>.realtime. No published port.
+  # Patched upstream image (patches/realtime, built by install.sh): the "broadcast changes" slot is named per tenant
+  # (SLOT_NAME_PER_TENANT).
   realtime:
-    image: supabase/realtime:v2.134.10
+    image: plat/realtime:v2.134.10-platform1
     container_name: plat-realtime
     restart: unless-stopped
     mem_limit: 1g
@@ -201,6 +203,7 @@ services:
       SEED_SELF_HOST: "false"
       RUN_JANITOR: "true"
       DISABLE_HEALTHCHECK_LOGGING: "true"
+      SLOT_NAME_PER_TENANT: "true"
     labels:
       platform.service: realtime
 
