@@ -765,7 +765,7 @@ describe("control plane M2 e2e", () => {
       ["database.dump", "functions.tar.gz", "manifest.json", "secrets.enc", "sites.tar.gz"]);
     // M7: recorded as a final backup of the deleted app
     assert.equal(psql(`select concat_ws(',', kind, status, app_id is null, location) from backups where id = '${deleted.backup_id}'`),
-      `final,succeeded,true,${deleted.backup}`);
+      `final,succeeded,t,${deleted.backup}`);
     const dump = inCp("cat", `${deleted.backup}/database.dump`);
     assert.ok(dump.length > 10_000, `dump of ${dump.length} bytes`);
     const listing = execFileSync("docker", ["exec", "-i", "plat-db", "pg_restore", "--list"], { input: dump, encoding: "utf8" });
