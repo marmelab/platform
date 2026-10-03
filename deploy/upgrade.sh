@@ -174,8 +174,8 @@ cli version > "$DIR/version.json"
 cat > "$DIR/ROLLBACK.md" <<EOF
 # Rollback of the upgrade $STAMP ($FROM -> $TO)
 
-Pre-upgrade state: $DIR/images.before (images of every platform container), $DIR/backups.txt (app backups),
-$DIR/platform.dump, $DIR/platform_storage.dump, $DIR/platform_realtime.dump (the platform's databases).
+Pre-upgrade state: deploy/$DIR/images.before (images of every platform container), deploy/$DIR/backups.txt (app backups),
+deploy/$DIR/platform.dump, deploy/$DIR/platform_storage.dump, deploy/$DIR/platform_realtime.dump (the platform's databases).
 
 1. Go back to the previous code: \`git checkout <previous commit or tag>\` (this upgrade ran from $COMMIT).
 2. Put the previous images back and restart:
@@ -189,10 +189,10 @@ $DIR/platform.dump, $DIR/platform_storage.dump, $DIR/platform_realtime.dump (the
    Upstream images (GoTrue, PostgREST, Storage...) follow the previous checkout's pinned tags.
 3. Only if the new version changed the platform database in a way the previous one cannot read (release notes):
 
-       docker exec -i plat-db pg_restore --clean --if-exists --username=supabase_admin --dbname=platform < $DIR/platform.dump
+       docker exec -i plat-db pg_restore --clean --if-exists --username=supabase_admin --dbname=platform < deploy/$DIR/platform.dump
 
 4. Only if an app's data was damaged: restore its pre-upgrade backup (admin console, Backups, or
-   \`docker exec plat-control-plane node src/cli.ts restore-app <backup id> --confirm <slug>\`), ids in $DIR/backups.txt.
+   \`docker exec plat-control-plane node src/cli.ts restore-app <backup id> --confirm <slug>\`), ids in deploy/$DIR/backups.txt.
 EOF
 
 step "Summary"

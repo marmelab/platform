@@ -49,6 +49,12 @@ interface CaddyConfig {
   apps?: { http?: { servers?: Record<string, CaddyServer> }; tls?: unknown; [key: string]: unknown };
   [key: string]: unknown;
 }
+/**
+ * GoTrue and PostgREST upstreams: a request that fails to reach the container (connection refused or closed while a
+ * container is replaced, orchestrator.replace) is retried, so that a rolling recycle loses no request. Caddy only
+ * retries a request whose body it can replay and that the upstream did not start answering.
+ */
+const RETRY = { retries: 3, try_interval: "250ms" };
 /** HTTP -> HTTPS redirect server of the TLS modes (router.ensureEdge). */
 const REDIRECT_SERVER = "redirect";
 /** Routes to set (replaced in place, or appended) or remove (null), by `@id`, in the two dynamic subroutes. */
@@ -285,14 +291,14 @@ export class CaddyRouter implements Router {
         match: [{ path: ["/auth/v1/*"] }],
         handle: [
           { handler: "rewrite", strip_path_prefix: "/auth/v1" },
-          { handler: "reverse_proxy", upstreams: [{ dial: `${config.docker.prefix}-${SLUG}-auth:9999` }] },
+          { handler: "reverse_proxy", upstreams: [{ dial: `${config.docker.prefix}-${SLUG}-auth:9999` }], load_balancing: RETRY },
         ],
       },
       {
         match: [{ path: ["/rest/v1/*"] }],
         handle: [
           { handler: "rewrite", strip_path_prefix: "/rest/v1" },
-          { handler: "reverse_proxy", upstreams: [{ dial: `${config.docker.prefix}-${SLUG}-rest:3000` }] },
+          { handler: "reverse_proxy", upstreams: [{ dial: `${config.docker.prefix}-${SLUG}-rest:3000` }], load_balancing: RETRY },
         ],
       },
       {

@@ -105,8 +105,14 @@ describe("On-demand TLS: ask endpoint", () => {
       assert.equal(site.status, 200);
       const auth = await fetch(`https://${P}b.${DOMAIN}/auth/v1/health`);
       assert.equal(auth.status, 200);
-      const studio = await fetch(`https://studio.${DOMAIN}/`, { redirect: "manual" });
-      assert.ok([200, 302, 307].includes(studio.status), `studio: ${studio.status}`);
+      // Studio's forward auth: a signed-out page request is redirected to the platform login
+      const studio = await fetch(`https://studio.${DOMAIN}/`, { redirect: "manual", headers: { accept: "text/html" } });
+      assert.equal(studio.status, 302);
+      assert.match(studio.headers.get("location") ?? "", /\/_platform\/login/);
+      const login = await fetch(`https://studio.${DOMAIN}/_platform/login`);
+      assert.equal(login.status, 200);
+      const adminPage = await fetch(`https://admin.${DOMAIN}/`);
+      assert.equal(adminPage.status, 200);
       const redirect = await fetch(`http://${P}b.${DOMAIN}/some/path?x=1`, { redirect: "manual" });
       assert.equal(redirect.status, 308);
       assert.equal(redirect.headers.get("location"), `https://${P}b.${DOMAIN}/some/path?x=1`);
