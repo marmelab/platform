@@ -179,6 +179,26 @@ describe("admin SPA smoke test", () => {
     await shot(page, "07-app-audit");
   });
 
+  test("4b. app backups: backup now, then restore it (typed confirmation)", async () => {
+    await page.getByRole("tab", { name: "Backups" }).click();
+    await page.getByText("No backup yet.").waitFor();
+    await page.getByRole("button", { name: "Backup now" }).click();
+    const row = page.getByRole("row").filter({ hasText: "manual" });
+    await row.getByText("succeeded").waitFor({ timeout: 60_000 });
+    await shot(page, "07b-app-backups");
+    await row.getByRole("button", { name: "Restore…" }).click();
+    const dialog = page.getByTestId("restore-dialog");
+    const restore = dialog.getByRole("button", { name: "Restore" });
+    assert.equal(await restore.isDisabled(), true, "disabled until the slug is typed");
+    await dialog.getByLabel("Confirm slug").fill(APP);
+    await restore.click();
+    await page.getByText(`${APP} restored (data replaced)`).waitFor({ timeout: 120_000 });
+    // the pre-restore backup taken by the restore is listed too
+    await page.getByRole("row").filter({ hasText: "pre-restore" }).waitFor();
+    assert.equal((await api("GET", `/apps/${APP}`)).status, "running");
+    assert.equal(psql(`select count(*) from audit_log where action = 'restore_app' and details->>'slug' = '${APP}'`), "1");
+  });
+
   test("5. users, tokens and audit log screens", async () => {
     await page.goto(`${ADMIN}/#/users`);
     await page.getByRole("cell", { name: BUILDER }).waitFor();
@@ -192,6 +212,10 @@ describe("admin SPA smoke test", () => {
     await page.goto(`${ADMIN}/#/audit_log`);
     await page.getByRole("cell", { name: "stop_app" }).first().waitFor();
     await shot(page, "11-audit-log");
+    await page.goto(`${ADMIN}/#/backups`);
+    await page.getByTestId("backup-settings").waitFor();
+    await page.getByRole("row").filter({ hasText: APP }).first().waitFor();
+    await shot(page, "11b-backups");
   });
 
   test("6. company SSO: settings screen, then signing in with the mock IdP", async () => {
