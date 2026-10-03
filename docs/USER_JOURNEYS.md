@@ -226,7 +226,7 @@ Status: 🟡 (M5). Works per app on the shared Storage API (same URL and anon ke
 
 ### U6. Live updates
 `supabase.channel(...)`: `postgres_changes` on the app's tables (added to the `supabase_realtime` publication by a migration, filtered by RLS), broadcast and presence between clients.
-Status: 🟡 (M5). Works per app on the shared Realtime, isolated between apps. Broadcast from Database (`realtime.send()`, `realtime.broadcast_changes()`) works for one app at a time only (TECH_DEBT SR-1).
+Status: ✅ (M5). Works per app on the shared Realtime, isolated between apps, Broadcast from Database (`realtime.send()`, `realtime.broadcast_changes()`) included since the patched Realtime image (`patches/realtime`, TECH_DEBT SR-6). Limits: Realtime's connections and walsenders per recently used app (TECH_DEBT PG-5, PG-6).
 
 ## Open questions
 
