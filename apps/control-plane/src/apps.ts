@@ -29,6 +29,9 @@ import { MultiHeadStudio, type StudioRegistry } from "./studio/registry.ts";
 import { deleteRealtime, deleteStorage, disconnectRealtime, registerRealtime, registerStorage } from "./storage-realtime.ts";
 import { killPoolerDatabase, poolerUrl, syncPooler } from "./pooler.ts";
 import { unwatchSchema, watchSchema } from "./pgrst-relay.ts";
+import { authConfig, authEnv, ensureAuthHook, policyApp } from "./app-auth.ts";
+import { getSettings } from "./settings.ts";
+import type { ServiceSpec } from "./orchestrator.ts";
 
 export const orchestrator: Orchestrator = new DockerOrchestrator();
 export const router: Router = new CaddyRouter();
@@ -216,15 +219,20 @@ async function ensureSchemaChanges(slug: string) {
   if (exists) await withAdmin(roles.database, (c) => c.query(schemaChangesSql()));
 }
 
-async function startServices(slug: string, secrets: AppSecrets) {
-  const roles = appRoles(dbId(slug));
-  const publicUrl = appUrl(slug);
-  const dbUrl = (user: string, password: string) =>
-    `postgres://${user}:${password}@${config.pg.host}:${config.pg.port}/${roles.database}`;
-  await orchestrator.ensure({
-    name: containerName(slug, "auth"),
+/**
+ * The app's GoTrue: database, JWT and API settings, plus the auth policy and the platform SMTP (app-auth.ts). Any change
+ * of this spec (configure_auth, SMTP settings, an upgrade) recreates the container (orchestrator.ensure).
+ */
+async function authServiceSpec(app: AppRow, secrets: AppSecrets): Promise<ServiceSpec> {
+  const roles = appRoles(dbId(app.slug));
+  const publicUrl = appUrl(app.slug);
+  const [auth, { smtp }] = await Promise.all([authConfig(app), getSettings()]);
+  // the hook function must exist before GoTrue starts with it enabled
+  if (auth.allowed_email_domains.length > 0) await ensureAuthHook(app, auth);
+  return {
+    name: containerName(app.slug, "auth"),
     image: config.docker.gotrueImage,
-    app: slug,
+    app: app.slug,
     service: "gotrue",
     memoryMb: 256,
     cmd: ["auth"],
@@ -233,23 +241,33 @@ async function startServices(slug: string, secrets: AppSecrets) {
       GOTRUE_API_PORT: "9999",
       API_EXTERNAL_URL: `${publicUrl}/auth/v1`,
       GOTRUE_DB_DRIVER: "postgres",
-      GOTRUE_DB_DATABASE_URL: `${dbUrl(roles.authAdmin, secrets.passwords.authAdmin)}?sslmode=disable`,
+      GOTRUE_DB_DATABASE_URL:
+        `postgres://${roles.authAdmin}:${secrets.passwords.authAdmin}@${config.pg.host}:${config.pg.port}/${roles.database}?sslmode=disable`,
       GOTRUE_DB_MAX_POOL_SIZE: "3",
-      GOTRUE_SITE_URL: publicUrl,
-      GOTRUE_URI_ALLOW_LIST: `${publicUrl}/**`,
-      GOTRUE_DISABLE_SIGNUP: "false",
       GOTRUE_JWT_ADMIN_ROLES: "service_role",
       GOTRUE_JWT_AUD: "authenticated",
       GOTRUE_JWT_DEFAULT_GROUP_NAME: "authenticated",
       GOTRUE_JWT_EXP: "3600",
       GOTRUE_JWT_ISSUER: `${publicUrl}/auth/v1`,
       GOTRUE_JWT_SECRET: secrets.jwt_secret,
-      GOTRUE_EXTERNAL_EMAIL_ENABLED: "true",
-      GOTRUE_MAILER_AUTOCONFIRM: "true",
       GOTRUE_EXTERNAL_ANONYMOUS_USERS_ENABLED: "false",
       GOTRUE_EXTERNAL_PHONE_ENABLED: "false",
+      // site URL, redirect allow list, sign-up, confirmation, SMTP, link paths, allowed domains hook
+      ...authEnv(policyApp(app), auth, smtp),
     },
-  });
+  };
+}
+
+/** Recreates the app's GoTrue if its environment changed (configure_auth, SMTP settings), and waits for it. */
+export async function ensureAuthService(app: AppRow) {
+  await orchestrator.ensure(await authServiceSpec(app, appSecrets(app)));
+  await waitHealthy(`http://${containerName(app.slug, "auth")}:9999/health`);
+}
+
+async function startServices(app: AppRow, secrets: AppSecrets) {
+  const slug = app.slug;
+  const roles = appRoles(dbId(slug));
+  await orchestrator.ensure(await authServiceSpec(app, secrets));
   await orchestrator.ensure({
     name: containerName(slug, "rest"),
     image: config.docker.postgrestImage,
@@ -305,7 +323,7 @@ export async function provision(app: AppRow) {
     const secrets = appSecrets(app);
     await provisionDatabase(app.slug, secrets);
     await syncPooler();
-    await startServices(app.slug, secrets);
+    await startServices(app, secrets);
     await prepareDirectories(app.slug);
     await writeEdgeConfig(app);
     await router.upsertApp(app.slug);
@@ -388,6 +406,24 @@ export async function syncAll() {
     .catch((error) => console.error("admin route failed", error));
 }
 
+/**
+ * After a change of the platform SMTP settings (CLI set-setting smtp_*): every running app's GoTrue gets the new
+ * environment, one app at a time (each is recreated, a few seconds without /auth/v1). Stopped apps get it at start.
+ */
+export async function syncAuthServices() {
+  const apps = await many<AppRow>("select * from apps where status = 'running' order by slug");
+  const failed: string[] = [];
+  for (const app of apps) {
+    try {
+      await ensureAuthService(app);
+    } catch (error) {
+      console.error(`auth service of ${app.slug} failed`, error);
+      failed.push(app.slug);
+    }
+  }
+  return { apps: apps.length, failed };
+}
+
 async function syncServiceTenants(apps: AppRow[], attempts = 30) {
   let pending = apps;
   for (let attempt = 1; pending.length > 0 && attempt <= attempts; attempt++) {
@@ -397,7 +433,7 @@ async function syncServiceTenants(apps: AppRow[], attempts = 30) {
         await ensurePasswords(app);
         await provisionDatabase(app.slug, appSecrets(app));
         // containers whose settings changed (apps created before the pooler): recreated, as in provision()
-        await startServices(app.slug, appSecrets(app));
+        await startServices(app, appSecrets(app));
         await registerStorage(app);
         await registerRealtime(app);
       } catch (error) {

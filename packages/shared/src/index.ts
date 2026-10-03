@@ -127,6 +127,21 @@ export const toolInputs = {
     duration_hours: z.number().int().positive().max(876000).optional().describe("Omitted: banned indefinitely"),
   },
   unban_user: { app: slug, ...authUserRef },
+  configure_auth: {
+    app: slug,
+    signup_enabled: z.boolean().optional().describe("false: nobody can sign up; only invite_user creates accounts"),
+    email_confirmation: z.boolean().optional()
+      .describe("Require new users to confirm their address by email (default true; effective only when the platform has SMTP)"),
+    allowed_email_domains: z.array(z.string().min(3).max(253)).max(50).optional()
+      .describe("Only these email domains can sign up or be invited, e.g. [\"example.com\"]; [] allows any"),
+    redirect_urls: z.array(z.string().min(8).max(500)).max(50).optional()
+      .describe("Extra redirect URLs allowed after email links and OAuth (the app's own URL always is), globs allowed, " +
+        "e.g. http://localhost:5173/**; replaces the previous list"),
+    sender_name: z.string().min(1).max(100).nullable().optional()
+      .describe("Sender name of the app's emails; null: the app's name"),
+    sender_email: z.string().max(254).nullable().optional()
+      .describe("Sender address; must be in the platform sender's domain (admins: any); null: the platform sender"),
+  },
   get_logs: {
     app: slug,
     service: z.enum(["gotrue", "postgrest", "functions", "postgres"]).optional(),

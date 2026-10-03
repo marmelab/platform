@@ -13,6 +13,7 @@ import {
   UserError,
 } from "./apps.ts";
 import type { User } from "./auth.ts";
+import { appAuthView, configureAuth } from "./app-auth.ts";
 import { BAN_FOREVER_HOURS, deleteUser, inviteUser, listAuthUsers, setBan } from "./auth-users.ts";
 import { apiUrl } from "./config.ts";
 import {
@@ -95,8 +96,9 @@ export function buildMcpServer(user: User): McpServer {
     {
       description:
         "App details: URL, SUPABASE_URL and anon key (use them as VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY), live " +
-        "versions, linked repository, last release, and schema_drift: schema changes made outside a release since " +
-        "the last one (details with list_schema_changes)",
+        "versions, linked repository, last release, schema_drift: schema changes made outside a release since " +
+        "the last one (details with list_schema_changes), and auth: the app's auth policy (configure_auth) and " +
+        "whether emails can be sent",
       inputSchema: t.get_app,
     },
     ({ app }) =>
@@ -106,7 +108,7 @@ export function buildMcpServer(user: User): McpServer {
           console.error(`schema drift of ${target.slug}`, error);
           return null;
         });
-        return { ...(await appInfo(target)), schema_drift: drift };
+        return { ...(await appInfo(target)), schema_drift: drift, auth: await appAuthView(target) };
       }),
   );
 
@@ -310,12 +312,31 @@ export function buildMcpServer(user: User): McpServer {
   server.registerTool(
     "invite_user",
     {
-      description: "Invite a person to the app (any member, audited): creates their app account and returns a " +
-        "single-use invite_link valid 24 h. No email is sent (no SMTP yet): give the link to the person privately, " +
-        "never paste it in a public place. Refused on a stopped app.",
+      description: "Invite a person to the app (any member, audited): creates their app account and emails them a " +
+        "single-use invitation link valid 24 h (email_sent: true). Only when the platform has no SMTP, no email is " +
+        "sent and the invite_link is returned instead (email_sent: false): give it to the person privately, never " +
+        "paste it in a public place. Refused on a stopped app.",
       inputSchema: t.invite_user,
     },
     ({ app, email }) => run(async () => inviteUser(user, await appForUser(user, app), email)),
+  );
+
+  server.registerTool(
+    "configure_auth",
+    {
+      description: "Change the app's auth policy (owner or admin only, audited; refused on a stopped app). Only the " +
+        "fields passed change: signup_enabled, email_confirmation, allowed_email_domains (sign-up and invitations " +
+        "restricted to these domains), redirect_urls (extra allowed redirects, e.g. a local dev server), " +
+        "sender_name / sender_email (sender of the app's emails). The app's Auth service restarts (a few seconds). " +
+        "Returns the policy in effect (also in get_app).",
+      inputSchema: t.configure_auth,
+    },
+    ({ app, ...changes }) =>
+      run(async () => {
+        const target = await appForUser(user, app);
+        requireOwner(user, target, "configure the app's auth");
+        return configureAuth(user, target, changes);
+      }),
   );
 
   server.registerTool(

@@ -133,6 +133,13 @@ export const config = {
     oidcJwksUrl: optional("OIDC_JWKS_URL"),
     abandonedAfterDays: optional("ABANDONED_AFTER_DAYS") ?? "30",
     metricsRetentionDays: optional("METRICS_RETENTION_DAYS") ?? "30",
+    /** Platform SMTP (M6): app emails (each app's GoTrue) and the platform's own (abandoned apps...). No host: none. */
+    smtpHost: optional("SMTP_HOST") ?? "",
+    smtpPort: optional("SMTP_PORT") ?? "587",
+    smtpUser: optional("SMTP_USER") ?? "",
+    smtpPassword: optional("SMTP_PASSWORD") ?? "",
+    smtpSenderEmail: optional("SMTP_SENDER_EMAIL") ?? "",
+    smtpSenderName: optional("SMTP_SENDER_NAME") ?? "Platform",
   },
   /**
    * SEC-10: the test-only `oidc_jwks` setting (inline JWKS trusted by the CI API) is honoured only with
