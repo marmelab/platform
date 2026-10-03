@@ -5,14 +5,24 @@ export function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [info, setInfo] = useState<string | null>(null);
 
   async function submit(mode: "signIn" | "signUp") {
     setError(null);
+    setInfo(null);
     const credentials = { email, password };
-    const { error } = mode === "signIn"
-      ? await supabase.auth.signInWithPassword(credentials)
-      : await supabase.auth.signUp(credentials);
+    if (mode === "signIn") {
+      const { error } = await supabase.auth.signInWithPassword(credentials);
+      if (error) setError(error.message);
+      return;
+    }
+    // when the app requires email confirmation, sign-up returns no session until the link in the email is opened
+    const { data, error } = await supabase.auth.signUp({
+      ...credentials,
+      options: { emailRedirectTo: window.location.origin },
+    });
     if (error) setError(error.message);
+    else if (!data.session) setInfo("Check your email to confirm your address, then sign in.");
   }
 
   return (
@@ -45,6 +55,7 @@ export function Login() {
           Create an account
         </button>
         {error && <p className="error">{error}</p>}
+        {info && <p className="info">{info}</p>}
       </form>
     </div>
   );

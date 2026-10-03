@@ -144,6 +144,11 @@ describe("admin SPA smoke test", () => {
     await load.getByText("Table view").click();
     await load.getByRole("cell").first().waitFor();
     await load.getByText("Table view").click();
+    // M6: the auth policy, read-only
+    const auth = page.getByTestId("app-auth");
+    await auth.getByText("Email confirmation").waitFor();
+    await auth.getByText("required", { exact: true }).waitFor();
+    await auth.getByText("Admin UI demo <noreply@platform.localhost>").waitFor();
     await shot(page, "04-app-overview", true);
 
     await page.getByRole("button", { name: "Stop" }).click();

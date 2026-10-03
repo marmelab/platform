@@ -11,6 +11,7 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import { createClient } from "@supabase/supabase-js";
 import * as tar from "tar";
 import { cleanup, cli, psql, runId, waitForControlPlane } from "./disposable.ts";
+import { confirmSignup, followLink, fragmentParams, mailLink, waitForMails } from "./mailpit.ts";
 
 const ROOT = new URL("../../../", import.meta.url);
 const env = Object.fromEntries(
@@ -111,7 +112,7 @@ describe("control plane M2 e2e", () => {
     for (const name of ["apply_migrations", "create_app", "create_deployment", "execute_sql", "finalize_deployment",
       "get_app", "get_logs", "list_apps", "list_deployments", "list_members", "list_secrets", "rollback", "set_secrets",
       "add_member", "remove_member", "stop_app", "start_app", "delete_app", "list_schema_changes", "whoami",
-      "list_auth_users", "invite_user", "delete_user", "ban_user", "unban_user"]) {
+      "list_auth_users", "invite_user", "delete_user", "ban_user", "unban_user", "configure_auth"]) {
       assert.ok(tools.includes(name), `tool ${name} missing`);
     }
   });
@@ -457,14 +458,21 @@ describe("control plane M2 e2e", () => {
     assert.equal((await call(admin, "get_app", { app: APP })).frontend_version, v2);
   });
 
-  test("6. supabase-js: signup, insert/select under RLS, function call", async () => {
+  test("6. supabase-js: signup with email confirmation, insert/select under RLS, function call", async () => {
     const options = { auth: { persistSession: false, autoRefreshToken: false } };
     const alice = createClient(APP_URL, app.anon_key, options);
     const bob = createClient(APP_URL, app.anon_key, options);
+    // U1 (M6): with the platform SMTP, a new user confirms their address before signing in
     const signup = await alice.auth.signUp({ email: `alice-${RUN}@example.com`, password: "password-123" });
     assert.ifError(signup.error);
-    assert.ok(signup.data.session, "autoconfirm gives a session");
+    assert.equal(signup.data.session, null, "no session before the email is confirmed");
+    const early = await alice.auth.signInWithPassword({ email: `alice-${RUN}@example.com`, password: "password-123" });
+    assert.match(early.error?.message ?? "", /not confirmed/i);
     assert.ifError((await bob.auth.signUp({ email: `bob-${RUN}@example.com`, password: "password-123" })).error);
+    for (const name of ["alice", "bob"]) await confirmSignup(`${name}-${RUN}@example.com`, APP_URL);
+    for (const [client, name] of [[alice, "alice"], [bob, "bob"]] as const) {
+      assert.ifError((await client.auth.signInWithPassword({ email: `${name}-${RUN}@example.com`, password: "password-123" })).error);
+    }
 
     const title = `buy milk ${RUN}`;
     const inserted = await alice.from("todos").insert({ title }).select().single();
@@ -593,18 +601,21 @@ describe("control plane M2 e2e", () => {
     assert.ok(signedUp.last_sign_in_at);
     assert.doesNotMatch(JSON.stringify(listed), /encrypted_password|password|token/);
 
-    // no SMTP: the user is created and the invite link returned to the caller
+    // with the platform SMTP (M6): the user is created and the invitation emailed, the link is never returned
     const invited = await call(collab, "invite_user", { app: APP, email: guest });
-    assert.equal(invited.email_sent, false);
+    assert.equal(invited.email_sent, true);
+    assert.equal(invited.invite_link, undefined);
     assert.equal(invited.user.email, guest);
     assert.equal(invited.user.confirmed, false);
     assert.ok(invited.user.invited_at);
-    assert.ok(invited.invite_link.startsWith(`${APP_URL}/auth/v1/verify?`), "public invite link");
-    assert.match(invited.invite_link, /type=invite/);
+    const [first] = await waitForMails(`to:"${guest}" subject:"invited"`);
+    assert.ok(mailLink(first!).startsWith(`${APP_URL}/auth/v1/verify?`), "public invite link");
+    assert.match(mailLink(first!), /type=invite/);
     // a pending invitation can be sent again (new link, the previous one no longer works); a registered user cannot
     const again = await call(owner, "invite_user", { app: APP, email: guest });
     assert.equal(again.user.id, invited.user.id);
-    assert.notEqual(again.invite_link, invited.invite_link);
+    const [latest] = await waitForMails(`to:"${guest}" subject:"invited"`, 2);
+    assert.notEqual(mailLink(latest!), mailLink(first!));
     await refused(owner, "invite_user", { app: APP, email: alice }, /already been registered/);
     const filtered = await call(admin, "list_auth_users", { app: APP, filter: `GUEST-${RUN}` });
     assert.deepEqual(filtered.users.map((u: { id: string }) => u.id), [invited.user.id], "case-insensitive filter");
@@ -617,10 +628,9 @@ describe("control plane M2 e2e", () => {
     assert.equal((await call(owner, "list_auth_users", { app: APP, page: total + 1, per_page: 1 })).users.length, 0);
 
     // opening the link confirms the address and signs the person in on the app
-    const accepted = await fetch(again.invite_link, { redirect: "manual" });
-    assert.equal(accepted.status, 303);
-    const location = accepted.headers.get("location") ?? "";
-    assert.ok(location.startsWith(APP_URL) && location.includes("access_token="), "redirected to the app with a session");
+    const location = await followLink(mailLink(latest!));
+    assert.ok(location.startsWith(APP_URL) && fragmentParams(location).get("access_token"), "redirected to the app with a session");
+    assert.equal(fragmentParams(location).get("type"), "invite");
     assert.equal((await call(collab, "list_auth_users", { app: APP, filter: guest })).users[0].confirmed, true);
 
     const options = { auth: { persistSession: false, autoRefreshToken: false } };

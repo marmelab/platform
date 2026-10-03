@@ -229,6 +229,8 @@ describe("platform-deploy (packages/deploy-cli): direct and CI deployments of ex
     admin = await connect(env.PLATFORM_TOKEN!);
     // created by the admin: cleanup() deletes users before apps, and apps.owner_id keeps the creator (CP-12)
     anonKey = (await call(admin, "create_app", { name: "CLI demo", slug: APP })).anon_key;
+    // its app user signs up and uses the session at once (no email confirmation, M6)
+    await call(admin, "configure_auth", { app: APP, email_confirmation: false });
     await call(admin, "link_repo", { app: APP, repo: REPO, repository_id: REPO_ID, default_branch: "main" });
   });
 
