@@ -12,7 +12,7 @@ Legend: ✅ done · 🟡 partial · ❌ missing. Milestones refer to [PLAN_1.md]
 
 | Topic | Decision |
 |---|---|
-| Web login (Studio, admin) | Local accounts (email and password) managed by the platform. No SSO for builders and admins. |
+| Web login (Studio, admin) | Local accounts managed by the platform, with email and password, or the company's OpenID Connect provider (company SSO, M6) once an admin configures it. SSO links to existing accounts by verified email; creating unknown users (as developers) is an opt-in setting. Password sign-in can be reserved to admins (break-glass). PATs are unchanged. |
 | App creation | Self-service, with a per-builder quota that admins can change. |
 | Roles within an app | **Owner**: everything, including managing members, stopping and deleting the app. **Collaborator**: deploy, inspect, manage the app's users. |
 | Members management | Both through MCP tools (for the owner) and through the admin UI. |
@@ -45,7 +45,7 @@ Trigger: a team member wants to host their first app.
 5. They log into Studio with their credentials.
 
 Channel: admin, then Claude Code + MCP, and Studio.
-Status: 🟡. Local accounts with passwords are done (M0ter). The admin console (M4 phase 1) creates the account (with a password) and issues the PAT, shown once; the `create-user` CLI also exists. With the platform SMTP, an account created in the console gets a welcome email with the Studio URL, without any secret (M6). Missing: a secure way to hand over the PAT (the admin copies it), and storing the token in the keychain (sensitive `userConfig`).
+Status: 🟡. Local accounts with passwords are done (M0ter). The admin console (M4 phase 1) creates the account (with a password) and issues the PAT, shown once; the `create-user` CLI also exists. With the platform SMTP, an account created in the console gets a welcome email with the Studio URL, without any secret (M6). With company SSO (M6 part 2), step 5 is "Sign in with ..." on Studio: the account is linked at the first SSO login by its verified email, or created as a developer when the admin turned on just-in-time creation; the admin may then skip the password altogether (password sign-in reserved to admins). The PAT still comes from an admin (console, Tokens). Missing: a secure way to hand over the PAT (the admin copies it; a self-service "create my token" page after an SSO login would remove that step), and storing the token in the keychain (sensitive `userConfig`).
 
 ### B2. First deployment
 Trigger: "deploy the app to the platform" in a Vite + Supabase repo.
@@ -95,7 +95,7 @@ Trigger: an internal app restricted to employees, or a public app.
 3. Sender and email templates.
 
 Channel: Claude Code + MCP.
-Status: 🟡 (M6 part 1). `configure_auth` ✅ (owner or admin, audited, refused on a stopped app): sign-up on or off (invitations still work), email confirmation, allowed email domains (GoTrue's before-user-created hook: sign-ups and invitations outside them are refused), extra redirect URLs (the app's own URL is always allowed), sender name and address (address within the platform sender's domain, any for admins). The app's Auth restarts for a few seconds; `get_app` and the admin console's app page show the policy in effect. Missing ❌: simple OAuth providers, company SSO (A7, M6 part 2), custom email templates (TECH_DEBT CP-17).
+Status: 🟡 (M6). `configure_auth` ✅ (owner or admin, audited, refused on a stopped app): sign-up on or off (invitations still work), email confirmation, allowed email domains (GoTrue's before-user-created hook: sign-ups, invitations and SSO accounts outside them are refused), extra redirect URLs (the app's own URL is always allowed), sender name and address (address within the platform sender's domain, any for admins). The app's Auth restarts for a few seconds; `get_app` and the admin console's app page show the policy in effect. Company SSO ✅ (step 2, M6 part 2): `configure_auth(sso: {provider: "company"})` adds the platform's OIDC provider to the app's GoTrue (custom provider `custom:company`, no restart), refused while the admin has not configured it; `get_app` shows the callback URL the admin registers at the IdP (the app uses the platform's client, TECH_DEBT SSO-2) and the supabase-js call (U2). Missing ❌: simple OAuth providers (Google, GitHub... with the builder's own client), SAML (TECH_DEBT SSO-1), custom email templates (TECH_DEBT CP-17).
 
 ### B7. Sharing an app
 Trigger: a colleague needs to co-maintain the app.
@@ -172,7 +172,7 @@ Status: 🟡. Admin console (M4 phase 2): an app whose last request, last releas
 The admin configures the company's OIDC and SAML providers once. Builders then enable them on their apps (B6).
 
 Channel: admin.
-Status: ❌ M6.
+Status: 🟡 (M6 part 2). OpenID Connect ✅: the admin console's SSO screen (or the `sso_*` settings) sets the provider (issuer, client id, client secret stored encrypted and never returned, allowed email domains, `email_verified` requirement, unknown users refused or created as developers, password sign-in for everyone or admins only), checked against the issuer's discovery document when saved, audited. Studio's `/_platform/login` and the admin console's login page then show "Sign in with ...": authorization code flow with PKCE, state and nonce, ID token verified against the issuer's JWKS, accounts linked by verified email at the first login then by the IdP subject; every SSO login, accepted or refused, is audited (`login_sso`, `login_sso_refused`). Admins keep a password sign-in (break-glass); PATs are unchanged. Tested end to end with a mock IdP of the local stack (`plat-idp`). Missing ❌: SAML (TECH_DEBT SSO-1), session revocation or deprovisioning from the IdP, role mapping from IdP groups (SSO-4).
 
 ### A8. Platform upgrade
 1. Control plane migration.
@@ -210,7 +210,7 @@ Status: ✅ (M6). Sign-up, email confirmation (GoTrue's default email through th
 
 ### U2. Company SSO login
 "Sign in with Entra ID / Google", account created on first login, rejected if the domain is not allowed.
-Status: ❌ M6.
+Status: ✅ (M6 part 2) for OpenID Connect providers. On an app whose builder enabled company SSO (B6), `supabase.auth.signInWithOAuth({ provider: "custom:company" })` goes through the app's GoTrue to the company IdP and back to the app with a session (PKCE); GoTrue verifies the ID token and creates the account at the first login, unless the app's sign-up is off (invited users only); an address outside the app's allowed email domains is refused. Verified end to end with supabase-js and the mock IdP. Limits: the IdP must be reachable over HTTPS at a public address (TECH_DEBT SSO-3), each app's callback must be registered at the IdP by the admin (SSO-2), no SAML (SSO-1).
 
 ### U3. Anonymous access
 SPA and requests with the anon key, restricted by the `anon` policies. Functions with `verify_jwt=false`.
