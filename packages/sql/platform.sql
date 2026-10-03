@@ -182,3 +182,21 @@ create table if not exists metrics_state (
   started_at timestamptz not null default now(),
   sampled_at timestamptz
 );
+
+-- M6: app auth policy set by configure_auth (app-auth.ts). No row: the defaults (sign-up on, email confirmation when
+-- the platform has an SMTP, any email domain, the app's own URL only, the app's name and the platform sender).
+create table if not exists app_auth_config (
+  app_id uuid primary key references apps (id) on delete cascade,
+  signup_enabled boolean not null default true,
+  email_confirmation boolean not null default true,
+  allowed_email_domains text[] not null default '{}',
+  redirect_urls text[] not null default '{}',
+  sender_name text,
+  sender_email text,
+  updated_by uuid references users (id) on delete set null,
+  updated_at timestamptz not null default now()
+);
+
+-- M6, A6: when the owners were emailed that the app is abandoned; cleared when the app is active again, so that the
+-- next abandonment is notified once more
+alter table apps add column if not exists abandoned_notified_at timestamptz;

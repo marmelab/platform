@@ -1,6 +1,7 @@
 // Platform settings: environment defaults (config.defaults), overridden by rows of the `settings` table
 // (CLI set-setting / unset-setting). Read on every CI request and every MCP publishing call: no restart needed.
 import { apiUrl, config } from "./config.ts";
+import { decrypt, encrypt } from "./crypto.ts";
 import { many, platform } from "./db.ts";
 
 export type DirectDeploy = "admins" | "everyone";
@@ -21,6 +22,33 @@ export interface Settings {
   abandonedAfterDays: number;
   /** app_metrics rows older than this are deleted by the sampler. */
   metricsRetentionDays: number;
+  /** Platform SMTP (M6): null when no host or no sender address is set (apps then auto-confirm their users). */
+  smtp: SmtpSettings | null;
+}
+
+export interface SmtpSettings {
+  host: string;
+  port: number;
+  user: string;
+  /** Never returned by an API, never logged. Stored encrypted in the settings table. */
+  password: string;
+  senderEmail: string;
+  senderName: string;
+}
+
+/** What may be shown of the SMTP settings (CLI, APIs): no password. */
+export function smtpSummary(smtp: SmtpSettings | null) {
+  return smtp
+    ? {
+      configured: true,
+      host: smtp.host,
+      port: smtp.port,
+      user: smtp.user || null,
+      password_set: smtp.password !== "",
+      sender_email: smtp.senderEmail,
+      sender_name: smtp.senderName,
+    }
+    : { configured: false };
 }
 
 /** Keys accepted by set-setting, with their environment variable. */
@@ -33,7 +61,19 @@ export const SETTING_KEYS = {
   oidc_jwks: "(none, test only: requires ALLOW_TEST_OIDC_JWKS=1)",
   abandoned_after_days: "ABANDONED_AFTER_DAYS",
   metrics_retention_days: "METRICS_RETENTION_DAYS",
+  smtp_host: "SMTP_HOST",
+  smtp_port: "SMTP_PORT",
+  smtp_user: "SMTP_USER",
+  smtp_password: "SMTP_PASSWORD",
+  smtp_sender_email: "SMTP_SENDER_EMAIL",
+  smtp_sender_name: "SMTP_SENDER_NAME",
 } as const;
+
+/** Settings that change every app's GoTrue environment: setting them re-provisions the apps' Auth (app-auth.ts). */
+export const SMTP_KEYS = ["smtp_host", "smtp_port", "smtp_user", "smtp_password", "smtp_sender_email", "smtp_sender_name"];
+/** Stored encrypted with the master key. */
+const ENCRYPTED_KEYS = ["smtp_password"];
+const EMAIL_RE = /^[^\s@<>,"]+@[^\s@<>,"]+\.[^\s@<>,"]+$/;
 
 const DAYS = ["abandoned_after_days", "metrics_retention_days"];
 const days = (key: string, value: string) => {
@@ -49,6 +89,14 @@ export function validateSetting(key: string, value: string): asserts key is Sett
     throw new Error("direct_deploy must be admins or everyone");
   }
   if (DAYS.includes(key)) days(key, value);
+  if (key === "smtp_port" && !(Number.isInteger(Number(value)) && Number(value) >= 1 && Number(value) <= 65535)) {
+    throw new Error("smtp_port must be a port number");
+  }
+  if (key === "smtp_sender_email" && value !== "" && !EMAIL_RE.test(value)) {
+    throw new Error("smtp_sender_email must be an email address");
+  }
+  if (key === "smtp_host" && /[\s,]/.test(value)) throw new Error("smtp_host must be a host name");
+  if (key === "smtp_sender_name" && /[\r\n<>"]/.test(value)) throw new Error("smtp_sender_name: no quotes, angle brackets or line breaks");
   if (key === "oidc_jwks") {
     if (!config.allowTestOidcJwks) {
       throw new Error("oidc_jwks is test only: it requires ALLOW_TEST_OIDC_JWKS=1 on the control plane (local installs)");
@@ -67,6 +115,9 @@ export async function getSettings(): Promise<Settings> {
     throw new Error(`invalid DIRECT_DEPLOY "${directDeploy}": admins or everyone`);
   }
   const issuer = (rows.get("oidc_issuer") ?? d.oidcIssuer).replace(/\/+$/, "");
+  const smtpPassword = rows.has("smtp_password") ? decrypt(rows.get("smtp_password")!) : d.smtpPassword;
+  const smtpHost = rows.get("smtp_host") ?? d.smtpHost;
+  const smtpSender = rows.get("smtp_sender_email") ?? d.smtpSenderEmail;
   return {
     directDeploy,
     ciAllowedWorkflows: (rows.get("ci_allowed_workflows") ?? d.ciAllowedWorkflows)
@@ -78,6 +129,17 @@ export async function getSettings(): Promise<Settings> {
     oidcJwks: config.allowTestOidcJwks ? rows.get("oidc_jwks") ?? null : null,
     abandonedAfterDays: days("abandoned_after_days", rows.get("abandoned_after_days") ?? d.abandonedAfterDays),
     metricsRetentionDays: days("metrics_retention_days", rows.get("metrics_retention_days") ?? d.metricsRetentionDays),
+    // an empty smtp_host row disables the environment's SMTP
+    smtp: smtpHost && smtpSender
+      ? {
+        host: smtpHost,
+        port: Number(rows.get("smtp_port") ?? d.smtpPort),
+        user: rows.get("smtp_user") ?? d.smtpUser,
+        password: smtpPassword,
+        senderEmail: smtpSender,
+        senderName: rows.get("smtp_sender_name") ?? d.smtpSenderName,
+      }
+      : null,
   };
 }
 
@@ -86,7 +148,7 @@ export async function setSetting(key: string, value: string) {
   await platform.query(
     `insert into settings (key, value) values ($1, $2)
      on conflict (key) do update set value = excluded.value, updated_at = now()`,
-    [key, value],
+    [key, ENCRYPTED_KEYS.includes(key) ? encrypt(value) : value],
   );
 }
 

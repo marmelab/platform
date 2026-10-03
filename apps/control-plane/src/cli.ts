@@ -11,15 +11,18 @@
 //   node src/cli.ts delete-app <slug> [--no-backup]   (final backup first, prints its path; aborted if the backup
 //                                                     fails; --no-backup skips it: the data is lost for good)
 //   node src/cli.ts settings                       (effective platform settings)
-//   node src/cli.ts set-setting <key> <value>      (overrides the environment, e.g. direct_deploy admins)
+//   node src/cli.ts set-setting <key> <value>      (overrides the environment, e.g. direct_deploy admins; smtp_password
+//                                                  is read from stdin when the value is "-"; an smtp_* change recreates
+//                                                  the GoTrue of every running app, one at a time)
 //   node src/cli.ts unset-setting <key>            (back to the environment's value)
+//   node src/cli.ts sync-auth                      (recreates the GoTrue of running apps whose environment changed)
 //   node src/cli.ts sample-metrics                 (samples app_metrics now, as the control plane does every minute)
 //   node src/cli.ts realtime-migrate <slug>|--all  (after a Realtime upgrade: recreates the app's Realtime tenant, which
 //                                                  runs the new tenant migrations; its clients reconnect)
 import { randomBytes } from "node:crypto";
 import { text } from "node:stream/consumers";
 import type { MemberRole } from "@platform/shared";
-import { type AppRow, deleteApp, startApp, stopApp } from "./apps.ts";
+import { type AppRow, deleteApp, startApp, stopApp, syncAuthServices } from "./apps.ts";
 import { createToken, upsertUser } from "./auth.ts";
 import { many, one, platform } from "./db.ts";
 import { initCluster } from "./init.ts";
@@ -27,13 +30,20 @@ import { registerRealtime } from "./storage-realtime.ts";
 import { sampleMetrics } from "./metrics.ts";
 import { addMember, removeMember } from "./members.ts";
 import { setPassword } from "./sessions.ts";
-import { getSettings, setSetting, unsetSetting } from "./settings.ts";
+import { getSettings, setSetting, SMTP_KEYS, smtpSummary, unsetSetting } from "./settings.ts";
 
 const USAGE = "usage: cli.ts init | create-user <email> [admin|developer] [token-name] | delete-user <email> | " +
   "set-password <email> [--generate] | add-member <slug> <email> [owner|collaborator] | remove-member <slug> <email> | stop-app <slug> | start-app <slug> | delete-app <slug> [--no-backup] | " +
-  "settings | set-setting <key> <value> | unset-setting <key> | sample-metrics | realtime-migrate <slug>|--all";
+  "settings | set-setting <key> <value> | unset-setting <key> | sync-auth | sample-metrics | realtime-migrate <slug>|--all";
 
 const [command, ...args] = process.argv.slice(2);
+
+/** Every running app's GoTrue gets the platform SMTP settings now in effect. */
+async function syncAuth() {
+  const { apps, failed } = await syncAuthServices();
+  console.log(`auth service of ${apps - failed.length}/${apps} running apps up to date${failed.length ? `, failed: ${failed.join(", ")}` : ""}`);
+  if (failed.length) process.exitCode = 1;
+}
 
 async function appBySlug(slug: string) {
   const app = await one<AppRow>("select * from apps where slug = $1", [slug]);
@@ -82,13 +92,22 @@ if (command === "init") {
   );
 } else if (command === "settings") {
   const settings = await getSettings();
-  console.log(JSON.stringify({ ...settings, oidcJwks: settings.oidcJwks ? "(inline JWKS set: test only)" : null }, null, 2));
+  console.log(JSON.stringify({
+    ...settings,
+    oidcJwks: settings.oidcJwks ? "(inline JWKS set: test only)" : null,
+    smtp: smtpSummary(settings.smtp),
+  }, null, 2));
 } else if (command === "set-setting" && args[0] && args[1] !== undefined) {
-  await setSetting(args[0], args[1]);
+  const value = args[0] === "smtp_password" && args[1] === "-" ? (await text(process.stdin)).trim() : args[1];
+  await setSetting(args[0], value);
   console.log(`${args[0]} set`);
+  if (SMTP_KEYS.includes(args[0])) await syncAuth();
 } else if (command === "unset-setting" && args[0]) {
   await unsetSetting(args[0]);
   console.log(`${args[0]} unset`);
+  if (SMTP_KEYS.includes(args[0])) await syncAuth();
+} else if (command === "sync-auth") {
+  await syncAuth();
 } else if (command === "sample-metrics") {
   console.log(JSON.stringify(await sampleMetrics()));
 } else if (command === "realtime-migrate" && args[0]) {

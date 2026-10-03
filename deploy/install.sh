@@ -52,6 +52,14 @@ add_secret POOLER_ADMIN_PASSWORD 16
 grep -q '^DIRECT_DEPLOY=' .env || { echo "DIRECT_DEPLOY=everyone" >> .env; echo "DIRECT_DEPLOY=everyone written to deploy/.env"; }
 # Local installs only (SEC-10): the CI e2e suite makes the CI API trust its fake OIDC issuer (inline oidc_jwks setting).
 grep -q '^ALLOW_TEST_OIDC_JWKS=' .env || { echo "ALLOW_TEST_OIDC_JWKS=1" >> .env; echo "ALLOW_TEST_OIDC_JWKS=1 written to deploy/.env"; }
+# Local installs only (M6): every email goes to the mailpit catcher (http://localhost:8025), started with the "mail"
+# compose profile. Production installs set SMTP_* to the company relay and leave COMPOSE_PROFILES unset.
+add_value() { grep -q "^$1=" .env || { echo "$1=$2" >> .env; echo "$1=$2 written to deploy/.env"; }; }
+add_value COMPOSE_PROFILES mail
+add_value SMTP_HOST mailpit
+add_value SMTP_PORT 1025
+add_value SMTP_SENDER_EMAIL noreply@platform.localhost
+add_value SMTP_SENDER_NAME Platform
 umask 022
 
 if [ "${STUDIO_BUILD:-0}" = 1 ] || ! docker image inspect plat/studio:dev >/dev/null 2>&1; then
@@ -97,6 +105,7 @@ echo
 echo "MCP endpoint: $API_URL/mcp  (Authorization: Bearer \$PLATFORM_TOKEN)"
 echo "Studio:       $STUDIO_URL  (admin: PLATFORM_ADMIN_EMAIL / PLATFORM_ADMIN_PASSWORD from deploy/.env.local)"
 echo "Admin:        $ADMIN_URL  (same credentials; admins only)"
+grep -q '^SMTP_HOST=mailpit$' .env && echo "Emails:       http://localhost:8025  (mailpit: every email sent by the platform and its apps)"
 
 if [ "$SEED" = 1 ]; then
   node ../apps/control-plane/scripts/seed.ts

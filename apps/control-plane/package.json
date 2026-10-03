@@ -6,12 +6,13 @@
   "scripts": {
     "start": "node src/index.ts",
     "typecheck": "tsc --noEmit",
-    "e2e": "node --test --test-concurrency=1 test/e2e.test.ts test/ci.e2e.test.ts test/deploy-cli.e2e.test.ts test/plugin.e2e.test.ts test/admin.e2e.test.ts test/metrics.e2e.test.ts test/storage-realtime.e2e.test.ts test/pooler.e2e.test.ts",
+    "e2e": "node --test --test-concurrency=1 test/e2e.test.ts test/ci.e2e.test.ts test/deploy-cli.e2e.test.ts test/plugin.e2e.test.ts test/admin.e2e.test.ts test/metrics.e2e.test.ts test/storage-realtime.e2e.test.ts test/pooler.e2e.test.ts test/auth-email.e2e.test.ts",
+    "e2e:auth-email": "node --test --test-concurrency=1 test/auth-email.e2e.test.ts",
     "e2e:storage-realtime": "node --test --test-concurrency=1 test/storage-realtime.e2e.test.ts",
     "e2e:pooler": "node --test --test-concurrency=1 test/pooler.e2e.test.ts",
     "e2e:deploy-cli": "node --test --test-concurrency=1 test/deploy-cli.e2e.test.ts",
     "e2e:plugin": "node --test --test-concurrency=1 test/plugin.e2e.test.ts",
-    "test": "node --test test/studio-policy.test.ts test/login-limit.test.ts test/access-log.test.ts && ../../plugin/test/scripts.test.sh",
+    "test": "node --test test/studio-policy.test.ts test/login-limit.test.ts test/access-log.test.ts test/auth-policy.test.ts && ../../plugin/test/scripts.test.sh",
     "e2e:studio": "node --test --test-concurrency=1 test/studio.e2e.test.ts",
     "e2e:admin": "node --test --test-concurrency=1 test/admin.e2e.test.ts test/metrics.e2e.test.ts ../admin/test/admin-ui.e2e.test.ts"
   },
@@ -23,6 +24,7 @@
     "dockerode": "^5.0.1",
     "hono": "^4.13.12",
     "jose": "^6.2.12",
+    "nodemailer": "^7.0.11",
     "pg": "^8.23.1",
     "smol-toml": "^1.9.0",
     "tar": "^7.5.22",
@@ -32,6 +34,7 @@
     "@supabase/supabase-js": "^2.117.2",
     "@types/dockerode": "^4.0.1",
     "@types/node": "^26.6.3",
+    "@types/nodemailer": "^7.0.4",
     "@types/pg": "^8.23.1",
     "typescript": "^7.0.2"
   }

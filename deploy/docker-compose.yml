@@ -144,6 +144,15 @@ services:
       # A6: an app without request nor release for this many days is flagged "abandoned"; app_metrics retention
       ABANDONED_AFTER_DAYS: ${ABANDONED_AFTER_DAYS:-}
       METRICS_RETENTION_DAYS: ${METRICS_RETENTION_DAYS:-}
+      # Platform SMTP (M6, apps/control-plane/README.md, "Email"): every app's GoTrue (confirmation, password reset,
+      # invitations) and the platform's own emails. Production: the company relay. install.sh points local installs to
+      # the mailpit catcher below. Overridden at runtime by the smtp_* settings.
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_SENDER_EMAIL: ${SMTP_SENDER_EMAIL:-}
+      SMTP_SENDER_NAME: ${SMTP_SENDER_NAME:-}
       # Storage and Realtime (M5): tenant management (admin APIs on the internal network) and metadata databases
       STORAGE_ADMIN_KEY: ${STORAGE_ADMIN_KEY}
       STORAGE_DB_PASSWORD: ${STORAGE_DB_PASSWORD}
@@ -286,6 +295,24 @@ services:
       CRYPTO_KEY: ${PG_META_CRYPTO_KEY}
     labels:
       platform.service: studio-meta
+
+  # Local mail catcher (M6), local installs only: install.sh writes COMPOSE_PROFILES=mail and SMTP_HOST=mailpit into
+  # deploy/.env. Every email of the platform and of the apps lands here: web UI and API on http://localhost:8025 (the
+  # e2e suites read it). Never in production: point SMTP_* to the company relay instead.
+  mailpit:
+    image: axllent/mailpit:v1.29.7
+    container_name: plat-mailpit
+    restart: unless-stopped
+    profiles: [mail]
+    mem_limit: 128m
+    environment:
+      MP_SMTP_AUTH_ACCEPT_ANY: "1"
+      MP_SMTP_AUTH_ALLOW_INSECURE: "1"
+      MP_MAX_MESSAGES: "5000"
+    ports:
+      - "127.0.0.1:8025:8025"
+    labels:
+      platform.service: mailpit
 
 volumes:
   db-data:

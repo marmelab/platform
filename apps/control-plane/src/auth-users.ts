@@ -3,6 +3,7 @@ import { audit } from "./audit.ts";
 import { appUrl } from "./config.ts";
 import type { User } from "./auth.ts";
 import { signJwt } from "./crypto.ts";
+import { getSettings } from "./settings.ts";
 import { withOwner } from "./sql.ts";
 
 /**
@@ -96,29 +97,44 @@ async function gotrueAdmin(app: AppRow, method: string, path: string, body?: unk
 }
 
 /**
- * GoTrue's `/invite` mails the invitation itself and needs SMTP (M6), so this uses `/admin/generate_link`
- * with type `invite`: GoTrue creates the user (unconfirmed, `invited_at` set) and returns the link instead of
- * mailing it. The caller hands the link to the person; opening it confirms the address, signs them in and redirects
- * to the app (GOTRUE_SITE_URL) with the session in the URL fragment. The link is returned, never audited.
+ * With the platform SMTP (M6), GoTrue's `/invite` creates the user (unconfirmed, `invited_at` set) and emails the
+ * invitation itself: the link is never returned. Without SMTP, `/admin/generate_link` with type `invite` creates the
+ * user the same way and returns the link instead of mailing it; the caller hands it to the person. Either way, opening
+ * the link confirms the address, signs the person in and redirects to the app (GOTRUE_SITE_URL) with the session in
+ * the URL fragment. The link is never audited.
  */
 export async function inviteUser(actor: User, app: AppRow, email: string) {
   requireWritable(app, "invite_user");
+  const { smtp } = await getSettings();
+  if (smtp) {
+    const invited = await gotrueAdmin(app, "POST", "/invite", { email });
+    if (!invited?.id) throw new Error(`GoTrue invite: unexpected response for ${email}`);
+    const user = await findAuthUser(app, { user_id: invited.id });
+    await audit(actor.id, app.id, "invite_user", { email: user.email, user_id: user.id, email_sent: true });
+    return {
+      user,
+      email_sent: true,
+      note: `An invitation email was sent to ${user.email}. Its link is valid ${INVITE_VALIDITY}; opening it confirms ` +
+        "the address, signs the person in and redirects to the app, which must then let them set a password " +
+        "(supabase.auth.updateUser) unless it signs users in with magic links. Inviting again sends a new email.",
+    };
+  }
   const result = await gotrueAdmin(app, "POST", "/admin/generate_link", { type: "invite", email });
   const properties = result?.properties ?? result;
   const id: string | undefined = result?.user?.id ?? result?.id;
   if (!properties?.hashed_token || !id) throw new Error(`GoTrue generate_link: unexpected response for ${email}`);
-  // GoTrue's action_link drops the path of API_EXTERNAL_URL (http://<app>/verify): build it on the app's /auth/v1
+  // built on the app's public /auth/v1 (as the emailed links: GOTRUE_MAILER_URLPATHS_*, app-auth.ts)
   const link = new URL(`${appUrl(app.slug)}/auth/v1/verify`);
   link.searchParams.set("token", properties.hashed_token);
   link.searchParams.set("type", "invite");
   link.searchParams.set("redirect_to", properties.redirect_to || appUrl(app.slug));
   const user = await findAuthUser(app, { user_id: id });
-  await audit(actor.id, app.id, "invite_user", { email: user.email, user_id: user.id });
+  await audit(actor.id, app.id, "invite_user", { email: user.email, user_id: user.id, email_sent: false });
   return {
     user,
     invite_link: link.toString(),
     email_sent: false,
-    note: "No email is sent (SMTP is not configured on the platform yet): give this link to the person yourself, " +
+    note: "No email is sent (the platform has no SMTP configured): give this link to the person yourself, " +
       `over a private channel. Valid ${INVITE_VALIDITY}. Opening it confirms the address, signs the person in and ` +
       "redirects to the app; the app must then let them set a password (supabase.auth.updateUser) unless it signs " +
       "users in with magic links.",
