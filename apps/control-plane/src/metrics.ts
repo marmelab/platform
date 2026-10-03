@@ -8,6 +8,7 @@
 // - memory: Docker stats of the app's GoTrue and PostgREST containers (the edge runtime is shared: not counted).
 // One sample at a time across processes (the in-process timer and the `sample-metrics` CLI): a transaction-level
 // advisory lock covers the log cursor and the counters, which are committed together (no double count after a crash).
+import { notifyAbandonedApps } from "./abandoned.ts";
 import { type AccessCounts, countAccessLines, readNewLines } from "./access-log.ts";
 import { orchestrator } from "./apps.ts";
 import { config } from "./config.ts";
@@ -28,6 +29,8 @@ export interface SampleResult {
   /** The rotated file holding unread lines could not be found (log rotated twice between samples): those are lost. */
   log_lost: boolean;
   ms: number;
+  /** Apps whose owners were just emailed that the app is abandoned (A6, abandoned.ts). */
+  abandoned_notified: string[];
 }
 
 interface AppGauge {
@@ -73,7 +76,7 @@ export async function sampleMetrics(): Promise<SampleResult> {
   const memory = await mapLimit(apps, 8, appMemory);
   const { metricsRetentionDays } = await getSettings();
 
-  return transaction(async (tx) => {
+  const result = await transaction(async (tx) => {
     await tx.query("select pg_advisory_xact_lock($1)", [LOCK_KEY]);
     await tx.query("insert into metrics_state (id) values (1) on conflict (id) do nothing");
     const state = (await tx.query<{ log_inode: string | null; log_offset: string }>(
@@ -160,6 +163,12 @@ export async function sampleMetrics(): Promise<SampleResult> {
       ms: Date.now() - started,
     };
   });
+  // after the new requests are counted: an app that just received one is no longer abandoned
+  const notices = await notifyAbandonedApps().catch((error) => {
+    console.error("abandoned apps notification failed", error);
+    return { notified: [] as string[] };
+  });
+  return { ...result, abandoned_notified: notices.notified, ms: Date.now() - started };
 }
 
 /** Samples every METRICS_INTERVAL_SECONDS in the background (first sample shortly after startup). */

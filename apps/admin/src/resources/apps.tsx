@@ -76,6 +76,23 @@ export interface AppRecord extends RaRecord {
   functions_version: number | null;
   created_at: string;
   services?: { name: string; service: string; state: string }[];
+  /** App page only (M6): the auth policy set by the builder with configure_auth. */
+  auth?: AuthPolicy;
+  abandoned_notified_at?: string | null;
+}
+
+interface AuthPolicy {
+  signup_enabled: boolean;
+  email_confirmation: boolean;
+  email_confirmation_effective: boolean;
+  allowed_email_domains: string[];
+  redirect_urls: string[];
+  site_url: string;
+  smtp_configured: boolean;
+  sender_name: string;
+  sender_email: string | null;
+  sender_overridden: boolean;
+  updated_at: string | null;
 }
 
 const STATUSES = ["running", "stopped", "error", "provisioning"].map((id) => ({ id, name: id }));
@@ -301,6 +318,40 @@ function Load({ app }: { app: AppRecord }) {
   );
 }
 
+const list = (values: string[], empty: string) => (values.length ? values.join(", ") : empty);
+
+/** The app's auth policy (M6), read-only: builders change it with the configure_auth MCP tool. */
+const AuthPolicyCard = ({ auth }: { auth: AuthPolicy }) => (
+  <Card data-testid="app-auth">
+    <CardHeader>
+      <CardTitle className="text-base">Auth</CardTitle>
+    </CardHeader>
+    <CardContent className="flex flex-col gap-4">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+        <Field label="Sign-up">{auth.signup_enabled ? "open" : "disabled (invitations only)"}</Field>
+        <Field label="Email confirmation">
+          {auth.email_confirmation_effective
+            ? "required"
+            : auth.email_confirmation
+            ? "not required (no SMTP on the platform)"
+            : "not required"}
+        </Field>
+        <Field label="Allowed email domains">{list(auth.allowed_email_domains, "any")}</Field>
+        <Field label="Site URL">{auth.site_url}</Field>
+        <Field label="Extra redirect URLs">{list(auth.redirect_urls, "none")}</Field>
+        <Field label="Sender">
+          {auth.smtp_configured ? `${auth.sender_name} <${auth.sender_email}>` : "no SMTP: no email is sent"}
+          {auth.sender_overridden && <span className="text-muted-foreground"> (set by the builder)</span>}
+        </Field>
+      </div>
+      <p className="text-xs text-muted-foreground">
+        Changed by the app's owners with the configure_auth tool{auth.updated_at ? `, last on ${dateTime(auth.updated_at)}` : ""}.
+        Email templates are GoTrue's defaults.
+      </p>
+    </CardContent>
+  </Card>
+);
+
 const Overview = ({ app }: { app: AppRecord }) => (
   <div className="flex flex-col gap-6">
     <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
@@ -353,6 +404,7 @@ const Overview = ({ app }: { app: AppRecord }) => (
       <ReleaseSummary release={app.last_release} />
     </Field>
     <Load app={app} />
+    {app.auth && <AuthPolicyCard auth={app.auth} />}
     <AppActions app={app} />
   </div>
 );
