@@ -7,6 +7,13 @@ const env = (name: string, fallback?: string): string => {
 /** Optional setting: unset and empty mean "use the default". */
 const optional = (name: string): string | undefined => process.env[name] || undefined;
 
+/**
+ * The platform's domain (install.sh --domain): apps on <slug>.<domain>, the API on api.<domain>, the admin console on
+ * admin.<domain>, Studio on studio.<domain>. Each host can still be set on its own (APPS_DOMAIN, API_HOST...).
+ * `localhost` for local installs.
+ */
+const domain = env("PLATFORM_DOMAIN", "localhost");
+
 export const config = {
   port: Number(env("PORT", "3000")),
   /** Internal listener (Caddy forward auth, Studio project config): never routed publicly. */
@@ -20,12 +27,27 @@ export const config = {
   },
   masterKey: Buffer.from(env("PLATFORM_MASTER_KEY"), "hex"),
   /** Public URLs: <scheme>://<slug>.<appsDomain><publicPort> */
+  domain,
   publicScheme: env("PUBLIC_SCHEME", "http"),
-  appsDomain: env("APPS_DOMAIN", "localhost"),
+  appsDomain: env("APPS_DOMAIN", domain),
   publicPort: env("PUBLIC_PORT", "8100"),
-  apiHost: env("API_HOST", "api.localhost"),
+  apiHost: env("API_HOST", `api.${domain}`),
   /** Admin SPA and its API (admin.<domain>/api/*), same origin (M4). */
-  adminHost: env("ADMIN_HOST", "admin.localhost"),
+  adminHost: env("ADMIN_HOST", `admin.${domain}`),
+  /**
+   * TLS of the public server (router.ensureEdge): `off` (local installs: plain HTTP on PUBLIC_PORT), `acme` (Let's
+   * Encrypt or ACME_CA, certificates obtained on demand for the hosts that the `ask` endpoint approves, tls.ts) or
+   * `internal` (Caddy's own CA: tests, or a private network whose clients trust that CA).
+   */
+  tls: {
+    mode: env("TLS_MODE", "off") as "off" | "acme" | "internal",
+    acmeEmail: optional("ACME_EMAIL"),
+    /** ACME directory, e.g. Let's Encrypt staging; default: Let's Encrypt production. */
+    acmeCa: optional("ACME_CA"),
+    httpPort: Number(env("HTTP_PORT", "80")),
+  },
+  /** The internal listener as Caddy reaches it (forward auth, TLS `ask` endpoint). */
+  internalListener: env("INTERNAL_LISTENER", "control-plane:3001"),
   /** Built admin SPA (apps/admin/dist), copied into the control plane image. */
   adminStaticDir: env("ADMIN_STATIC_DIR", "/repo/apps/admin/dist"),
   caddyAdmin: env("CADDY_ADMIN_URL", "http://caddy:2019"),
@@ -114,7 +136,7 @@ export const config = {
   /** First boot of a function may download its npm: dependencies. */
   warmTimeoutMs: Number(env("WARM_TIMEOUT_MS", "60000")),
   studio: {
-    host: env("STUDIO_HOST", "studio.localhost"),
+    host: env("STUDIO_HOST", `studio.${domain}`),
     upstream: env("STUDIO_UPSTREAM", "studio:3000"),
     forwardAuth: env("STUDIO_FORWARD_AUTH", "control-plane:3001"),
     /** HMAC key of the X-Platform-* headers trusted by Studio. */
@@ -129,6 +151,10 @@ export const config = {
    * on the Docker network, or IPs. Every public request arrives through Caddy.
    */
   trustedProxies: env("TRUSTED_PROXIES", "caddy").split(",").map((s) => s.trim()).filter(Boolean),
+  /** VERSION file of the repository, copied into the image (version.ts). */
+  versionFile: env("PLATFORM_VERSION_FILE", "/repo/VERSION"),
+  /** Hours between two linter runs of an app by the periodic sweep (lint.ts); 0 turns the sweep off. */
+  lintSweepIntervalHours: Number(env("LINT_SWEEP_INTERVAL_HOURS", "6")),
   sessionTtlSeconds: Number(env("SESSION_TTL_SECONDS", String(12 * 3600))),
   uploadTtlSeconds: Number(env("UPLOAD_TTL_SECONDS", "900")),
   maxUploadBytes: Number(env("MAX_UPLOAD_BYTES", String(200 * 1024 * 1024))),
@@ -195,6 +221,8 @@ export const config = {
 };
 
 if (config.masterKey.length !== 32) throw new Error("PLATFORM_MASTER_KEY must be 32 bytes hex");
+if (!["off", "acme", "internal"].includes(config.tls.mode)) throw new Error("TLS_MODE must be off, acme or internal");
+if (config.tls.mode !== "off" && config.publicScheme !== "https") throw new Error("TLS_MODE requires PUBLIC_SCHEME=https");
 
 const portSuffix = () => (["80", "443", ""].includes(config.publicPort) ? "" : `:${config.publicPort}`);
 

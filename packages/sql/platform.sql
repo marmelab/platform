@@ -251,3 +251,30 @@ create table if not exists backup_state (
   run_finished_at timestamptz,
   run_summary jsonb
 );
+
+-- M7 part 2, security linter (PLAN_1 §7 and §8, lint.ts): every run of the linter on an app, with its results. Runs
+-- come from a committed migrations batch (source 'migrations', with its release), the admin console or the CLI
+-- ('manual'), the periodic sweep ('scheduled', catches schema changes made outside releases) and the platform upgrade
+-- ('upgrade'). lints: [{name, level, object, detail}]; error: the run itself failed (database unreachable...).
+create table if not exists lint_runs (
+  id uuid primary key default gen_random_uuid(),
+  app_id uuid not null references apps (id) on delete cascade,
+  release_id uuid references releases (id) on delete set null,
+  source text not null check (source in ('migrations', 'manual', 'scheduled', 'upgrade')),
+  ran_at timestamptz not null default now(),
+  errors integer not null default 0,
+  warnings integer not null default 0,
+  infos integer not null default 0,
+  lints jsonb not null default '[]'::jsonb,
+  error text
+);
+create index if not exists lint_runs_app_ran on lint_runs (app_id, ran_at desc);
+
+-- M7 part 2, platform version (A8, version.ts): one row per version the control plane started with (VERSION file of
+-- the image), with the images of the platform's containers at that time. The latest row is the running version.
+create table if not exists platform_versions (
+  id bigint generated always as identity primary key,
+  version text not null,
+  started_at timestamptz not null default now(),
+  components jsonb not null default '{}'::jsonb
+);

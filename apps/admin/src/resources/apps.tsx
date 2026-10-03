@@ -1,5 +1,5 @@
 // Apps overview (journey A9) and app page: status and actions, releases and deployments with rollback, members,
-// secret names, schema changes, logs, audit.
+// secret names, schema changes, security linter, backups, logs, audit.
 import { type ReactNode, useEffect, useState } from "react";
 import {
   useCreate,
@@ -32,6 +32,7 @@ import { count, type Day, type Hour, HourlyChart, Sparkline } from "./charts";
 import { ActionButton } from "./actions";
 import { AuditTable } from "./audit";
 import { AppBackups } from "./backups";
+import { AppLints } from "./lints";
 import {
   bytes,
   Commit,
@@ -107,6 +108,7 @@ const FlagFilters = () => (
   <div className="mb-3 flex flex-wrap gap-2">
     <ToggleFilterButton className="w-auto border" label="Deployed outside CI" value={{ outside_ci: true }} />
     <ToggleFilterButton className="w-auto border" label="Schema drift" value={{ schema_drift: true }} />
+    <ToggleFilterButton className="w-auto border" label="Lint errors" value={{ lint_errors: true }} />
     <ToggleFilterButton className="w-auto border" label="Accepted lints" value={{ accepted_lints: true }} />
     <ToggleFilterButton className="w-auto border" label="Last release failed" value={{ last_release_failed: true }} />
     <ToggleFilterButton className="w-auto border" label="No repo" value={{ no_repo: true }} />
@@ -642,6 +644,7 @@ function AppTabs() {
         <TabsTrigger value="members">Members</TabsTrigger>
         <TabsTrigger value="secrets">Secrets</TabsTrigger>
         <TabsTrigger value="schema">Schema changes</TabsTrigger>
+        <TabsTrigger value="lints">Security linter</TabsTrigger>
         <TabsTrigger value="backups">Backups</TabsTrigger>
         <TabsTrigger value="logs">Logs</TabsTrigger>
         <TabsTrigger value="audit">Audit</TabsTrigger>
@@ -661,6 +664,9 @@ function AppTabs() {
       </TabsContent>
       <TabsContent value="schema" className="pt-4">
         <SchemaChanges />
+      </TabsContent>
+      <TabsContent value="lints" className="pt-4">
+        <AppLints slug={app.slug} />
       </TabsContent>
       <TabsContent value="backups" className="pt-4">
         <AppBackups />

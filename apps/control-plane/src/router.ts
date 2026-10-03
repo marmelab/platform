@@ -19,6 +19,11 @@ export interface Router {
   upsertStudio(route: StudioRoute): Promise<void>;
   /** admin.<domain> -> the control plane (admin SPA and API, M4). */
   upsertAdmin(route: { host: string; upstream: string }): Promise<void>;
+  /**
+   * The public server's platform part: listen address and TLS (TLS_MODE: plain HTTP, or HTTPS with on-demand
+   * certificates and a redirect server on the HTTP port), the API route's host. Idempotent, skipped when unchanged.
+   */
+  ensureEdge(): Promise<void>;
   /** JSON access log of the public server (app hosts only), read by the metrics sampler (metrics.ts). Idempotent. */
   ensureAccessLog(options: { file: string; skipHosts: string[] }): Promise<void>;
 }
@@ -32,6 +37,20 @@ export const MAINTENANCE_FIELD = "platform_maintenance";
 const IDENTITY_HEADERS = ["X-Platform-User", "X-Platform-Role", "X-Platform-Apps", "X-Platform-Signature"];
 
 type CaddyRoute = Record<string, unknown>;
+interface CaddyServer {
+  listen?: string[];
+  routes?: CaddyRoute[];
+  automatic_https?: Record<string, unknown>;
+  tls_connection_policies?: unknown[];
+  protocols?: string[];
+  [key: string]: unknown;
+}
+interface CaddyConfig {
+  apps?: { http?: { servers?: Record<string, CaddyServer> }; tls?: unknown; [key: string]: unknown };
+  [key: string]: unknown;
+}
+/** HTTP -> HTTPS redirect server of the TLS modes (router.ensureEdge). */
+const REDIRECT_SERVER = "redirect";
 /** Routes to set (replaced in place, or appended) or remove (null), by `@id`, in the two dynamic subroutes. */
 interface RouteChange {
   /** Public server, `apps` subroute (matched on the host). */
@@ -120,6 +139,69 @@ export class CaddyRouter implements Router {
     });
     if (!response.ok) throw new Error(`caddy POST ${path}: ${response.status} ${await response.text()}`);
     return true;
+  }
+
+  ensureEdge(): Promise<void> {
+    return this.serialized(async () => {
+      const origin = config.caddyAdmin;
+      const current = await fetch(`${config.caddyAdmin}/config/`, { headers: { origin } });
+      if (!current.ok) throw new Error(`caddy GET config: ${current.status} ${await current.text()}`);
+      const before = await current.json() as CaddyConfig;
+      const next = structuredClone(before);
+      const http = next.apps?.http;
+      const servers = http?.servers ?? {};
+      const pub = servers.public;
+      if (!next.apps || !http || !pub) throw new Error("caddy: no public server in the loaded config");
+      const api = pub.routes?.find((r) => r["@id"] === "api");
+      if (api) api.match = [{ host: [config.apiHost] }];
+      if (config.tls.mode === "off") {
+        pub.listen = [`:${config.publicPort}`];
+        pub.automatic_https = { disable: true };
+        delete pub.tls_connection_policies;
+        delete pub.protocols;
+        delete servers[REDIRECT_SERVER];
+        delete next.apps.tls;
+      } else {
+        pub.listen = [`:${config.publicPort}`];
+        // redirects come from the server below (automatic redirects only cover the hosts of host matchers)
+        pub.automatic_https = { disable_redirects: true };
+        pub.tls_connection_policies = [{}];
+        // no HTTP/3: the compose file only publishes TCP ports
+        pub.protocols = ["h1", "h2"];
+        servers[REDIRECT_SERVER] = {
+          listen: [`:${config.tls.httpPort}`],
+          automatic_https: { disable: true },
+          routes: [{
+            handle: [{
+              handler: "static_response",
+              status_code: 308,
+              headers: { Location: ["https://{http.request.host}{http.request.uri}"] },
+            }],
+          }],
+        };
+        const issuer = config.tls.mode === "internal"
+          ? { module: "internal" }
+          : {
+            module: "acme",
+            ...(config.tls.acmeEmail ? { email: config.tls.acmeEmail } : {}),
+            ...(config.tls.acmeCa ? { ca: config.tls.acmeCa } : {}),
+          };
+        next.apps.tls = {
+          automation: {
+            on_demand: { permission: { module: "http", endpoint: `http://${config.internalListener}/caddy/ask` } },
+            policies: [{ on_demand: true, issuers: [issuer] }],
+          },
+        };
+      }
+      if (isDeepStrictEqual(before, JSON.parse(JSON.stringify(next)))) return;
+      const response = await fetch(`${config.caddyAdmin}/load`, {
+        method: "POST",
+        headers: { "content-type": "application/json", origin },
+        body: JSON.stringify(next),
+      });
+      if (!response.ok) throw new Error(`caddy POST load: ${response.status} ${await response.text()}`);
+      console.log(`caddy: public server ${config.tls.mode === "off" ? "plain HTTP" : `HTTPS (${config.tls.mode})`} on :${config.publicPort}`);
+    });
   }
 
   /**
