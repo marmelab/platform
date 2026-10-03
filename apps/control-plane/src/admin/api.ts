@@ -7,13 +7,16 @@ import { deploymentKind, memberRole } from "@platform/shared";
 import { Hono } from "hono";
 import { z } from "zod";
 import { type AppRow, deleteAppConfirmed, orchestrator, startApp, stopApp, studio } from "../apps.ts";
+import { isAbandoned } from "../abandoned.ts";
+import { appAuthView } from "../app-auth.ts";
 import { audit } from "../audit.ts";
 import type { User } from "../auth.ts";
-import { appUrl, config } from "../config.ts";
+import { adminUrl, appUrl, config, studioUrl } from "../config.ts";
 import { randomToken, sha256 } from "../crypto.ts";
 import { many, one, platform, transaction } from "../db.ts";
 import { rollback } from "../deployments.ts";
 import { getLogs } from "../logs.ts";
+import { sendPlatformMail } from "../mailer.ts";
 import { sampleMetrics } from "../metrics.ts";
 import { addMember, removeMember } from "../members.ts";
 import { githubServerUrl } from "../oidc.ts";
@@ -97,9 +100,39 @@ adminApi.post("/users", async (c) => {
   );
   if (!created) throw new HttpError(409, `a user with email ${email} already exists`);
   if (input.password) await setPassword(email, input.password);
-  await audit(admin.id, null, "create_user", { email, role: input.role, active: input.active, password_set: !!input.password });
-  return c.json(await userRecord(created.id), 201);
+  // M6: a welcome email (no secret in it: the admin hands over the password or token) when the platform has SMTP
+  const welcome = input.active ? await sendWelcome(email, input.role).catch((error) => {
+    console.error(`welcome email to ${email} failed`, error);
+    return false;
+  }) : false;
+  await audit(admin.id, null, "create_user", {
+    email,
+    role: input.role,
+    active: input.active,
+    password_set: !!input.password,
+    welcome_email_sent: welcome,
+  });
+  return c.json({ ...(await userRecord(created.id)), welcome_email_sent: welcome }, 201);
 });
+
+function sendWelcome(email: string, role: "admin" | "developer") {
+  return sendPlatformMail({
+    to: [email],
+    subject: "Your account on the app platform",
+    text: [
+      "Hello,",
+      "",
+      `An account was created for you (${email}) on the company's app platform${role === "admin" ? ", as an admin" : ""}.`,
+      "",
+      "- Build and deploy apps with Claude Code: install the platform plugin, then set the personal access token " +
+      "your admin gives you (PLATFORM_TOKEN).",
+      `- Inspect your apps' data in Studio: ${studioUrl()} (sign in with this email and the password your admin gives you).`,
+      ...(role === "admin" ? [`- Administration console: ${adminUrl()}`] : []),
+      "",
+      "Your admin gives you your password and token over a private channel: they are never sent by email.",
+    ].join("\n"),
+  });
+}
 
 adminApi.put("/users/:id", async (c) => {
   const admin = c.get("admin");
@@ -295,7 +328,7 @@ async function activityContext(): Promise<Activity> {
 
 const APPS_SQL = `
   select a.id as uuid, a.slug as id, a.slug, a.name, a.status, a.error, a.github_repo, a.github_repo_id::text,
-    a.default_branch, a.created_at, a.updated_at,
+    a.default_branch, a.created_at, a.updated_at, a.abandoned_notified_at,
     coalesce((select json_agg(json_build_object('id', u.id, 'email', u.email, 'name', u.name) order by u.email)
       from app_members m join users u on u.id = m.user_id where m.app_id = a.id and m.role = 'owner'), '[]'::json) as owners,
     (select count(*)::int from app_members m where m.app_id = a.id) as member_count,
@@ -338,7 +371,7 @@ function decorateApp(row: AppListRow, github: string, activity: Activity) {
     ...[row.last_request_at, release?.started_at, row.created_at, activity.metricsSince]
       .filter((d) => d !== null && d !== undefined).map((d) => new Date(d as string | Date).getTime()),
   ));
-  const abandoned = Date.now() - lastActivity.getTime() > activity.abandonedAfterDays * 86_400_000;
+  const abandoned = isAbandoned(lastActivity, activity.abandonedAfterDays);
   return {
     ...row,
     db_size: row.db_size === null || row.db_size === undefined ? null : Number(row.db_size),
@@ -428,7 +461,9 @@ async function appRecord(slug: string) {
   if (!row) throw new HttpError(404, `app "${slug}" not found`);
   const app = await withDrift(decorateApp(row, github, activity));
   const services = await orchestrator.appContainers(slug).catch(() => []);
-  return { ...app, services };
+  // M6: the auth policy (configure_auth) and the sender of the app's emails, read-only here
+  const auth = await appAuthView({ id: app.uuid, name: app.name, slug: app.slug });
+  return { ...app, services, auth };
 }
 
 adminApi.get("/apps/:slug", async (c) => c.json(await appRecord(c.req.param("slug"))));
