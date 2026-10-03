@@ -55,11 +55,21 @@ grep -q '^ALLOW_TEST_OIDC_JWKS=' .env || { echo "ALLOW_TEST_OIDC_JWKS=1" >> .env
 # Local installs only (M6): every email goes to the mailpit catcher (http://localhost:8025), started with the "mail"
 # compose profile. Production installs set SMTP_* to the company relay and leave COMPOSE_PROFILES unset.
 add_value() { grep -q "^$1=" .env || { echo "$1=$2" >> .env; echo "$1=$2 written to deploy/.env"; }; }
-add_value COMPOSE_PROFILES mail
+add_value COMPOSE_PROFILES mail,sso-test
+# installs from before M6 part 2: add the mock IdP's profile
+if grep -q '^COMPOSE_PROFILES=mail$' .env; then
+  sed -i.bak 's/^COMPOSE_PROFILES=mail$/COMPOSE_PROFILES=mail,sso-test/' .env && rm -f .env.bak
+  echo "COMPOSE_PROFILES=mail,sso-test written to deploy/.env"
+fi
 add_value SMTP_HOST mailpit
 add_value SMTP_PORT 1025
 add_value SMTP_SENDER_EMAIL noreply@platform.localhost
 add_value SMTP_SENDER_NAME Platform
+# Local installs only (M6 part 2): the mock OpenID Connect provider (compose service idp, profile sso-test) for the
+# company SSO. The apps' GoTrue join its network and trust its CA; nothing uses it until an admin enables SSO with it
+# (see README.md, "Company SSO"). Production installs leave these unset.
+add_value SSO_TEST_NETWORK plat-sso-test
+add_value SSO_TEST_CA_VOLUME plat_idp-ca
 umask 022
 
 if [ "${STUDIO_BUILD:-0}" = 1 ] || ! docker image inspect plat/studio:dev >/dev/null 2>&1; then
