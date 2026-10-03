@@ -232,3 +232,18 @@ node --test scripts/test.ts         # *.localhost must resolve to 127.0.0.1
 node scripts/hold.ts 20 m5a m5b     # slots, sessions, memory with one client per tenant
 scripts/down.sh
 ```
+
+## Follow-up (2026-10-03): pooler and patched Realtime
+
+- **Broadcast from Database on every app** (SR-1, paid off): Realtime now runs a patched image
+  (`plat/realtime:v2.134.10-platform1`, [`patches/realtime`](../../patches/realtime/README.md)) where the slot is named
+  per tenant (`supabase_realtime_messages_replication_slot_<16 hex of sha256(tenant id)>`, opt-in setting
+  `SLOT_NAME_PER_TENANT=true`). Each app with recent clients gets its own walsender and temporary slot:
+  `max_wal_senders=64`, `max_replication_slots=128`. e2e test 5b sends `realtime.send()` in two app databases at the
+  same time and checks that each app receives its own message (it fails with the upstream image: one slot for both).
+  The upstream pull request is drafted in `patches/realtime/UPSTREAM_PR.md`.
+- **Connections**: Storage's requests now go through the PgBouncer pooler (tenant `databasePoolUrl`, transaction
+  mode; its migrations keep the direct `databaseUrl`). Realtime stays direct: the `postgres_changes` poller polls a
+  temporary slot bound to its session, the walsender is a replication connection, and a tenant has a single host
+  setting for all its connections. Choice and routing of the pooler: [control plane README](../../apps/control-plane/README.md#connection-pooler).
+- The superuser used for Realtime's tenant migrations is an accepted trade-off (TECH_DEBT, "Accepted trade-offs").
