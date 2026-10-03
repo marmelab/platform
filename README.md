@@ -2,7 +2,7 @@
 
 Self-hosted hosting for the apps your team builds with Claude Code. Each app gets its own Supabase backend (Postgres database, Auth, REST API, Edge Functions) and its static frontend, all served from a single VM. Developers ("app builders") don't use a UI to deploy: they ask Claude Code to "deploy the app to the platform", through an MCP server and a Claude Code plugin. They inspect their apps in a multi-project Supabase Studio. Admins see every app, in Studio and in an admin console.
 
-> **Status: prototype.** Milestones M0 to M3 of [PLAN_1.md](PLAN_1.md) are validated (see `spikes/*/REPORT.md`), plus Studio access for app builders and the first phase of the admin console (M4). It runs locally; production deployment is not ready yet (see [Deploying](#deploying)).
+> **Status: prototype.** Milestones M0 to M3 of [PLAN_1.md](PLAN_1.md) are validated (see `spikes/*/REPORT.md`), plus Studio access for app builders, most of the admin console (M4), Storage and Realtime (M5), and app emails and company SSO (M6). It runs locally; production deployment is not ready yet (see [Deploying](#deploying)).
 
 More docs:
 - [docs/USER_JOURNEYS.md](docs/USER_JOURNEYS.md): personas, main journeys, product decisions;
@@ -50,7 +50,7 @@ deploy/install.sh
 ```
 
 `install.sh` is safe to rerun. It:
-1. generates the stack secrets in `deploy/.env`, and points the platform SMTP to the local mail catcher (mailpit, `COMPOSE_PROFILES=mail`, `SMTP_HOST=mailpit`);
+1. generates the stack secrets in `deploy/.env`, points the platform SMTP to the local mail catcher (mailpit, `SMTP_HOST=mailpit`), and adds a mock OpenID Connect provider for the company SSO (`COMPOSE_PROFILES=mail,sso-test`);
 2. builds the Studio image on the first run, and the control plane image (which includes the admin console) (`STUDIO_BUILD=1 deploy/install.sh` forces a rebuild);
 3. starts the `plat` docker compose project;
 4. initializes the Postgres cluster (template database, `platform` database);
@@ -80,6 +80,7 @@ docker compose -p plat -f deploy/docker-compose.yml start
 | http://admin.localhost:8100 | Admin console, admins only (`PLATFORM_ADMIN_EMAIL` / `PLATFORM_ADMIN_PASSWORD` from `deploy/.env.local`); its REST API is under `/api` |
 | http://`<slug>`.localhost:8100 | Each app: frontend at `/`, Supabase APIs at `/auth/v1`, `/rest/v1`, `/functions/v1` |
 | http://localhost:8025 | Mailpit (local installs): every email sent by the platform and its apps (sign-up confirmations, password resets, invitations, notices) |
+| http://localhost:8090 | Mock OpenID Connect provider (local installs): the "company IdP" for trying the company SSO; it signs in any email (see [Company SSO](#company-sso)) |
 | `127.0.0.1:54350` | Postgres (`supabase_admin`, password `POSTGRES_PASSWORD` in `deploy/.env`) |
 | http://127.0.0.1:2030 | Caddy admin API |
 
@@ -107,6 +108,16 @@ Seed accounts exist only after `deploy/install.sh --seed`. Their passwords are f
 ### Admin console
 
 Open http://admin.localhost:8100 and sign in with `PLATFORM_ADMIN_EMAIL` / `PLATFORM_ADMIN_PASSWORD` from `deploy/.env.local` (app builders are refused). It lists every app with its owners, linked repository, last release and flags (deployed outside CI, schema drift, accepted lints), and lets you stop, start or delete an app, roll back a deployment, manage its members, and manage platform accounts and tokens; every action is in the audit log. Screenshots: [apps/admin/screenshots](apps/admin/screenshots). Details: [apps/admin/README.md](apps/admin/README.md).
+
+### Company SSO
+
+The platform can delegate its logins (Studio, admin console) to the company's OpenID Connect provider, and apps can let their users sign in with it (M6 part 2). Local installs run a mock provider that signs in any email. To try it:
+
+1. In the admin console, open **SSO** and set: issuer `https://idp.sso.test:8443`, discovery URL `http://idp:8090/.well-known/openid-configuration`, client ID `platform`, client secret `platform-secret`, then check **Enabled** and save.
+2. Open http://studio.localhost:8100, click **Sign in with company SSO**, type `alice@example.com` (seed) or your admin email in the mock provider's form: you are signed in to Studio as alice (an unknown email is refused, unless "Unknown users" creates developers). The admin console's login page has the same button, for admins.
+3. For an app's users, ask Claude (or call `configure_auth`) to enable company SSO on the app (`sso: {provider: "company"}`); the app then signs in with `supabase.auth.signInWithOAuth({ provider: "custom:company" })`.
+
+Details, security checks and limits: [apps/control-plane/README.md](apps/control-plane/README.md#company-sso-m6-part-2).
 
 To create other app builders for manual testing, use the admin console (Users, then Tokens), or the CLI inside the control plane container:
 
@@ -157,6 +168,7 @@ pnpm --filter @platform/control-plane test         # unit: Studio access policy 
 pnpm --filter @platform/control-plane e2e          # MCP end to end: provisioning, migrations, deployments, isolation; CI API; platform-deploy
 pnpm --filter @platform/control-plane e2e:studio   # Studio: login and throttling, CSRF, per-app filtering, bypass attempts
 pnpm e2e:admin                                     # admin REST API, load metrics, then the admin console in Chromium (Playwright)
+pnpm --filter @platform/control-plane e2e:sso      # company SSO with the mock IdP (also part of e2e)
 node apps/control-plane/scripts/verify-notes-app.ts # seeded notes-app: sharing rules, as its app users (after --seed)
 (cd apps/edge-main-worker && deno test --allow-read --allow-write)
 ```
