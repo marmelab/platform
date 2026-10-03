@@ -176,17 +176,32 @@ services:
       # connection pooler: admin console (RELOAD, KILL) and the auth_query role's password (set by init)
       POOLER_ADMIN_PASSWORD: ${POOLER_ADMIN_PASSWORD}
       POOLER_AUTH_PASSWORD: ${POOLER_AUTH_PASSWORD}
+      # Backups (M7, apps/control-plane/README.md, "Backups"): daily at BACKUP_HOUR (UTC) on the backups volume, or on
+      # an S3-compatible bucket when BACKUP_S3_* are set (or the backup_s3_* settings, which override them).
+      BACKUP_ENABLED: ${BACKUP_ENABLED:-}
+      BACKUP_HOUR: ${BACKUP_HOUR:-}
+      BACKUP_KEEP_DAILY: ${BACKUP_KEEP_DAILY:-}
+      BACKUP_KEEP_WEEKLY: ${BACKUP_KEEP_WEEKLY:-}
+      BACKUP_MANUAL_RETENTION_DAYS: ${BACKUP_MANUAL_RETENTION_DAYS:-}
+      BACKUP_FINAL_RETENTION_DAYS: ${BACKUP_FINAL_RETENTION_DAYS:-}
+      BACKUP_S3_ENDPOINT: ${BACKUP_S3_ENDPOINT:-}
+      BACKUP_S3_BUCKET: ${BACKUP_S3_BUCKET:-}
+      BACKUP_S3_REGION: ${BACKUP_S3_REGION:-}
+      BACKUP_S3_ACCESS_KEY_ID: ${BACKUP_S3_ACCESS_KEY_ID:-}
+      BACKUP_S3_SECRET_ACCESS_KEY: ${BACKUP_S3_SECRET_ACCESS_KEY:-}
+      BACKUP_S3_PREFIX: ${BACKUP_S3_PREFIX:-}
+      BACKUP_S3_PATH_STYLE: ${BACKUP_S3_PATH_STYLE:-}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - sites:/data/sites
       - functions:/data/functions
       - apps-config:/data/config/apps
       - uploads:/data/uploads
-      # final backups taken by delete_app (<slug>-<timestamp>/): restore, retention and off-site copy are M7
+      # backups (M7, <slug>-<timestamp>/): kept here without an S3 target, staging area with one
       - backups:/data/backups
       # Caddy's access log (requests and 5xx per app, app_metrics)
       - caddy-logs:/data/caddy-logs:ro
-      # Storage files (<bucket>/<slug>/...): final backups (B8) and deletion
+      # Storage files (<bucket>/<slug>/...): backups, restores and deletion
       - storage-data:/data/storage
       # the pooler's [databases] entries (pooler.ts)
       - pooler-config:/data/pooler
@@ -363,6 +378,32 @@ services:
     labels:
       platform.service: idp
 
+  # S3-compatible object store (M7), local installs only: install.sh adds the s3-test profile to COMPOSE_PROFILES.
+  # The off-site backup target of the e2e suites (backups.e2e), unused until the backup_s3_* settings point to it
+  # (http://s3:8333, bucket created by the suite). SeaweedFS rather than MinIO, whose images are no longer published.
+  # S3 API on http://localhost:8333 for the tests. Never in production: use the company's S3 bucket.
+  s3:
+    image: chrislusf/seaweedfs:3.97
+    container_name: plat-s3
+    restart: unless-stopped
+    profiles: [s3-test]
+    mem_limit: 256m
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        printf '{"identities":[{"name":"platform","credentials":[{"accessKey":"%s","secretKey":"%s"}],"actions":["Admin","Read","Write","List","Tagging"]}]}'
+        "$$S3_ACCESS_KEY" "$$S3_SECRET_KEY" > /tmp/s3.json &&
+        exec weed server -dir=/data -s3 -s3.config=/tmp/s3.json -master.volumeSizeLimitMB=64 -volume.max=0
+    environment:
+      S3_ACCESS_KEY: platform-test
+      S3_SECRET_KEY: ${S3_TEST_SECRET_KEY:-}
+    volumes:
+      - s3-data:/data
+    ports:
+      - "127.0.0.1:8333:8333"
+    labels:
+      platform.service: s3
+
 volumes:
   db-data:
   caddy-config:
@@ -376,6 +417,7 @@ volumes:
   caddy-logs:
   storage-data:
   pooler-config:
+  s3-data:
   idp-keys:
   idp-ca:
     name: plat_idp-ca
