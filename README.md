@@ -50,7 +50,7 @@ deploy/install.sh
 ```
 
 `install.sh` is safe to rerun. It:
-1. generates the stack secrets in `deploy/.env`;
+1. generates the stack secrets in `deploy/.env`, and points the platform SMTP to the local mail catcher (mailpit, `COMPOSE_PROFILES=mail`, `SMTP_HOST=mailpit`);
 2. builds the Studio image on the first run, and the control plane image (which includes the admin console) (`STUDIO_BUILD=1 deploy/install.sh` forces a rebuild);
 3. starts the `plat` docker compose project;
 4. initializes the Postgres cluster (template database, `platform` database);
@@ -79,6 +79,7 @@ docker compose -p plat -f deploy/docker-compose.yml start
 | http://studio.localhost:8100 | Studio (platform login) |
 | http://admin.localhost:8100 | Admin console, admins only (`PLATFORM_ADMIN_EMAIL` / `PLATFORM_ADMIN_PASSWORD` from `deploy/.env.local`); its REST API is under `/api` |
 | http://`<slug>`.localhost:8100 | Each app: frontend at `/`, Supabase APIs at `/auth/v1`, `/rest/v1`, `/functions/v1` |
+| http://localhost:8025 | Mailpit (local installs): every email sent by the platform and its apps (sign-up confirmations, password resets, invitations, notices) |
 | `127.0.0.1:54350` | Postgres (`supabase_admin`, password `POSTGRES_PASSWORD` in `deploy/.env`) |
 | http://127.0.0.1:2030 | Caddy admin API |
 
@@ -98,7 +99,7 @@ Seed accounts exist only after `deploy/install.sh --seed`. Their passwords are f
 
 `todo-app` ([examples/todo-app](examples/todo-app)) and `notes-app` ([examples/notes-app](examples/notes-app)) are two different example apps. Each is a separate instance with its own database and its own user accounts.
 
-- **todo-app, as an app user**: open http://todo-app.localhost:8100 and sign in as `demo-user@example.com` / `demo-password`. You can add, check and delete todos; the "x of y done" counter comes from the `summary` Edge Function. You can also sign up with a new account (email confirmation is automatic until SMTP is configured): it won't see `demo-user`'s todos (RLS), and it won't exist in `notes-app`.
+- **todo-app, as an app user**: open http://todo-app.localhost:8100 and sign in as `demo-user@example.com` / `demo-password`. You can add, check and delete todos; the "x of y done" counter comes from the `summary` Edge Function. You can also sign up with a new account (the seed turns email confirmation off for its example apps; on other apps, open the confirmation email in mailpit, http://localhost:8025): it won't see `demo-user`'s todos (RLS), and it won't exist in `notes-app`.
 - **notes-app, sharing between users**: open http://notes-app.localhost:8100 and sign in as `demo-user@example.com` / `demo-password`. "My notes" lists three notes: "Team offsite ideas" (shared read-only with `demo-user-2`), "Release checklist" (shared for editing) and "Personal reminders" (private). Open a note to edit it and to manage its sharing: share it with `demo-user-2@example.com`, change the permission, or remove the share. Sharing with an email that has no account in the app is refused. Then sign out, sign in as `demo-user-2@example.com` / `demo-password` and open "Shared with me": the shared notes are there, with their permission. You can edit "Release checklist" (the editor then shows you as the last editor), but "Team offsite ideas" is read-only, and you can neither delete a shared note nor reshare it. A new account sees no notes at all. `node apps/control-plane/scripts/verify-notes-app.ts` runs the same checks against the API.
 - **As an app builder, in Studio**: sign in to http://studio.localhost:8100 as alice (only `todo-app` is listed) or bob (only `notes-app`). Users are under Auth > Users; the data is under Table editor (`todos` for `todo-app`; `notes`, `note_shares` and `profiles` for `notes-app`). The admin sees every app.
 - **As an app builder, with Claude Code**: set `PLATFORM_TOKEN` to `SEED_ALICE_TOKEN`, install the plugin (see [Deploy an app with Claude Code](#deploy-an-app-with-claude-code)), then ask for instance "show me the logs of todo-app" or "add a priority column to the todos and redeploy". With alice's token, `notes-app` is reported as not found.
