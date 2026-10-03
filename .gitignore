@@ -5,3 +5,5 @@ deploy/.env.local
 *.tsbuildinfo
 .next/
 apps/admin/dist/
+deploy/upgrades/
+deploy/caddy-root.crt

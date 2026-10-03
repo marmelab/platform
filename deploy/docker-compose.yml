@@ -40,8 +40,15 @@ services:
     command: ["caddy", "run", "--config", "/etc/caddy/caddy.json", "--resume"]
     environment:
       PLATFORM_GATEWAY_TOKEN: ${PLATFORM_GATEWAY_TOKEN}
+      # bootstrap config (caddy/caddy.json) before the control plane's first start, which then owns the public server
+      # (listen address, TLS, API host: router.ensureEdge)
+      PLATFORM_API_HOST: api.${PLATFORM_DOMAIN:-localhost}
+      PLATFORM_PUBLIC_PORT: ${PUBLIC_PORT:-8100}
     ports:
-      - "127.0.0.1:8100:8100"
+      # local installs: the public server on 127.0.0.1:8100 (plain HTTP). Production (install.sh --production):
+      # CADDY_HTTP_PUBLISH=80 and CADDY_HTTP_PORT=80 (redirect to HTTPS, ACME HTTP challenge), CADDY_HTTPS_PUBLISH=443
+      - "${CADDY_HTTP_PUBLISH:-127.0.0.1:8100}:${CADDY_HTTP_PORT:-8100}"
+      - "${CADDY_HTTPS_PUBLISH:-127.0.0.1:8443}:443"
       - "127.0.0.1:2030:2019"
     volumes:
       - ./caddy/caddy.json:/etc/caddy/caddy.json:ro
@@ -122,13 +129,17 @@ services:
       PLATFORM_STUDIO_HEADER_SECRET: ${PLATFORM_STUDIO_HEADER_SECRET}
       PLATFORM_STUDIO_CONFIG_TOKEN: ${PLATFORM_STUDIO_CONFIG_TOKEN}
       STUDIO_META_DEFAULT_PASSWORD: ${STUDIO_META_DEFAULT_PASSWORD}
-      STUDIO_HOST: studio.localhost
-      # admin console and its API (apps/admin, built into this image), proxied by Caddy (route "admin")
-      ADMIN_HOST: admin.localhost
+      # Hosts (config.ts): apps on <slug>.<domain>, api.<domain>, admin.<domain> (admin console and its API, apps/admin
+      # built into this image), studio.<domain>. install.sh --production writes PLATFORM_DOMAIN, PUBLIC_SCHEME=https,
+      # PUBLIC_PORT=443 and TLS_MODE (acme, or internal: Caddy's own CA) into deploy/.env.
+      PLATFORM_DOMAIN: ${PLATFORM_DOMAIN:-localhost}
+      PUBLIC_SCHEME: ${PUBLIC_SCHEME:-http}
+      PUBLIC_PORT: ${PUBLIC_PORT:-8100}
+      TLS_MODE: ${TLS_MODE:-off}
+      ACME_EMAIL: ${ACME_EMAIL:-}
+      ACME_CA: ${ACME_CA:-}
+      HTTP_PORT: ${CADDY_HTTP_PORT:-80}
       PGHOST: db
-      APPS_DOMAIN: localhost
-      PUBLIC_PORT: "8100"
-      API_HOST: api.localhost
       CADDY_ADMIN_URL: http://caddy:2019
       DOCKER_NETWORK: plat
       # Platform settings (apps/control-plane/README.md, "Settings"). DIRECT_DEPLOY: "admins" in production;
@@ -280,7 +291,7 @@ services:
       platform.service: realtime
 
   # Multi-head Studio (apps/studio, image built on the host by apps/studio/build.sh). No published port:
-  # reachable only through Caddy (studio.localhost:8100) behind the control plane's forward auth.
+  # reachable only through Caddy (studio.<domain>) behind the control plane's forward auth.
   studio:
     image: plat/studio:dev
     container_name: plat-studio
@@ -295,7 +306,7 @@ services:
       PG_META_CRYPTO_KEY: ${PG_META_CRYPTO_KEY}
       STUDIO_DATA_DIR: /tmp/studio-data
       DEFAULT_ORGANIZATION_NAME: Platform
-      SUPABASE_PUBLIC_URL: http://studio.localhost:8100
+      SUPABASE_PUBLIC_URL: ${STUDIO_PUBLIC_URL:-http://studio.localhost:8100}
       # Global "default project" of the fork: unreachable on purpose, every route must use its project
       SUPABASE_URL: http://unreachable.invalid
       SUPABASE_ANON_KEY: none
