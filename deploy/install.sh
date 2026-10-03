@@ -116,11 +116,12 @@ check_prerequisites() {
   elif [ "$mem_gb" -lt 15 ]; then warn "${mem_gb} GB of RAM: 16 GB are recommended for 50 apps"; fi
   local docker_root disk_gb
   docker_root="$(docker info -f '{{.DockerRootDir}}' 2>/dev/null || echo /var/lib/docker)"
-  disk_gb="$(df -Pk "$docker_root" 2>/dev/null | awk 'NR == 2 {print int($4 / 1024 / 1024)}')"
+  disk_gb="$(df -Pk "$docker_root" 2>/dev/null | awk 'NR == 2 {print int($4 / 1024 / 1024)}' || true)"
   if [ "${disk_gb:-0}" -lt 20 ]; then warn "${disk_gb:-?} GB free for Docker ($docker_root): 20 GB or more are needed (images ~6 GB, databases, backups)"; ok=0; fi
   for port in 80 443; do
     local holder=""
-    if command -v ss >/dev/null; then holder="$(ss -Hltn "sport = :$port" 2>/dev/null | head -1)"; fi
+    if command -v ss >/dev/null; then holder="$(ss -Hltn "sport = :$port" 2>/dev/null | head -1 || true)"
+    elif (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null; then holder="listening"; fi
     if [ -n "$holder" ] && ! docker port plat-caddy 2>/dev/null | grep -q ":$port\$"; then
       warn "port $port is already in use on this host: stop that service (the platform's Caddy needs 80 and 443)"; ok=0
     fi
@@ -128,7 +129,7 @@ check_prerequisites() {
   # DNS: the platform hosts and a random name under the domain (wildcard record)
   local probe="dns-check-$RANDOM$RANDOM.$domain" address host
   for host in "api.$domain" "admin.$domain" "studio.$domain" "$probe"; do
-    address="$(getent ahostsv4 "$host" 2>/dev/null | awk 'NR == 1 {print $1}')"
+    address="$(getent ahostsv4 "$host" 2>/dev/null | awk 'NR == 1 {print $1}' || true)"
     if [ -z "$address" ]; then
       if [ "$host" = "$probe" ]; then
         warn "no wildcard DNS record: $host does not resolve. Create *.$domain (A record) pointing to this host's public address, or every app's URL will fail (docs/INSTALL.md, DNS)"
@@ -397,7 +398,7 @@ if [ "$MODE" = production ]; then
   fi
   https_ok=0
   for _ in $(seq 1 30); do
-    if curl -fsS "${CACERT[@]}" --resolve "api.$DOMAIN:443:127.0.0.1" "https://api.$DOMAIN/health" >/dev/null 2>&1; then
+    if curl -fsS --noproxy "*" "${CACERT[@]}" --resolve "api.$DOMAIN:443:127.0.0.1" "https://api.$DOMAIN/health" >/dev/null 2>&1; then
       https_ok=1; break
     fi
     sleep 2
