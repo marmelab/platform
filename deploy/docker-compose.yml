@@ -153,6 +153,21 @@ services:
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
       SMTP_SENDER_EMAIL: ${SMTP_SENDER_EMAIL:-}
       SMTP_SENDER_NAME: ${SMTP_SENDER_NAME:-}
+      # Company SSO (M6 part 2, apps/control-plane/README.md, "Company SSO"): usually set in the admin console (SSO),
+      # which overrides these defaults. SSO_CLIENT_SECRET is stored encrypted when set from the console.
+      SSO_ENABLED: ${SSO_ENABLED:-}
+      SSO_NAME: ${SSO_NAME:-}
+      SSO_ISSUER: ${SSO_ISSUER:-}
+      SSO_DISCOVERY_URL: ${SSO_DISCOVERY_URL:-}
+      SSO_CLIENT_ID: ${SSO_CLIENT_ID:-}
+      SSO_CLIENT_SECRET: ${SSO_CLIENT_SECRET:-}
+      SSO_ALLOWED_DOMAINS: ${SSO_ALLOWED_DOMAINS:-}
+      SSO_REQUIRE_VERIFIED_EMAIL: ${SSO_REQUIRE_VERIFIED_EMAIL:-}
+      SSO_AUTO_CREATE: ${SSO_AUTO_CREATE:-}
+      SSO_PASSWORD_LOGIN: ${SSO_PASSWORD_LOGIN:-}
+      # Local installs only (install.sh, profile sso-test): the apps' GoTrue join the mock IdP's network and trust its CA
+      SSO_TEST_NETWORK: ${SSO_TEST_NETWORK:-}
+      SSO_TEST_CA_VOLUME: ${SSO_TEST_CA_VOLUME:-}
       # Storage and Realtime (M5): tenant management (admin APIs on the internal network) and metadata databases
       STORAGE_ADMIN_KEY: ${STORAGE_ADMIN_KEY}
       STORAGE_DB_PASSWORD: ${STORAGE_DB_PASSWORD}
@@ -314,6 +329,40 @@ services:
     labels:
       platform.service: mailpit
 
+  # Mock OpenID Connect provider (M6 part 2), local installs only: install.sh adds the sso-test profile to
+  # COMPOSE_PROFILES. The company IdP of the local stack and of the e2e suites: platform SSO login and the apps'
+  # "custom:company" provider. It signs in any email (deploy/idp/mock-idp.ts). Runs on the control plane image (Node).
+  # Issuer https://idp.sso.test:8443, served on the plat-sso-test network at a non-private address, because GoTrue
+  # refuses private and plain-HTTP issuers; authorization requests on http://localhost:8090 (the browser).
+  idp:
+    image: plat/control-plane:dev
+    pull_policy: never
+    container_name: plat-idp
+    restart: unless-stopped
+    profiles: [sso-test]
+    depends_on: [control-plane]
+    mem_limit: 128m
+    working_dir: /idp
+    command: ["node", "/idp/mock-idp.ts"]
+    environment:
+      IDP_ISSUER: https://idp.sso.test:8443
+      IDP_PUBLIC_URL: http://localhost:8090
+      IDP_INTERNAL_URL: http://idp:8090
+      IDP_CLIENTS: platform:platform-secret
+    volumes:
+      - ./idp:/idp:ro
+      - idp-keys:/keys
+      - idp-ca:/ca
+    ports:
+      - "127.0.0.1:8090:8090"
+    networks:
+      default: {}
+      sso-test:
+        ipv4_address: 198.51.100.10
+        aliases: [idp.sso.test]
+    labels:
+      platform.service: idp
+
 volumes:
   db-data:
   caddy-config:
@@ -327,7 +376,16 @@ volumes:
   caddy-logs:
   storage-data:
   pooler-config:
+  idp-keys:
+  idp-ca:
+    name: plat_idp-ca
 
 networks:
   default:
     name: plat
+  # mock IdP only (profile sso-test): TEST-NET-2, a documentation range that GoTrue does not consider private
+  sso-test:
+    name: plat-sso-test
+    ipam:
+      config:
+        - subnet: 198.51.100.0/24

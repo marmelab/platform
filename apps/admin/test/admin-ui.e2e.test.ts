@@ -193,4 +193,53 @@ describe("admin SPA smoke test", () => {
     await page.getByRole("cell", { name: "stop_app" }).first().waitFor();
     await shot(page, "11-audit-log");
   });
+
+  test("6. company SSO: settings screen, then signing in with the mock IdP", async () => {
+    const adminEmail = env.PLATFORM_ADMIN_EMAIL ?? "admin@example.com";
+    const saved = psql("select coalesce(json_agg(json_build_object('key', key, 'value', value)), '[]') from settings where key like 'sso\\_%'");
+    const link = psql(`select coalesce(sso_issuer, '') || '|' || coalesce(sso_subject, '') from users where email = '${adminEmail}'`);
+    const context = await browser.newContext({ viewport: { width: 1680, height: 900 } });
+    try {
+      await page.goto(`${ADMIN}/#/sso`);
+      await page.getByRole("heading", { name: "Company SSO" }).waitFor();
+      await page.getByLabel("Issuer").fill("https://idp.sso.test:8443");
+      await page.getByLabel("Discovery URL (optional)").fill("http://idp:8090/.well-known/openid-configuration");
+      await page.getByLabel("Client ID").fill("platform");
+      await page.getByLabel("Client secret").fill("platform-secret");
+      await page.getByLabel("Button label").fill("Mock IdP");
+      await page.getByLabel("Allowed email domains").fill("");
+      if ((await page.getByTestId("sso-status").textContent()) === "off") await page.getByRole("switch", { name: "Enabled" }).click();
+      await page.getByRole("button", { name: "Save" }).click();
+      await page.getByText("SSO settings saved").waitFor();
+      assert.equal(await page.getByTestId("sso-status").textContent(), "active");
+      await page.getByText("/_platform/sso/callback").waitFor();
+      await shot(page, "12-sso");
+
+      // a fresh browser: the login page offers SSO, the mock IdP asks for an email, the console opens
+      const fresh = await context.newPage();
+      await fresh.goto(ADMIN);
+      await fresh.getByRole("link", { name: "Sign in with Mock IdP" }).click();
+      await fresh.getByRole("heading", { name: "Mock company IdP" }).waitFor();
+      await fresh.getByLabel("Email", { exact: true }).fill(adminEmail);
+      await fresh.getByRole("button", { name: "Sign in" }).click();
+      await fresh.getByRole("heading", { name: "Dashboard" }).waitFor();
+      assert.equal(psql(`select action from audit_log where user_id = (select id from users where email = '${adminEmail}')
+        order by id desc limit 1`), "login_sso");
+
+      // a builder is refused, with the reason on the login page
+      const refused = await context.newPage();
+      await context.clearCookies();
+      await refused.goto(ADMIN);
+      await refused.getByRole("link", { name: "Sign in with Mock IdP" }).click();
+      await refused.getByLabel("Email", { exact: true }).fill(BUILDER);
+      await refused.getByRole("button", { name: "Sign in" }).click();
+      await refused.getByRole("alert").filter({ hasText: "reserved to platform admins" }).waitFor();
+    } finally {
+      await context.close();
+      psql(`delete from settings where key like 'sso\\_%';
+        insert into settings (key, value) select r->>'key', r->>'value' from json_array_elements('${saved.replaceAll("'", "''")}'::json) r`);
+      const [issuer, subject] = link.split("|");
+      psql(`update users set sso_issuer = nullif('${issuer}', ''), sso_subject = nullif('${subject}', '') where email = '${adminEmail}'`);
+    }
+  });
 });
