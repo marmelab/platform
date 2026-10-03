@@ -7,12 +7,12 @@
     "http": {
       "servers": {
         "public": {
-          "listen": [":8100"],
+          "listen": [":{env.PLATFORM_PUBLIC_PORT}"],
           "automatic_https": { "disable": true },
           "routes": [
             {
               "@id": "api",
-              "match": [{ "host": ["api.localhost"] }],
+              "match": [{ "host": ["{env.PLATFORM_API_HOST}"] }],
               "terminal": true,
               "handle": [{ "handler": "reverse_proxy", "upstreams": [{ "dial": "control-plane:3000" }] }]
             },

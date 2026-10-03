@@ -23,5 +23,8 @@ cp -R .next/static .image/apps/studio/.next/static
 cp -R public .image/apps/studio/public
 SHARP_VERSION="$(ls .image/node_modules/.pnpm | sed -n 's/^sharp@\([0-9.]*\).*/\1/p' | head -1)"
 
-docker build --platform "$PLATFORM" --build-arg "SHARP_VERSION=$SHARP_VERSION" -f Dockerfile.platform -t "$TAG" .image
+# platform.source: the git tree of apps/studio this image was built from (deploy/upgrade.sh rebuilds when it differs)
+SOURCE="$(git rev-parse HEAD:apps/studio 2>/dev/null || echo unknown)"
+docker build --platform "$PLATFORM" --build-arg "SHARP_VERSION=$SHARP_VERSION" --label "platform.source=$SOURCE" \
+  -f Dockerfile.platform -t "$TAG" .image
 echo "built $TAG ($PLATFORM)"
