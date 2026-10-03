@@ -75,6 +75,34 @@ services:
     labels:
       platform.service: edge
 
+  # Connection pooler (apps/control-plane/README.md, "Connection pooler"): PgBouncer in transaction mode in front of the app databases, for
+  # PostgREST and Storage. Static settings in pooler/pgbouncer.ini; one [databases] entry per app, written by the control
+  # plane into the pooler-config volume and applied with RELOAD. No published port.
+  pooler:
+    image: edoburu/pgbouncer:v1.25.1-p0
+    container_name: plat-pooler
+    restart: unless-stopped
+    mem_limit: 128m
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      POOLER_AUTH_PASSWORD: ${POOLER_AUTH_PASSWORD}
+      POOLER_ADMIN_PASSWORD: ${POOLER_ADMIN_PASSWORD}
+    # userlist: the auth_query role and the admin console user; the entries file is created by the control plane
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        umask 077
+        printf '"platform_pooler" "%s"\n"pooler_admin" "%s"\n' "$$POOLER_AUTH_PASSWORD" "$$POOLER_ADMIN_PASSWORD" > /tmp/userlist.txt
+        until [ -f /etc/pgbouncer/dynamic/databases.ini ]; do sleep 1; done
+        exec pgbouncer /etc/pgbouncer/pgbouncer.ini
+    volumes:
+      - ./pooler/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro
+      - pooler-config:/etc/pgbouncer/dynamic:ro
+    labels:
+      platform.service: pooler
+
   control-plane:
     build:
       context: ..
@@ -121,6 +149,9 @@ services:
       STORAGE_DB_PASSWORD: ${STORAGE_DB_PASSWORD}
       REALTIME_API_JWT_SECRET: ${REALTIME_API_JWT_SECRET}
       REALTIME_DB_PASSWORD: ${REALTIME_DB_PASSWORD}
+      # connection pooler: admin console (RELOAD, KILL) and the auth_query role's password (set by init)
+      POOLER_ADMIN_PASSWORD: ${POOLER_ADMIN_PASSWORD}
+      POOLER_AUTH_PASSWORD: ${POOLER_AUTH_PASSWORD}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - sites:/data/sites
@@ -133,6 +164,8 @@ services:
       - caddy-logs:/data/caddy-logs:ro
       # Storage files (<bucket>/<slug>/...): final backups (B8) and deletion
       - storage-data:/data/storage
+      # the pooler's [databases] entries (pooler.ts)
+      - pooler-config:/data/pooler
     labels:
       platform.service: control-plane
 
@@ -174,7 +207,7 @@ services:
   # Realtime (M5), one shared multi-tenant instance: one tenant per app (registered by the control plane through its
   # API), the tenant taken from the first label of the Host header, set by Caddy to <slug>.realtime. No published port.
   # Patched upstream image (patches/realtime, built by install.sh): the "broadcast changes" slot is named per tenant
-  # (SLOT_NAME_PER_TENANT).
+  # (SLOT_NAME_PER_TENANT). Connects to the app databases directly, not through the pooler.
   realtime:
     image: plat/realtime:v2.134.10-platform1
     container_name: plat-realtime
@@ -266,6 +299,7 @@ volumes:
   deno-cache:
   caddy-logs:
   storage-data:
+  pooler-config:
 
 networks:
   default:

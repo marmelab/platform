@@ -1,3 +1,4 @@
+import { createHash, createHmac, pbkdf2Sync } from "node:crypto";
 import { readFileSync } from "node:fs";
 
 const sqlFile = (name: string) => readFileSync(new URL(`../${name}`, import.meta.url), "utf8");
@@ -22,6 +23,24 @@ function ident(value: string): string {
 function secret(value: string): string {
   if (!SECRET_RE.test(value)) throw new Error("unsafe password");
   return `'${value}'`;
+}
+
+/**
+ * The SCRAM-SHA-256 secret of a role's password, with a salt derived from the role and the password: setting it
+ * again (every provisioning re-runs the role statements) leaves pg_authid unchanged. A plain `PASSWORD '...'` would
+ * draw a new salt each time, which invalidates the SCRAM keys the pooler caches from its connected clients
+ * (pass-through authentication): their next server login would fail until they reconnect.
+ */
+export function scramSecret(role: string, password: string): string {
+  if (!SECRET_RE.test(password)) throw new Error("unsafe password");
+  const iterations = 4096;
+  const salt = createHash("sha256").update(`platform-scram:${role}:${password}`).digest().subarray(0, 16);
+  const salted = pbkdf2Sync(password, salt, iterations, 32, "sha256");
+  const clientKey = createHmac("sha256", salted).update("Client Key").digest();
+  const storedKey = createHash("sha256").update(clientKey).digest();
+  const serverKey = createHmac("sha256", salted).update("Server Key").digest();
+  const b64 = (b: Buffer) => b.toString("base64");
+  return `'SCRAM-SHA-256$${iterations}:${b64(salt)}$${b64(storedKey)}:${b64(serverKey)}'`;
 }
 
 export interface AppRoles {
@@ -90,6 +109,52 @@ export function realtimeMigratorSql(password: string | null): string[] {
     : [`alter role ${REALTIME_MIGRATOR_ROLE} with login superuser connection limit 10 password ${secret(password)}`];
 }
 
+/**
+ * Connection pooler (PgBouncer, apps/control-plane/README.md, "Connection pooler"). Clients log in with their own role and password: PgBouncer
+ * reads the role's SCRAM secret with `auth_query` (POOLER_AUTH_FUNCTION, in the "postgres" database, as
+ * POOLER_AUTH_ROLE) and reuses the client's SCRAM keys to log in to Postgres. Only the app roles routed through the
+ * pooler are returned: any other role (superusers, the platform's roles, owners) cannot log in through it.
+ */
+export const POOLER_AUTH_ROLE = "platform_pooler";
+export const POOLER_AUTH_FUNCTION = "platform_pooler.get_auth";
+/** App login roles that connect through the pooler: PostgREST's and Storage's. */
+export const POOLED_ROLE_RE = "^app_[a-z0-9_]+_(authenticator|storage_admin)$";
+
+/** Run in "postgres" as supabase_admin. Idempotent. */
+export function poolerAuthSql(password: string): string[] {
+  return [
+    ensureRole(POOLER_AUTH_ROLE),
+    `alter role ${POOLER_AUTH_ROLE} with login noinherit nosuperuser nocreatedb nocreaterole noreplication connection limit 5 password ${secret(password)}`,
+    `grant connect on database postgres to ${POOLER_AUTH_ROLE}`,
+    `create schema if not exists platform_pooler`,
+    `revoke all on schema platform_pooler from public`,
+    `grant usage on schema platform_pooler to ${POOLER_AUTH_ROLE}`,
+    `create or replace function ${POOLER_AUTH_FUNCTION}(p_usename text) returns table (usename name, passwd text)
+      language sql stable security definer set search_path = pg_catalog as $$
+        select rolname, rolpassword from pg_authid
+         where rolname = p_usename and rolname ~ '${POOLED_ROLE_RE}' and rolcanlogin and not rolsuper
+           and not rolreplication and (rolvaliduntil is null or rolvaliduntil > now())
+      $$`,
+    `revoke all on function ${POOLER_AUTH_FUNCTION}(text) from public`,
+    `grant execute on function ${POOLER_AUTH_FUNCTION}(text) to ${POOLER_AUTH_ROLE}`,
+  ];
+}
+
+/**
+ * PostgREST connects through the pooler in transaction mode, where LISTEN does not work: its schema cache channel is
+ * off, and the control plane listens to "pgrst" in each running app database instead (pgrst-relay.ts), as this role:
+ * LOGIN and CONNECT on the app databases, nothing else.
+ */
+export const PGRST_RELAY_ROLE = "platform_pgrst_relay";
+
+/** Run in "postgres" as supabase_admin. Idempotent. */
+export function pgrstRelayRoleSql(password: string): string[] {
+  return [
+    ensureRole(PGRST_RELAY_ROLE),
+    `alter role ${PGRST_RELAY_ROLE} with login noinherit nosuperuser nocreatedb nocreaterole noreplication connection limit 200 password ${secret(password)}`,
+  ];
+}
+
 /** Metadata database and role of a shared service (Storage's tenants, Realtime's tenants). Run in "postgres". */
 export function serviceDatabaseRoleSql(role: string, password: string): string[] {
   return [
@@ -109,28 +174,28 @@ export function clusterRolesSql(appId: string, passwords: AppPasswords): string[
     ensureRole(r.authAdmin),
     ensureRole(r.owner),
     // PostgREST login role: same shape as the image's "authenticator"
-    `alter role ${r.authenticator} with login noinherit nocreaterole nocreatedb connection limit 20 password ${secret(passwords.authenticator)}`,
+    `alter role ${r.authenticator} with login noinherit nocreaterole nocreatedb connection limit 20 password ${scramSecret(r.authenticator, passwords.authenticator)}`,
     `grant anon, authenticated, service_role to ${r.authenticator}`,
     `alter role ${r.authenticator} set session_preload_libraries = supautils, safeupdate`,
     `alter role ${r.authenticator} set statement_timeout = '8s'`,
     `alter role ${r.authenticator} set lock_timeout = '8s'`,
     // GoTrue login role: same shape as "supabase_auth_admin" but without createrole
-    `alter role ${r.authAdmin} with login noinherit nocreaterole nocreatedb connection limit 20 password ${secret(passwords.authAdmin)}`,
+    `alter role ${r.authAdmin} with login noinherit nocreaterole nocreatedb connection limit 20 password ${scramSecret(r.authAdmin, passwords.authAdmin)}`,
     `alter role ${r.authAdmin} set search_path = auth`,
     `alter role ${r.authAdmin} set idle_in_transaction_session_timeout = 60000`,
     `alter role ${r.authAdmin} set log_statement = none`,
     // Owner role: owns the database and the public schema; used for migrations, execute_sql and edge functions
-    `alter role ${r.owner} with login inherit nocreaterole nocreatedb connection limit 15 password ${secret(passwords.owner)}`,
+    `alter role ${r.owner} with login inherit nocreaterole nocreatedb connection limit 15 password ${scramSecret(r.owner, passwords.owner)}`,
     `alter role ${r.owner} set statement_timeout = '60s'`,
     // Storage API: same shape as the image's supabase_storage_admin, without createrole
     ensureRole(r.storageAdmin),
-    `alter role ${r.storageAdmin} with login noinherit nocreaterole nocreatedb connection limit 10 password ${secret(passwords.storageAdmin)}`,
+    `alter role ${r.storageAdmin} with login noinherit nocreaterole nocreatedb connection limit 10 password ${scramSecret(r.storageAdmin, passwords.storageAdmin)}`,
     `grant anon, authenticated, service_role to ${r.storageAdmin}`,
     `alter role ${r.storageAdmin} set search_path = storage`,
     // Realtime: REPLICATION for the logical decoding of its own database only (CONNECT is per database, and pg_hba
     // has no "replication" line: no physical streaming of the cluster)
     ensureRole(r.realtime),
-    `alter role ${r.realtime} with login noinherit nocreaterole nocreatedb replication connection limit 10 password ${secret(passwords.realtime)}`,
+    `alter role ${r.realtime} with login noinherit nocreaterole nocreatedb replication connection limit 10 password ${scramSecret(r.realtime, passwords.realtime)}`,
     `grant anon, authenticated, service_role to ${r.realtime}`,
     `grant ${REALTIME_ADMIN_ROLE} to ${r.realtime} with inherit true`,
     // realtime.list_changes() is declared with SET log_min_messages (a superuser setting)
@@ -153,6 +218,7 @@ export function databaseGrantsSql(appId: string): string[] {
     `grant connect, temporary on database ${r.database} to ${r.authenticator}`,
     `grant connect on database ${r.database} to ${r.authAdmin}`,
     `grant connect on database ${r.database} to ${r.storageAdmin}, ${r.realtime}`,
+    `grant connect on database ${r.database} to ${PGRST_RELAY_ROLE}`,
     `grant all on database ${r.database} to ${r.owner}`,
   ];
 }

@@ -6,8 +6,9 @@
   "scripts": {
     "start": "node src/index.ts",
     "typecheck": "tsc --noEmit",
-    "e2e": "node --test --test-concurrency=1 test/e2e.test.ts test/ci.e2e.test.ts test/deploy-cli.e2e.test.ts test/plugin.e2e.test.ts test/admin.e2e.test.ts test/metrics.e2e.test.ts test/storage-realtime.e2e.test.ts",
+    "e2e": "node --test --test-concurrency=1 test/e2e.test.ts test/ci.e2e.test.ts test/deploy-cli.e2e.test.ts test/plugin.e2e.test.ts test/admin.e2e.test.ts test/metrics.e2e.test.ts test/storage-realtime.e2e.test.ts test/pooler.e2e.test.ts",
     "e2e:storage-realtime": "node --test --test-concurrency=1 test/storage-realtime.e2e.test.ts",
+    "e2e:pooler": "node --test --test-concurrency=1 test/pooler.e2e.test.ts",
     "e2e:deploy-cli": "node --test --test-concurrency=1 test/deploy-cli.e2e.test.ts",
     "e2e:plugin": "node --test --test-concurrency=1 test/plugin.e2e.test.ts",
     "test": "node --test test/studio-policy.test.ts test/login-limit.test.ts test/access-log.test.ts && ../../plugin/test/scripts.test.sh",

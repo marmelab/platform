@@ -27,6 +27,8 @@ import { CaddyRouter, type Router } from "./router.ts";
 import { lastRelease } from "./releases.ts";
 import { MultiHeadStudio, type StudioRegistry } from "./studio/registry.ts";
 import { deleteRealtime, deleteStorage, disconnectRealtime, registerRealtime, registerStorage } from "./storage-realtime.ts";
+import { killPoolerDatabase, poolerUrl, syncPooler } from "./pooler.ts";
+import { unwatchSchema, watchSchema } from "./pgrst-relay.ts";
 
 export const orchestrator: Orchestrator = new DockerOrchestrator();
 export const router: Router = new CaddyRouter();
@@ -255,7 +257,11 @@ async function startServices(slug: string, secrets: AppSecrets) {
     service: "postgrest",
     memoryMb: 256,
     env: {
-      PGRST_DB_URI: dbUrl(roles.authenticator, secrets.passwords.authenticator),
+      // through the pooler in transaction mode (README.md, "Connection pooler"): no prepared statements, and no LISTEN
+      // channel: the control plane relays the "pgrst" notifications as signals (pgrst-relay.ts)
+      PGRST_DB_URI: poolerUrl(roles.authenticator, secrets.passwords.authenticator, roles.database),
+      PGRST_DB_PREPARED_STATEMENTS: "false",
+      PGRST_DB_CHANNEL_ENABLED: "false",
       PGRST_DB_SCHEMAS: "public,graphql_public",
       PGRST_DB_ANON_ROLE: "anon",
       PGRST_DB_POOL: "3",
@@ -298,6 +304,7 @@ export async function provision(app: AppRow) {
     await ensurePasswords(app);
     const secrets = appSecrets(app);
     await provisionDatabase(app.slug, secrets);
+    await syncPooler();
     await startServices(app.slug, secrets);
     await prepareDirectories(app.slug);
     await writeEdgeConfig(app);
@@ -308,6 +315,7 @@ export async function provision(app: AppRow) {
     await registerStorage(app);
     await registerRealtime(app);
     await studio.register(app);
+    watchSchema(app.slug);
     await platform.query("update apps set status = 'running', error = null, updated_at = now() where id = $1", [app.id]);
   } catch (error) {
     await platform.query("update apps set status = 'error', error = $2, updated_at = now() where id = $1", [
@@ -353,6 +361,8 @@ export async function syncAll() {
     skipHosts: [config.apiHost, config.adminHost, config.studio.host],
   }).catch((error) => console.error("access log setup failed", error));
   const apps = await many<AppRow>("select * from apps where status in ('running', 'error', 'stopped')");
+  // the pooler may still be starting: its entries file is written anyway (read when it starts)
+  await syncPooler().catch((error) => console.error("pooler sync failed", error));
   for (const app of apps) {
     try {
       await prepareDirectories(app.slug);
@@ -365,6 +375,7 @@ export async function syncAll() {
         continue;
       }
       await router.upsertApp(app.slug);
+      if (app.status === "running") watchSchema(app.slug);
     } catch (error) {
       console.error(`sync ${app.slug} failed`, error);
     }
@@ -385,6 +396,8 @@ async function syncServiceTenants(apps: AppRow[], attempts = 30) {
       try {
         await ensurePasswords(app);
         await provisionDatabase(app.slug, appSecrets(app));
+        // containers whose settings changed (apps created before the pooler): recreated, as in provision()
+        await startServices(app.slug, appSecrets(app));
         await registerStorage(app);
         await registerRealtime(app);
       } catch (error) {
@@ -418,8 +431,9 @@ export async function pathExists(path: string) {
 }
 
 /**
- * B8: database-level `default_transaction_read_only` for a stopped app. Idempotent. When it turns on (or with
- * `terminate`), the sessions of the app's own roles are terminated so that their next session gets the setting.
+ * B8: database-level `default_transaction_read_only` for a stopped app. Idempotent. When it changes (or with
+ * `terminate`), the sessions of the app's own roles are terminated so that their next session gets the setting:
+ * this includes the pooler's server connections (same roles), which it opens again on demand.
  */
 export async function setDatabaseReadOnly(slug: string, readOnly: boolean, terminate = false) {
   const id = dbId(slug);
@@ -428,7 +442,7 @@ export async function setDatabaseReadOnly(slug: string, readOnly: boolean, termi
     if ((await c.query(databaseExistsSql, [roles.database])).rowCount !== 1) return;
     const current = (await c.query(databaseIsReadOnlySql, [roles.database])).rowCount === 1;
     if (current !== readOnly) await c.query(databaseReadOnlySql(id, readOnly));
-    if (readOnly && (terminate || !current)) {
+    if (terminate || current !== readOnly) {
       await c.query(terminateAppSessionsSql, [roles.database, appLoginRoles(roles)]);
     }
   });
@@ -445,6 +459,7 @@ export async function stopApp(actor: User | null, app: AppRow) {
   }
   await router.maintenanceApp(app.slug);
   await orchestrator.stopApp(app.slug);
+  await unwatchSchema(app.slug);
   // open websockets survive the route change: close them (clients that reconnect get the maintenance response)
   await disconnectRealtime(app.slug).catch((error) => console.error(`realtime disconnect of ${app.slug} failed`, error));
   await setDatabaseReadOnly(app.slug, true, true);
@@ -483,14 +498,19 @@ export async function deleteApp(actor: User | null, slug: string, { backup: with
   await router.removeApp(slug);
   await studio.unregister(slug);
   await orchestrator.removeApp(slug);
+  await unwatchSchema(slug);
   // the Realtime tenant first: its replication slot is dropped through the app database
   await deleteRealtime(slug);
   await deleteStorage(slug);
+  // Storage's pooled connections (and any other): closed before DROP DATABASE; the entry goes with the row below
+  await killPoolerDatabase(slug);
   await withAdmin("postgres", (c) => runAll(c, dropAppSql(dbId(slug))));
   await rm(join(config.dataDir.appsConfig, `${slug}.json`), { force: true });
   await rm(join(config.dataDir.sites, slug), { recursive: true, force: true });
   await rm(join(config.dataDir.functions, slug), { recursive: true, force: true });
   await platform.query("delete from apps where slug = $1", [slug]);
+  // the app's pooler entry goes (an unreachable pooler gets it at its next sync)
+  await syncPooler().catch((error) => console.error("pooler sync failed", error));
   return { slug, deleted: true, backup: backup?.path ?? null, backup_skipped: !withBackup };
 }
 

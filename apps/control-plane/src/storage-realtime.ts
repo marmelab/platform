@@ -25,6 +25,7 @@ import { type AppRow, appSecrets, dbId } from "./apps.ts";
 import { config } from "./config.ts";
 import { randomHex, signJwt } from "./crypto.ts";
 import { runAll, withAdmin } from "./db.ts";
+import { poolerUrl } from "./pooler.ts";
 
 const TIMEOUT = 30_000;
 
@@ -62,7 +63,10 @@ export async function registerStorage(app: AppRow) {
       anonKey: secrets.anon_key,
       serviceKey: secrets.service_role_key,
       jwtSecret: secrets.jwt_secret,
+      // migrations run on the direct URL; requests use the pooler (transaction mode: Storage then sets its
+      // search_path in each transaction)
       databaseUrl: dbUrl(roles.storageAdmin, secrets.passwords.storageAdmin, roles.database),
+      databasePoolUrl: poolerUrl(roles.storageAdmin, secrets.passwords.storageAdmin, roles.database),
       maxConnections: config.storage.maxConnections,
       fileSizeLimit: config.storage.fileSizeLimit,
       features: { imageTransformation: { enabled: false }, s3Protocol: { enabled: false } },

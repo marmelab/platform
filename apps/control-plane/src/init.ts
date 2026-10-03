@@ -1,5 +1,7 @@
 import {
   bootstrapSql,
+  pgrstRelayRoleSql,
+  poolerAuthSql,
   realtimeAdminRoleSql,
   serviceDatabaseRoleSql,
   platformSql,
@@ -12,6 +14,7 @@ import {
 } from "@platform/sql";
 import { config } from "./config.ts";
 import { runAll, withAdmin } from "./db.ts";
+import { pgrstRelayPassword } from "./pgrst-relay.ts";
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -106,6 +109,14 @@ async function ensureServiceDatabases() {
   await withAdmin("postgres", (c) => runAll(c, realtimeAdminRoleSql()));
 }
 
+/** Connection pooler (auth_query role and function) and PostgREST's schema reload relay (README.md, "Connection pooler"). */
+async function ensurePoolerRoles() {
+  await withAdmin("postgres", async (c) => {
+    await runAll(c, poolerAuthSql(config.pooler.authPassword));
+    await runAll(c, pgrstRelayRoleSql(pgrstRelayPassword()));
+  });
+}
+
 export async function initCluster() {
   await waitForPostgres();
   await withAdmin("postgres", (c) => c.query(bootstrapSql()));
@@ -114,4 +125,5 @@ export async function initCluster() {
   await ensurePlatformDb();
   await ensureStudioMetaDefault();
   await ensureServiceDatabases();
+  await ensurePoolerRoles();
 }

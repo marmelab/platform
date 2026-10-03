@@ -44,6 +44,9 @@ add_secret REALTIME_DB_PASSWORD 16
 add_secret REALTIME_API_JWT_SECRET 32
 add_secret REALTIME_DB_ENC_KEY 8
 add_secret REALTIME_SECRET_KEY_BASE 32
+# Connection pooler (apps/control-plane/README.md, "Connection pooler"): its auth_query role and its admin console user
+add_secret POOLER_AUTH_PASSWORD 16
+add_secret POOLER_ADMIN_PASSWORD 16
 # Local installs: builders may still deploy from their machine with their PAT (the e2e suites, the seed and the
 # deploy skill rely on it). Production installs should use DIRECT_DEPLOY=admins (publishing through CI only).
 grep -q '^DIRECT_DEPLOY=' .env || { echo "DIRECT_DEPLOY=everyone" >> .env; echo "DIRECT_DEPLOY=everyone written to deploy/.env"; }
