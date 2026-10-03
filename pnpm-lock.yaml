@@ -239,6 +239,9 @@ importers:
       '@platform/sql':
         specifier: workspace:*
         version: link:../../packages/sql
+      aws4fetch:
+        specifier: 1.0.20
+        version: 1.0.20
       dockerode:
         specifier: ^5.0.1
         version: 5.0.1

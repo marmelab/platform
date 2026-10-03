@@ -228,7 +228,8 @@ export async function loadDeployment(user: User, deploymentId: string) {
   return { deployment, app };
 }
 
-async function markLive(appId: string, kind: string, deploymentId: string) {
+/** Makes a deployment the live one of its kind (finalize, rollback, restore). */
+export async function markLive(appId: string, kind: string, deploymentId: string) {
   await platform.query(
     "update deployments set status = 'ready' where app_id = $1 and kind = $2 and status = 'live' and id <> $3",
     [appId, kind, deploymentId],

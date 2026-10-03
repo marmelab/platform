@@ -17,7 +17,7 @@ import {
 import { type AppInfo, SLUG_RE } from "@platform/shared";
 import { audit } from "./audit.ts";
 import type { User } from "./auth.ts";
-import { backupApp } from "./backups.ts";
+import { takeBackup } from "./backups.ts";
 import { appUrl, config, internalAppUrl } from "./config.ts";
 import { decrypt, encrypt, randomHex, signJwt } from "./crypto.ts";
 import { many, one, platform, runAll, withAdmin } from "./db.ts";
@@ -87,7 +87,7 @@ export const dbId = (slug: string) => slug.replace(/-/g, "_");
 export const appSecrets = (app: AppRow): AppSecrets => JSON.parse(decrypt(app.secrets_enc));
 export const containerName = (slug: string, service: "auth" | "rest") => `${config.docker.prefix}-${slug}-${service}`;
 
-function generateSecrets(slug: string): AppSecrets {
+export function generateSecrets(slug: string): AppSecrets {
   const jwtSecret = randomHex(32);
   const iat = Math.floor(Date.now() / 1000);
   const exp = iat + 10 * 365 * 24 * 3600;
@@ -529,17 +529,25 @@ export async function startApp(actor: User | null, app: AppRow) {
 
 /**
  * Symmetric of provision(): routes, containers, database and roles, files, rows. A final backup is taken first
- * (backups.ts); if it fails, nothing is deleted. `backup: false` skips it (the data is then lost for good). Audited,
- * with the backup path, or `backup: null` and `backup_skipped: true` (audit_log.app_id becomes null when the row goes
- * away: the slug stays in the details).
+ * (backups.ts, kind "final"); if it fails, nothing is deleted. `backup: false` skips it (the data is then lost for
+ * good). Audited, with the backup's location and id, or `backup: null` and `backup_skipped: true` (audit_log.app_id
+ * becomes null when the row goes away: the slug stays in the details).
  */
 export async function deleteApp(actor: User | null, slug: string, { backup: withBackup = true } = {}) {
-  const app = await one<AppRow>("select * from apps where slug = $1", [slug]);
-  const backup = withBackup ? await backupApp(slug, app) : null;
+  const app = (await one<AppRow>("select * from apps where slug = $1", [slug])) ?? null;
+  let backup: Awaited<ReturnType<typeof takeBackup>> = null;
+  if (withBackup) {
+    try {
+      backup = await takeBackup(slug, "final", { actor, app });
+    } catch (error) {
+      throw new Error(`${error instanceof Error ? error.message : error}: nothing was deleted`);
+    }
+  }
   await audit(actor?.id ?? null, app?.id ?? null, "delete_app", {
     slug,
     status: app?.status ?? null,
-    backup: backup?.path ?? null,
+    backup: backup?.location ?? null,
+    backup_id: backup?.id ?? null,
     backup_files: backup?.files ?? null,
     backup_skipped: !withBackup,
   });
@@ -559,7 +567,7 @@ export async function deleteApp(actor: User | null, slug: string, { backup: with
   await platform.query("delete from apps where slug = $1", [slug]);
   // the app's pooler entry goes (an unreachable pooler gets it at its next sync)
   await syncPooler().catch((error) => console.error("pooler sync failed", error));
-  return { slug, deleted: true, backup: backup?.path ?? null, backup_skipped: !withBackup };
+  return { slug, deleted: true, backup: backup?.location ?? null, backup_id: backup?.id ?? null, backup_skipped: !withBackup };
 }
 
 /** B8 through MCP: destructive, so the caller must repeat the slug. */

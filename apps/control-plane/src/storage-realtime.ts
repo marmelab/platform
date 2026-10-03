@@ -25,6 +25,7 @@ import { type AppRow, appSecrets, dbId } from "./apps.ts";
 import { config } from "./config.ts";
 import { randomHex, signJwt } from "./crypto.ts";
 import { runAll, withAdmin } from "./db.ts";
+import type { Orchestrator } from "./orchestrator.ts";
 import { poolerUrl } from "./pooler.ts";
 
 const TIMEOUT = 30_000;
@@ -76,6 +77,51 @@ export async function registerStorage(app: AppRow) {
   const status = (body as { migrationsStatus?: string } | null)?.migrationsStatus;
   if (status !== "COMPLETED") throw new Error(`storage migrations of ${app.slug} not completed: ${JSON.stringify(body)}`);
 }
+
+/**
+ * Storage's file backend keeps each object's content type and cache control in extended attributes (`user.supabase.*`),
+ * which tar archives do not carry: backups save them as JSON (relative path -> attribute -> base64 value) and restores
+ * put them back, through Storage's own fs-xattr module in the Storage container (Node has no xattr API).
+ */
+const XATTR_MODULE = "/app/node_modules/fs-xattr/index.js";
+const READ_XATTRS = `import { getAttributeSync, listAttributesSync } from "${XATTR_MODULE}";
+import { readdirSync } from "node:fs"; import { join, relative } from "node:path";
+const root = process.argv[1]; const out = {};
+const walk = (dir) => { for (const e of readdirSync(dir, { withFileTypes: true })) { const f = join(dir, e.name);
+  if (e.isDirectory()) walk(f);
+  else if (e.isFile()) { const a = {}; for (const k of listAttributesSync(f)) if (k.startsWith("user.")) a[k] = getAttributeSync(f, k).toString("base64");
+    if (Object.keys(a).length) out[relative(root, f)] = a; } } };
+walk(root); process.stdout.write(JSON.stringify(out));`;
+const WRITE_XATTRS = `import { setAttributeSync } from "${XATTR_MODULE}";
+import { readFileSync } from "node:fs"; import { join } from "node:path";
+const [root, file] = process.argv.slice(1); let n = 0;
+for (const [rel, attrs] of Object.entries(JSON.parse(readFileSync(file, "utf8")))) {
+  if (rel.split("/").includes("..")) continue;
+  for (const [k, v] of Object.entries(attrs)) if (k.startsWith("user.")) { setAttributeSync(join(root, rel), k, Buffer.from(v, "base64")); n++; } }
+process.stdout.write(String(n));`;
+
+const storageContainerDir = (slug: string) => `${config.storage.containerDataDir}/${config.storage.bucket}/${slug}`;
+
+/** Writes the extended attributes of the app's Storage files into `file` (JSON). */
+export async function saveStorageXattrs(slug: string, file: string, exec: Exec) {
+  await exec.execToFile(config.storage.container, ["node", "--input-type=module", "-e", READ_XATTRS, storageContainerDir(slug)], {}, file);
+}
+
+/** Applies the attributes saved by saveStorageXattrs (`dir`/`name`) to the app's restored files; returns their count. */
+export async function restoreStorageXattrs(slug: string, dir: string, name: string, exec: Exec) {
+  const remote = `/tmp/platform-xattrs-${randomHex(6)}`;
+  await exec.exec(config.storage.container, ["mkdir", "-m", "700", remote]);
+  try {
+    await exec.copyTo(config.storage.container, dir, [name], remote);
+    const out = await exec.exec(config.storage.container,
+      ["node", "--input-type=module", "-e", WRITE_XATTRS, storageContainerDir(slug), `${remote}/${name}`]);
+    return Number(out.trim());
+  } finally {
+    await exec.exec(config.storage.container, ["rm", "-rf", remote]).catch(() => {});
+  }
+}
+
+type Exec = Pick<Orchestrator, "exec" | "execToFile" | "copyTo">;
 
 /** Removes the tenant and its files. Idempotent. */
 export async function deleteStorage(slug: string) {

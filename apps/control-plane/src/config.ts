@@ -53,6 +53,12 @@ export const config = {
     dataDir: env("STORAGE_DATA_DIR", "/data/storage"),
     bucket: env("STORAGE_BUCKET", "tenants"),
     fileSizeLimit: Number(env("STORAGE_FILE_SIZE_LIMIT", String(50 * 1024 * 1024))),
+    /**
+     * The Storage container and its file backend path (FILE_STORAGE_BACKEND_PATH): backups read and restore the
+     * files' extended attributes (content type, cache control) there, with Storage's own fs-xattr module.
+     */
+    container: env("STORAGE_CONTAINER", "plat-storage"),
+    containerDataDir: env("STORAGE_CONTAINER_DATA_DIR", "/var/lib/storage"),
     /** Postgres connections of Storage's pool per app (freed after a minute without requests). */
     maxConnections: Number(env("STORAGE_TENANT_MAX_CONNECTIONS", "3")),
   },
@@ -85,7 +91,10 @@ export const config = {
     functions: env("FUNCTIONS_DIR", "/data/functions"),
     appsConfig: env("APPS_CONFIG_DIR", "/data/config/apps"),
     uploads: env("UPLOADS_DIR", "/data/uploads"),
-    /** Final backups taken by delete_app (B8): <backups>/<slug>-<timestamp>/. Restore and retention: M7. */
+    /**
+     * Backups (M7, backups.ts): <backups>/<slug>-<timestamp>/, kept here when no S3 target is configured; with S3, the
+     * staging area of backups being taken or restored.
+     */
     backups: env("BACKUPS_DIR", "/data/backups"),
   },
   /** Caddy's access log of the app hosts (metrics.ts): the file as Caddy writes it, and as the control plane reads it. */
@@ -93,6 +102,8 @@ export const config = {
     caddyPath: env("CADDY_ACCESS_LOG", "/var/log/caddy/access.log"),
     path: env("ACCESS_LOG", "/data/caddy-logs/access.log"),
   },
+  /** Seconds between two checks of the backup scheduler (is today's run due?). */
+  backupCheckIntervalSeconds: Number(env("BACKUP_CHECK_INTERVAL_SECONDS", "300")),
   /** Seconds between two metrics samples (app_metrics). */
   metricsIntervalSeconds: Number(env("METRICS_INTERVAL_SECONDS", "60")),
   /** Paths as seen by Caddy / the edge runtime (named volumes mounted elsewhere). */
@@ -151,6 +162,20 @@ export const config = {
     ssoRequireVerifiedEmail: optional("SSO_REQUIRE_VERIFIED_EMAIL") ?? "true",
     ssoAutoCreate: optional("SSO_AUTO_CREATE") ?? "off",
     ssoPasswordLogin: optional("SSO_PASSWORD_LOGIN") ?? "everyone",
+    /** Backups (M7, backups.ts): daily at BACKUP_HOUR (UTC), on the backups volume unless the S3 target is set. */
+    backupEnabled: optional("BACKUP_ENABLED") ?? "true",
+    backupHour: optional("BACKUP_HOUR") ?? "2",
+    backupKeepDaily: optional("BACKUP_KEEP_DAILY") ?? "7",
+    backupKeepWeekly: optional("BACKUP_KEEP_WEEKLY") ?? "4",
+    backupManualRetentionDays: optional("BACKUP_MANUAL_RETENTION_DAYS") ?? "30",
+    backupFinalRetentionDays: optional("BACKUP_FINAL_RETENTION_DAYS") ?? "90",
+    backupS3Endpoint: optional("BACKUP_S3_ENDPOINT") ?? "",
+    backupS3Bucket: optional("BACKUP_S3_BUCKET") ?? "",
+    backupS3Region: optional("BACKUP_S3_REGION") ?? "us-east-1",
+    backupS3AccessKeyId: optional("BACKUP_S3_ACCESS_KEY_ID") ?? "",
+    backupS3SecretAccessKey: optional("BACKUP_S3_SECRET_ACCESS_KEY") ?? "",
+    backupS3Prefix: optional("BACKUP_S3_PREFIX") ?? "",
+    backupS3PathStyle: optional("BACKUP_S3_PATH_STYLE") ?? "true",
   },
   /**
    * Local installs only (written by deploy/install.sh, never in production): the mock IdP of the dev stack (`idp`
