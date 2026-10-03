@@ -13,6 +13,10 @@ export interface ServiceSpec {
   env: Record<string, string>;
   cmd?: string[];
   memoryMb: number;
+  /** Networks joined besides config.docker.network. */
+  networks?: string[];
+  /** Named volumes, mounted read-only. */
+  volumes?: { source: string; target: string }[];
 }
 
 export interface ContainerStatus {
@@ -114,8 +118,10 @@ export class DockerOrchestrator implements Orchestrator {
         NetworkMode: config.docker.network,
         Memory: spec.memoryMb * 1024 * 1024,
         RestartPolicy: { Name: "unless-stopped" },
+        Mounts: spec.volumes?.map((v) => ({ Type: "volume" as const, Source: v.source, Target: v.target, ReadOnly: true })),
       },
     });
+    for (const network of spec.networks ?? []) await this.docker.getNetwork(network).connect({ Container: container.id });
     await container.start();
   }
 

@@ -23,7 +23,9 @@ import { githubServerUrl } from "../oidc.ts";
 import { listSchemaChanges, schemaDrift } from "../schema-changes.ts";
 import { listSecrets } from "../secrets.ts";
 import { MIN_PASSWORD_LENGTH, setPassword } from "../sessions.ts";
-import { getSettings } from "../settings.ts";
+import { getSettings, setSetting, SSO_PROVIDER_KEYS, ssoActive, ssoSummary, unsetSetting, validateSetting } from "../settings.ts";
+import { syncCompanySso } from "../app-sso.ts";
+import { discover, ssoCallbackUrl, SsoError } from "../sso.ts";
 import { errorResponse, HttpError, includes, listInMemory, type ListParams, listParams, page, truthy } from "./rest.ts";
 
 export type AdminEnv = { Variables: { admin: User } };
@@ -49,6 +51,7 @@ interface UserRecord extends Record<string, unknown> {
   name: string | null;
   role: "admin" | "developer";
   active: boolean;
+  sso_linked: boolean;
 }
 
 const USERS_SQL = `
@@ -59,7 +62,8 @@ const USERS_SQL = `
     (select count(*)::int from tokens t where t.user_id = u.id and t.revoked_at is null
       and (t.expires_at is null or t.expires_at > now())) as active_token_count,
     (select max(t.last_used_at) from tokens t where t.user_id = u.id) as last_token_use,
-    (select max(s.created_at) from sessions s where s.user_id = u.id) as last_login
+    (select max(s.created_at) from sessions s where s.user_id = u.id) as last_login,
+    u.sso_subject is not null as sso_linked
   from users u`;
 
 async function userRecord(id: string) {
@@ -115,7 +119,10 @@ adminApi.post("/users", async (c) => {
   return c.json({ ...(await userRecord(created.id)), welcome_email_sent: welcome }, 201);
 });
 
-function sendWelcome(email: string, role: "admin" | "developer") {
+async function sendWelcome(email: string, role: "admin" | "developer") {
+  const { sso } = await getSettings();
+  const ssoLogin = ssoActive(sso);
+  const passwordToo = !ssoLogin || sso.passwordLogin === "everyone" || role === "admin";
   return sendPlatformMail({
     to: [email],
     subject: "Your account on the app platform",
@@ -126,10 +133,10 @@ function sendWelcome(email: string, role: "admin" | "developer") {
       "",
       "- Build and deploy apps with Claude Code: install the platform plugin, then set the personal access token " +
       "your admin gives you (PLATFORM_TOKEN).",
-      `- Inspect your apps' data in Studio: ${studioUrl()} (sign in with this email and the password your admin gives you).`,
+      `- Inspect your apps' data in Studio: ${studioUrl()} (sign in ${ssoLogin ? `with ${sso.name}${passwordToo ? ", or with this email and the password your admin gives you" : ""}` : "with this email and the password your admin gives you"}).`,
       ...(role === "admin" ? [`- Administration console: ${adminUrl()}`] : []),
       "",
-      "Your admin gives you your password and token over a private channel: they are never sent by email.",
+      `Your admin gives you your ${passwordToo ? "password and " : ""}token over a private channel: they are never sent by email.`,
     ].join("\n"),
   });
 }
@@ -143,6 +150,8 @@ adminApi.put("/users/:id", async (c) => {
     role: role.optional(),
     active: z.boolean().optional(),
     password: z.union([password, z.literal("")]).nullish(),
+    /** false unlinks the account from its SSO identity (the next SSO login links it again, by email) */
+    sso_linked: z.boolean().optional(),
   }));
   const self = before.id === admin.id;
   if (self && input.role && input.role !== before.role) throw new HttpError(400, "you cannot change your own role");
@@ -170,6 +179,10 @@ adminApi.put("/users/:id", async (c) => {
   if (input.password) {
     await setPassword(before.email, input.password);
     await audit(admin.id, null, "set_password", { email: before.email });
+  }
+  if (input.sso_linked === false && before.sso_linked) {
+    await platform.query("update users set sso_issuer = null, sso_subject = null where id = $1", [before.id]);
+    await audit(admin.id, null, "unlink_sso", { email: before.email });
   }
   return c.json(await userRecord(before.id));
 });
@@ -733,6 +746,95 @@ adminApi.get("/audit_log/:id", async (c) => {
   );
   if (!row) throw new HttpError(404, "audit entry not found");
   return c.json(row);
+});
+
+// ---------------------------------------------------------------------------------------------------------------
+// company SSO (M6 part 2, A7): the OIDC provider of the platform's logins and of the apps' "custom:company" provider
+
+async function ssoRecord() {
+  const { sso } = await getSettings();
+  const apps = await one<{ n: number }>(
+    `select count(*)::int as n from app_auth_config c join apps a on a.id = c.app_id
+      where c.sso_provider = 'company' and a.status <> 'deleted'`,
+  );
+  return {
+    ...ssoSummary(sso),
+    /** Redirect URIs to register at the IdP for the platform's client. */
+    redirect_uris: { studio: ssoCallbackUrl("studio"), admin: ssoCallbackUrl("admin"), apps: `${appUrl("<app>")}/auth/v1/callback` },
+    apps_using_sso: apps?.n ?? 0,
+  };
+}
+
+adminApi.get("/sso", async (c) => c.json(await ssoRecord()));
+
+const ssoInput = z.object({
+  enabled: z.boolean().optional(),
+  name: z.string().trim().min(1).max(60).optional(),
+  issuer: z.string().trim().max(500).optional(),
+  /** empty or null: <issuer>/.well-known/openid-configuration */
+  discovery_url: z.string().trim().max(500).nullish(),
+  client_id: z.string().trim().max(500).optional(),
+  /** empty or absent: unchanged (it is never returned) */
+  client_secret: z.string().max(2000).nullish(),
+  allowed_domains: z.array(z.string().trim().max(253)).max(50).optional(),
+  require_verified_email: z.boolean().optional(),
+  auto_create: z.enum(["off", "developer"]).optional(),
+  password_login: z.enum(["everyone", "admins"]).optional(),
+});
+
+adminApi.put("/sso", async (c) => {
+  const admin = c.get("admin");
+  const input = await body(c, ssoInput);
+  // new values of the settings rows; null: back to the environment's default
+  const rows: Record<string, string | null> = {};
+  if (input.enabled !== undefined) rows.sso_enabled = String(input.enabled);
+  if (input.name !== undefined) rows.sso_name = input.name;
+  if (input.issuer !== undefined) rows.sso_issuer = input.issuer;
+  if (input.discovery_url !== undefined) rows.sso_discovery_url = input.discovery_url || null;
+  if (input.client_id !== undefined) rows.sso_client_id = input.client_id;
+  if (input.client_secret) rows.sso_client_secret = input.client_secret;
+  if (input.allowed_domains !== undefined) rows.sso_allowed_domains = input.allowed_domains.join(",");
+  if (input.require_verified_email !== undefined) rows.sso_require_verified_email = String(input.require_verified_email);
+  if (input.auto_create !== undefined) rows.sso_auto_create = input.auto_create;
+  if (input.password_login !== undefined) rows.sso_password_login = input.password_login;
+  for (const [key, value] of Object.entries(rows)) {
+    try {
+      if (value !== null) validateSetting(key, value);
+    } catch (error) {
+      throw new HttpError(400, (error as Error).message);
+    }
+  }
+  // write, then check the result: an active configuration must answer with a matching discovery document, otherwise
+  // the previous rows are put back
+  const saved = await many<{ key: string; value: string }>("select key, value from settings where key like 'sso\\_%'");
+  const changed: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(rows)) {
+    if (value === null) await unsetSetting(key);
+    else await setSetting(key, value);
+    changed[key] = key === "sso_client_secret" ? "(changed)" : value;
+  }
+  const { sso: next } = await getSettings();
+  let refusal: string | null = null;
+  if (next.enabled && !next.configured) refusal = "to enable SSO, set the issuer, the client id and the client secret";
+  else if (next.enabled) {
+    await discover(next, { fresh: true }).catch((error) => {
+      if (!(error instanceof SsoError)) throw error;
+      refusal = error.message;
+    });
+  }
+  if (refusal) {
+    await transaction(async (tx) => {
+      await tx.query("delete from settings where key like 'sso\\_%'");
+      for (const row of saved) await tx.query("insert into settings (key, value) values ($1, $2)", [row.key, row.value]);
+    });
+    throw new HttpError(400, refusal);
+  }
+  await audit(admin.id, null, "update_sso", { changes: changed });
+  // the apps' "custom:company" provider follows the provider settings (removed when SSO is turned off)
+  const appsSync = Object.keys(rows).some((key) => SSO_PROVIDER_KEYS.includes(key) || key === "sso_discovery_url")
+    ? await syncCompanySso()
+    : null;
+  return c.json({ ...(await ssoRecord()), apps_sync: appsSync });
 });
 
 // ---------------------------------------------------------------------------------------------------------------

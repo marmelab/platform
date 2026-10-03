@@ -327,7 +327,9 @@ export function buildMcpServer(user: User): McpServer {
       description: "Change the app's auth policy (owner or admin only, audited; refused on a stopped app). Only the " +
         "fields passed change: signup_enabled, email_confirmation, allowed_email_domains (sign-up and invitations " +
         "restricted to these domains), redirect_urls (extra allowed redirects, e.g. a local dev server), " +
-        "sender_name / sender_email (sender of the app's emails). The app's Auth service restarts (a few seconds). " +
+        "sender_name / sender_email (sender of the app's emails), sso ({provider: 'company'}: sign-in with the " +
+        "company SSO, provider \"custom:company\" in supabase-js; its callback_url must be registered at the identity " +
+        "provider by the admin). The app's Auth service restarts (a few seconds). " +
         "Returns the policy in effect (also in get_app).",
       inputSchema: t.configure_auth,
     },

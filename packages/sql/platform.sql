@@ -200,3 +200,19 @@ create table if not exists app_auth_config (
 -- M6, A6: when the owners were emailed that the app is abandoned; cleared when the app is active again, so that the
 -- next abandonment is notified once more
 alter table apps add column if not exists abandoned_notified_at timestamptz;
+
+-- M6 part 2, platform company SSO (A7, sso.ts): the IdP identity linked to an account at its first SSO login (by
+-- verified email), so that a later login with the same email but another subject is refused
+alter table users add column if not exists sso_issuer text;
+alter table users add column if not exists sso_subject text;
+create unique index if not exists users_sso_identity on users (sso_issuer, sso_subject) where sso_subject is not null;
+
+-- M6 part 2, company SSO for an app's users (U2, app-sso.ts): 'company' adds the platform's OIDC provider to the app's
+-- GoTrue as the custom provider "custom:company"
+alter table app_auth_config add column if not exists sso_provider text;
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conname = 'app_auth_config_sso_provider_check') then
+    alter table app_auth_config add constraint app_auth_config_sso_provider_check check (sso_provider in ('company'));
+  end if;
+end $$;

@@ -17,6 +17,7 @@ import { authenticate, type User } from "../auth.ts";
 import { adminUrl, config } from "../config.ts";
 import { TooManyAttempts } from "../login-limit.ts";
 import { createSession, logout, SESSION_COOKIE, throttledCredentials, userForSession } from "../sessions.ts";
+import { finishSsoLogin, SSO_COOKIE, SSO_PENDING_SECONDS, ssoCookiePath, SsoError, ssoLoginOptions, startSsoLogin } from "../sso.ts";
 import { type AdminEnv, adminApi } from "./api.ts";
 import { errorResponse, HttpError } from "./rest.ts";
 
@@ -75,6 +76,49 @@ adminSite.post("/api/auth/login", async (c) => {
     maxAge: config.sessionTtlSeconds,
   });
   return c.json(identity(user));
+});
+
+// Company SSO (M6 part 2, sso.ts). The login page asks whether to show the button; the button is a plain link to
+// /start (a top-level navigation), and the IdP redirects back to /callback, which opens the session and goes to the
+// SPA. Errors go back to the login page in the query string (?sso_error=...).
+adminSite.get("/api/auth/sso", async (c) => c.json(await ssoLoginOptions()));
+
+const ssoFailure = (c: Context, message: string) => c.redirect(`/?sso_error=${encodeURIComponent(message)}#/login`, 303);
+
+adminSite.get("/api/auth/sso/start", async (c) => {
+  try {
+    const { url, cookie } = await startSsoLogin("admin", "/");
+    setCookie(c, SSO_COOKIE, cookie, {
+      httpOnly: true,
+      sameSite: "Lax", // sent back on the IdP's top-level redirect to the callback
+      secure: secure(),
+      path: ssoCookiePath("admin"),
+      maxAge: SSO_PENDING_SECONDS,
+    });
+    return c.redirect(url, 302);
+  } catch (error) {
+    if (!(error instanceof SsoError)) throw error;
+    return ssoFailure(c, error.message);
+  }
+});
+
+adminSite.get("/api/auth/sso/callback", async (c) => {
+  const cookie = getCookie(c, SSO_COOKIE);
+  deleteCookie(c, SSO_COOKIE, { path: ssoCookiePath("admin"), secure: secure() });
+  try {
+    const { user } = await finishSsoLogin("admin", c.req.query(), cookie);
+    setCookie(c, SESSION_COOKIE, await createSession(user.id), {
+      httpOnly: true,
+      sameSite: "Strict",
+      secure: secure(),
+      path: "/",
+      maxAge: config.sessionTtlSeconds,
+    });
+    return c.redirect("/", 303);
+  } catch (error) {
+    if (!(error instanceof SsoError)) throw error;
+    return ssoFailure(c, error.message);
+  }
 });
 
 adminSite.post("/api/auth/logout", async (c) => {

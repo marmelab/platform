@@ -141,6 +141,9 @@ export const toolInputs = {
       .describe("Sender name of the app's emails; null: the app's name"),
     sender_email: z.string().max(254).nullable().optional()
       .describe("Sender address; must be in the platform sender's domain (admins: any); null: the platform sender"),
+    sso: z.object({ provider: z.literal("company") }).nullable().optional()
+      .describe("{provider: \"company\"}: the app's users sign in with the company SSO configured by the platform " +
+        "admin (supabase.auth.signInWithOAuth({ provider: \"custom:company\" })); null removes it"),
   },
   get_logs: {
     app: slug,

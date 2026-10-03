@@ -8,7 +8,8 @@ import { audit } from "./audit.ts";
 import type { User } from "./auth.ts";
 import { appUrl } from "./config.ts";
 import { one, withAdmin } from "./db.ts";
-import { getSettings } from "./settings.ts";
+import { companySso, ensureCompanySso } from "./app-sso.ts";
+import { getSettings, ssoActive } from "./settings.ts";
 import {
   type AuthConfig,
   authHookSql,
@@ -29,7 +30,8 @@ export const policyApp = (app: Pick<AppRow, "slug" | "name">): PolicyApp => ({ s
 
 export async function authConfig(app: Pick<AppRow, "id">): Promise<AuthConfig> {
   const row = await one<AuthConfig>(
-    `select signup_enabled, email_confirmation, allowed_email_domains, redirect_urls, sender_name, sender_email, updated_at
+    `select signup_enabled, email_confirmation, allowed_email_domains, redirect_urls, sender_name, sender_email,
+       sso_provider, updated_at
        from app_auth_config where app_id = $1`,
     [app.id],
   );
@@ -44,7 +46,8 @@ export async function ensureAuthHook(app: Pick<AppRow, "slug">, auth: AuthConfig
 }
 
 export async function appAuthView(app: Pick<AppRow, "id" | "name" | "slug">) {
-  return authView(policyApp(app), await authConfig(app), (await getSettings()).smtp);
+  const { smtp, sso } = await getSettings();
+  return authView(policyApp(app), await authConfig(app), smtp, companySso(sso));
 }
 
 export interface AuthChanges {
@@ -54,6 +57,8 @@ export interface AuthChanges {
   redirect_urls?: string[];
   sender_name?: string | null;
   sender_email?: string | null;
+  /** M6 part 2 (U2): the platform's company SSO for the app's users, or null to remove it. */
+  sso?: { provider: "company" } | null;
 }
 
 const domainOf = (email: string) => email.slice(email.lastIndexOf("@") + 1).toLowerCase();
@@ -64,7 +69,7 @@ const domainOf = (email: string) => email.slice(email.lastIndexOf("@") + 1).toLo
  */
 export async function configureAuth(actor: User, app: AppRow, input: AuthChanges) {
   requireWritable(app, "configure_auth");
-  const { smtp } = await getSettings();
+  const { smtp, sso } = await getSettings();
   const before = await authConfig(app);
   const next: AuthConfig = { ...before };
   const warnings: string[] = [];
@@ -104,6 +109,13 @@ export async function configureAuth(actor: User, app: AppRow, input: AuthChanges
     next.sender_email = email;
   }
 
+  if (input.sso !== undefined) {
+    next.sso_provider = input.sso === null ? null : input.sso.provider;
+    if (next.sso_provider === "company" && !ssoActive(sso)) {
+      throw new UserError("the platform has no company SSO: an admin configures it in the admin console (SSO)");
+    }
+  }
+
   if (!smtp) {
     if (next.email_confirmation) {
       warnings.push("the platform has no SMTP: users are confirmed automatically until an admin configures it");
@@ -113,29 +125,32 @@ export async function configureAuth(actor: User, app: AppRow, input: AuthChanges
     }
   }
 
-  const fields = ["signup_enabled", "email_confirmation", "allowed_email_domains", "redirect_urls", "sender_name", "sender_email"] as const;
+  const fields = ["signup_enabled", "email_confirmation", "allowed_email_domains", "redirect_urls", "sender_name", "sender_email",
+    "sso_provider"] as const;
   const changes: Record<string, { from: unknown; to: unknown }> = {};
   for (const f of fields) {
     if (JSON.stringify(before[f]) !== JSON.stringify(next[f])) changes[f] = { from: before[f], to: next[f] };
   }
   if (Object.keys(changes).length === 0) {
-    return { app: app.slug, changed: false, auth: authView(policyApp(app), before, smtp), warnings };
+    return { app: app.slug, changed: false, auth: authView(policyApp(app), before, smtp, companySso(sso)), warnings };
   }
 
   const saved = await one<AuthConfig>(
     `insert into app_auth_config (app_id, signup_enabled, email_confirmation, allowed_email_domains, redirect_urls,
-       sender_name, sender_email, updated_by)
-     values ($1, $2, $3, $4, $5, $6, $7, $8)
+       sender_name, sender_email, sso_provider, updated_by)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
      on conflict (app_id) do update set signup_enabled = excluded.signup_enabled,
        email_confirmation = excluded.email_confirmation, allowed_email_domains = excluded.allowed_email_domains,
        redirect_urls = excluded.redirect_urls, sender_name = excluded.sender_name, sender_email = excluded.sender_email,
-       updated_by = excluded.updated_by, updated_at = now()
-     returning signup_enabled, email_confirmation, allowed_email_domains, redirect_urls, sender_name, sender_email, updated_at`,
+       sso_provider = excluded.sso_provider, updated_by = excluded.updated_by, updated_at = now()
+     returning signup_enabled, email_confirmation, allowed_email_domains, redirect_urls, sender_name, sender_email,
+       sso_provider, updated_at`,
     [app.id, next.signup_enabled, next.email_confirmation, next.allowed_email_domains, next.redirect_urls,
-      next.sender_name, next.sender_email, actor.id],
+      next.sender_name, next.sender_email, next.sso_provider, actor.id],
   );
   await ensureAuthHook(app, saved!);
   await ensureAuthService(app);
+  if (changes.sso_provider) await ensureCompanySso(app, saved!.sso_provider);
   await audit(actor.id, app.id, "configure_auth", { changes });
-  return { app: app.slug, changed: true, auth: authView(policyApp(app), saved!, smtp), warnings };
+  return { app: app.slug, changed: true, auth: authView(policyApp(app), saved!, smtp, companySso(sso)), warnings };
 }

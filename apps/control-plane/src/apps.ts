@@ -30,6 +30,7 @@ import { deleteRealtime, deleteStorage, disconnectRealtime, registerRealtime, re
 import { killPoolerDatabase, poolerUrl, syncPooler } from "./pooler.ts";
 import { unwatchSchema, watchSchema } from "./pgrst-relay.ts";
 import { authConfig, authEnv, ensureAuthHook, policyApp } from "./app-auth.ts";
+import { ensureCompanySso } from "./app-sso.ts";
 import { getSettings } from "./settings.ts";
 import type { ServiceSpec } from "./orchestrator.ts";
 
@@ -254,9 +255,16 @@ async function authServiceSpec(app: AppRow, secrets: AppSecrets): Promise<Servic
       GOTRUE_EXTERNAL_PHONE_ENABLED: "false",
       // site URL, redirect allow list, sign-up, confirmation, SMTP, link paths, allowed domains hook
       ...authEnv(policyApp(app), auth, smtp),
+      // local installs only (config.ssoTest): trust the mock IdP's CA besides the system ones
+      ...(config.ssoTest.caVolume ? { SSL_CERT_DIR: `/etc/ssl/certs:${SSO_TEST_CA_DIR}` } : {}),
     },
+    ...(config.ssoTest.network ? { networks: [config.ssoTest.network] } : {}),
+    ...(config.ssoTest.caVolume ? { volumes: [{ source: config.ssoTest.caVolume, target: SSO_TEST_CA_DIR }] } : {}),
   };
 }
+
+/** Where the mock IdP's CA is mounted in the apps' GoTrue on local installs (config.ssoTest). */
+const SSO_TEST_CA_DIR = "/etc/platform-test-ca";
 
 /** Recreates the app's GoTrue if its environment changed (configure_auth, SMTP settings), and waits for it. */
 export async function ensureAuthService(app: AppRow) {
@@ -329,6 +337,8 @@ export async function provision(app: AppRow) {
     await router.upsertApp(app.slug);
     await waitHealthy(`http://${containerName(app.slug, "auth")}:9999/health`);
     await waitHealthy(`http://${containerName(app.slug, "rest")}:3000/`);
+    // company SSO (U2): an unreachable IdP must not prevent the app from starting
+    await ensureCompanySso(app).catch((error) => console.error(`company SSO of ${app.slug} failed`, error));
     // after GoTrue's migrations: Storage's and Realtime's run in the same database
     await registerStorage(app);
     await registerRealtime(app);
@@ -434,6 +444,8 @@ async function syncServiceTenants(apps: AppRow[], attempts = 30) {
         await provisionDatabase(app.slug, appSecrets(app));
         // containers whose settings changed (apps created before the pooler): recreated, as in provision()
         await startServices(app, appSecrets(app));
+        await waitHealthy(`http://${containerName(app.slug, "auth")}:9999/health`);
+        await ensureCompanySso(app).catch((error) => console.error(`company SSO of ${app.slug} failed`, error));
         await registerStorage(app);
         await registerRealtime(app);
       } catch (error) {
