@@ -1,0 +1,72 @@
+diff --git a/config/runtime.exs b/config/runtime.exs
+index e046421..0045424 100644
+--- a/config/runtime.exs
++++ b/config/runtime.exs
+@@ -128,6 +128,7 @@ request_id_baggage_key = System.get_env("REQUEST_ID_BAGGAGE_KEY", "request-id")
+ rpc_timeout = Env.get_integer("RPC_TIMEOUT", :timer.seconds(30))
+ run_janitor = Env.get_boolean("RUN_JANITOR", false)
+ slot_name_suffix = System.get_env("SLOT_NAME_SUFFIX")
++slot_name_per_tenant = Env.get_boolean("SLOT_NAME_PER_TENANT", false)
+ tenant_cache_expiration_in_ms = Env.get_integer("TENANT_CACHE_EXPIRATION_IN_MS", :timer.seconds(30))
+ tenant_max_bytes_per_second = Env.get_integer("TENANT_MAX_BYTES_PER_SECOND", 100_000)
+ tenant_max_channels_per_client = Env.get_integer("TENANT_MAX_CHANNELS_PER_CLIENT", 100)
+@@ -420,6 +421,7 @@ if config_env() != :test do
+     region: region,
+     prom_poll_rate: prom_poll_rate,
+     slot_name_suffix: slot_name_suffix,
++    slot_name_per_tenant: slot_name_per_tenant,
+     max_gen_rpc_clients: max_gen_rpc_clients,
+     max_gen_rpc_call_clients: max_gen_rpc_call_clients,
+     connect_error_backoff_ms: connect_error_backoff_ms,
+diff --git a/lib/realtime/tenants/replication_connection.ex b/lib/realtime/tenants/replication_connection.ex
+index 8f56def..8365037 100644
+--- a/lib/realtime/tenants/replication_connection.ex
++++ b/lib/realtime/tenants/replication_connection.ex
+@@ -190,7 +190,7 @@ defmodule Realtime.Tenants.ReplicationConnection do
+     Logger.metadata(external_id: tenant_id, project: tenant_id)
+     Process.monitor(monitored_pid)
+ 
+-    slot_name = replication_slot_name(@schema, @table)
++    slot_name = replication_slot_name(@schema, @table, tenant_id)
+ 
+     {:ok, _watchdog_pid} =
+       Realtime.Tenants.ReplicationConnection.Watchdog.start_link(
+@@ -216,7 +216,7 @@ defmodule Realtime.Tenants.ReplicationConnection do
+     # But ReplicationConnection does not interact with DbConnection so we don't
+     # want to trap exits
+     Process.flag(:trap_exit, false)
+-    replication_slot_name = replication_slot_name(@schema, @table)
++    replication_slot_name = replication_slot_name(@schema, @table, state.tenant_id)
+     Logger.info("Checking if replication slot #{replication_slot_name} exists")
+ 
+     query = "SELECT * FROM pg_replication_slots WHERE slot_name = '#{replication_slot_name}'"
+@@ -537,12 +537,27 @@ defmodule Realtime.Tenants.ReplicationConnection do
+     end
+   end
+ 
+-  def replication_slot_name(schema, table) do
+-    "supabase_#{schema}_#{table}_replication_slot_#{slot_suffix()}"
++  @doc """
++  Name of the replication slot of a tenant's Broadcast Changes. Replication slots are cluster-wide: with
++  `SLOT_NAME_PER_TENANT=true`, the name ends with 16 hex characters of the SHA-256 of the tenant id, so that tenants
++  whose databases share a cluster get a slot each (at most 63 bytes without `SLOT_NAME_SUFFIX`).
++  """
++  def replication_slot_name(schema, table, tenant_id \\ nil) do
++    "supabase_#{schema}_#{table}_replication_slot_#{slot_suffix()}#{tenant_slot_suffix(tenant_id)}"
+   end
+ 
+   defp slot_suffix, do: Application.get_env(:realtime, :slot_name_suffix)
+ 
++  defp tenant_slot_suffix(tenant_id) when is_binary(tenant_id) do
++    if Application.get_env(:realtime, :slot_name_per_tenant, false) do
++      :sha256 |> :crypto.hash(tenant_id) |> Base.encode16(case: :lower) |> binary_part(0, 16)
++    else
++      ""
++    end
++  end
++
++  defp tenant_slot_suffix(_tenant_id), do: ""
++
+   defp tuple_to_map(tuple_data, columns) do
+     tuple_data
+     |> Tuple.to_list()

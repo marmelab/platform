@@ -255,6 +255,10 @@ export const terminateAppSessionsSql = `select count(pg_terminate_backend(pid)):
 export function dropAppSql(appId: string): string[] {
   const r = appRoles(appId);
   return [
+    // DROP DATABASE refuses a database with logical replication slots: Realtime's are temporary (gone with their
+    // session, which FORCE terminates), but a slot left behind by a crash or a manual test would block the deletion
+    `select pg_terminate_backend(active_pid) from pg_replication_slots where database = '${r.database}' and active_pid is not null`,
+    `select pg_drop_replication_slot(slot_name) from pg_replication_slots where database = '${r.database}' and not temporary`,
     `drop database if exists ${r.database} with (force)`,
     // the parameter privilege is a cluster-level object owned by the role grant: revoke it first
     `do $$ begin if exists (select from pg_roles where rolname = '${r.realtime}') then

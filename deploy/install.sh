@@ -4,6 +4,7 @@
 # (template_supabase + platform database) and creates the first admin with a PAT and a Studio password.
 # Re-runnable: secrets and the admin credentials are kept in deploy/.env and deploy/.env.local.
 #   STUDIO_BUILD=1 deploy/install.sh    rebuilds the Studio image even if it exists
+#   REALTIME_BUILD=1 deploy/install.sh  rebuilds the patched Realtime image (patches/realtime) even if it exists
 #   deploy/install.sh --seed (or SEED=1) also seeds the app builders alice and bob and their example apps
 #                                        (apps/control-plane/scripts/seed.ts, idempotent)
 set -euo pipefail
@@ -52,6 +53,12 @@ umask 022
 
 if [ "${STUDIO_BUILD:-0}" = 1 ] || ! docker image inspect plat/studio:dev >/dev/null 2>&1; then
   ../apps/studio/build.sh
+fi
+
+# Patched Realtime image (patches/realtime): the upstream image with the "broadcast changes" slot named per tenant
+REALTIME_IMAGE="$(sed -n 's/^ *image: \(plat\/realtime:.*\)$/\1/p' docker-compose.yml)"
+if [ "${REALTIME_BUILD:-0}" = 1 ] || ! docker image inspect "$REALTIME_IMAGE" >/dev/null 2>&1; then
+  ../patches/realtime/build.sh
 fi
 
 docker compose -p plat up -d --build

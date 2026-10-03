@@ -291,6 +291,34 @@ describe("M5: Storage and Realtime on two apps", () => {
     assert.match(userStatus, /^CHANNEL_ERROR: JwtSignatureError/);
   });
 
+  test("5b. broadcast from database works on both apps at once (patched Realtime: a slot per tenant)", async () => {
+    const dbs = [A, B].map((slug) => `app_${slug.replaceAll("-", "_")}`);
+    const received: Record<string, unknown[]> = { [A]: [], [B]: [] };
+    const channels: [SupabaseClient, RealtimeChannel][] = [];
+    for (const [slug, user] of [[A, alice], [B, carol]] as const) {
+      const channel = user.client.channel(`db-${RUN}`)
+        .on("broadcast", { event: "changed" }, (p) => received[slug]!.push(p.payload));
+      assert.equal(await subscribe(channel), "SUBSCRIBED");
+      channels.push([user.client, channel]);
+    }
+    // each tenant streams realtime.messages through its own walsender and temporary slot
+    const slots = () => psql(`select string_agg(s.slot_name, ' ' order by d.datname) from pg_replication_slots s
+      join pg_database d on d.oid = s.datoid where s.active and s.slot_name like 'supabase_realtime_messages_replication_slot_%'
+      and d.datname in ('${dbs[0]}', '${dbs[1]}')`, "postgres").split(" ").filter(Boolean);
+    assert.ok(await until(() => slots().length === 2, 30_000), `broadcast changes slots: ${slots().join(", ")}`);
+    assert.notEqual(slots()[0], slots()[1]);
+
+    for (const [slug, db] of [[A, dbs[0]], [B, dbs[1]]] as const) {
+      psql(`select realtime.send(jsonb_build_object('app', '${slug}'), 'changed', 'db-${RUN}', false)`, db);
+    }
+    assert.ok(await until(() => received[A]!.length > 0 && received[B]!.length > 0, 15_000),
+      `broadcast from database: A ${received[A]!.length}, B ${received[B]!.length}`);
+    // each app gets its own message only (Realtime adds the message id)
+    assert.deepEqual(received[A]!.map((p) => (p as { app: string }).app), [A]);
+    assert.deepEqual(received[B]!.map((p) => (p as { app: string }).app), [B]);
+    for (const [client, channel] of channels) await client.removeChannel(channel);
+  });
+
   test("6. stop: uploads refused, realtime closed; start: back", async () => {
     const statuses: string[] = [];
     const channel = alice.client.channel("watch");
@@ -339,7 +367,9 @@ describe("M5: Storage and Realtime on two apps", () => {
     assert.match(restore, /TABLE DATA storage objects /);
     assert.equal(psql(`select count(*) from tenants where id = '${A}'`, "platform_storage"), "0");
     assert.equal(psql(`select count(*) from _realtime.tenants where external_id = '${A}'`, "platform_realtime"), "0");
-    assert.equal(psql(`select count(*) from pg_replication_slots where slot_name like 'realtime_app_${A.replaceAll("-", "_")}%'`, "postgres"), "0");
+    // the postgres_changes slot (realtime_<id>_) and the broadcast changes slot went with the app's sessions
+    assert.equal(psql(`select count(*) from pg_replication_slots where slot_name like 'realtime_${A.replaceAll("-", "_")}%'
+      or datoid not in (select oid from pg_database)`, "postgres"), "0");
     // B still works
     assert.ifError((await carol.client.storage.from("files").list()).error);
     inCp("rm", "-rf", deleted.backup);
