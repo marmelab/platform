@@ -26,6 +26,63 @@ export interface Settings {
   smtp: SmtpSettings | null;
   /** Company SSO (M6 part 2, sso.ts): platform login (A7) and the apps' "custom:company" provider (U2). */
   sso: SsoSettings;
+  /** Backups (M7, A4, backups.ts): schedule, retention and the optional S3 target. */
+  backup: BackupSettings;
+}
+
+export interface BackupSettings {
+  /** Daily scheduled backups of every app (the scheduler runs once per UTC day, at or after `hour`). */
+  enabled: boolean;
+  /** Hour of the day (UTC, 0 to 23) at or after which the daily run starts. */
+  hour: number;
+  /** Scheduled backups kept: the newest of each of the last `keepDaily` days... */
+  keepDaily: number;
+  /** ...and the newest of each of the last `keepWeekly` ISO weeks. */
+  keepWeekly: number;
+  /** Manual and pre-restore backups are kept this many days. */
+  manualRetentionDays: number;
+  /** Final backups (delete_app) are kept this many days. */
+  finalRetentionDays: number;
+  /** Off-site target; null: backups stay on the platform's backups volume. */
+  s3: S3Settings | null;
+}
+
+export interface S3Settings {
+  /** e.g. https://s3.eu-west-3.amazonaws.com, https://<account>.r2.cloudflarestorage.com, http://seaweedfs:8333 */
+  endpoint: string;
+  bucket: string;
+  region: string;
+  accessKeyId: string;
+  /** Never returned by an API, never logged. Stored encrypted in the settings table. */
+  secretAccessKey: string;
+  /** Key prefix of every backup ("" or e.g. "platform/backups"), without leading or trailing slash. */
+  prefix: string;
+  /** Path-style URLs (<endpoint>/<bucket>/<key>), the default; false: virtual-hosted (<bucket>.<endpoint host>). */
+  pathStyle: boolean;
+}
+
+/** What may be shown of the backup settings (CLI, admin API): no secret key. */
+export function backupSummary(backup: BackupSettings) {
+  return {
+    enabled: backup.enabled,
+    hour_utc: backup.hour,
+    keep_daily: backup.keepDaily,
+    keep_weekly: backup.keepWeekly,
+    manual_retention_days: backup.manualRetentionDays,
+    final_retention_days: backup.finalRetentionDays,
+    target: backup.s3 ? "s3" : "local",
+    s3: backup.s3
+      ? {
+        endpoint: backup.s3.endpoint,
+        bucket: backup.s3.bucket,
+        region: backup.s3.region,
+        prefix: backup.s3.prefix,
+        path_style: backup.s3.pathStyle,
+        access_key_id: backup.s3.accessKeyId,
+        secret_access_key_set: backup.s3.secretAccessKey !== "",
+      }
+      : null,
+  };
 }
 
 export type SsoAutoCreate = "off" | "developer";
@@ -126,6 +183,19 @@ export const SETTING_KEYS = {
   sso_require_verified_email: "SSO_REQUIRE_VERIFIED_EMAIL",
   sso_auto_create: "SSO_AUTO_CREATE",
   sso_password_login: "SSO_PASSWORD_LOGIN",
+  backup_enabled: "BACKUP_ENABLED",
+  backup_hour: "BACKUP_HOUR",
+  backup_keep_daily: "BACKUP_KEEP_DAILY",
+  backup_keep_weekly: "BACKUP_KEEP_WEEKLY",
+  backup_manual_retention_days: "BACKUP_MANUAL_RETENTION_DAYS",
+  backup_final_retention_days: "BACKUP_FINAL_RETENTION_DAYS",
+  backup_s3_endpoint: "BACKUP_S3_ENDPOINT",
+  backup_s3_bucket: "BACKUP_S3_BUCKET",
+  backup_s3_region: "BACKUP_S3_REGION",
+  backup_s3_access_key_id: "BACKUP_S3_ACCESS_KEY_ID",
+  backup_s3_secret_access_key: "BACKUP_S3_SECRET_ACCESS_KEY",
+  backup_s3_prefix: "BACKUP_S3_PREFIX",
+  backup_s3_path_style: "BACKUP_S3_PATH_STYLE",
 } as const;
 
 /** Settings that change every app's GoTrue environment: setting them re-provisions the apps' Auth (app-auth.ts). */
@@ -133,8 +203,8 @@ export const SMTP_KEYS = ["smtp_host", "smtp_port", "smtp_user", "smtp_password"
 /** Settings of the company SSO provider: changing them updates the apps' "custom:company" provider (app-sso.ts). */
 export const SSO_PROVIDER_KEYS = ["sso_enabled", "sso_name", "sso_issuer", "sso_client_id", "sso_client_secret"];
 /** Stored encrypted with the master key. */
-const ENCRYPTED_KEYS = ["smtp_password", "sso_client_secret"];
-const BOOLEANS = ["sso_enabled", "sso_require_verified_email"];
+export const ENCRYPTED_KEYS = ["smtp_password", "sso_client_secret", "backup_s3_secret_access_key"];
+const BOOLEANS = ["sso_enabled", "sso_require_verified_email", "backup_enabled", "backup_s3_path_style"];
 const bool = (key: string, value: string) => {
   if (value !== "true" && value !== "false") throw new Error(`${key} must be true or false`);
   return value === "true";
@@ -145,7 +215,17 @@ export const parseDomains = (value: string) =>
   [...new Set(value.split(",").map((d) => d.trim().toLowerCase().replace(/^@/, "")).filter(Boolean))].sort();
 const EMAIL_RE = /^[^\s@<>,"]+@[^\s@<>,"]+\.[^\s@<>,"]+$/;
 
-const DAYS = ["abandoned_after_days", "metrics_retention_days"];
+const DAYS = ["abandoned_after_days", "metrics_retention_days", "backup_manual_retention_days", "backup_final_retention_days"];
+const integer = (key: string, value: string, min: number, max: number) => {
+  const n = Number(value);
+  if (!Number.isInteger(n) || n < min || n > max) throw new Error(`${key} must be a whole number from ${min} to ${max}`);
+  return n;
+};
+const INTEGERS: Record<string, [number, number]> = {
+  backup_hour: [0, 23],
+  backup_keep_daily: [1, 366],
+  backup_keep_weekly: [0, 520],
+};
 const days = (key: string, value: string) => {
   const n = Number(value);
   if (!Number.isInteger(n) || n < 1 || n > 3650) throw new Error(`${key} must be a whole number of days (1 to 3650)`);
@@ -159,6 +239,27 @@ export function validateSetting(key: string, value: string): asserts key is Sett
     throw new Error("direct_deploy must be admins or everyone");
   }
   if (DAYS.includes(key)) days(key, value);
+  if (key in INTEGERS) integer(key, value, ...INTEGERS[key]!);
+  if (key === "backup_s3_endpoint" && value !== "") {
+    let url: URL;
+    try {
+      url = new URL(value);
+    } catch {
+      throw new Error("backup_s3_endpoint must be a URL");
+    }
+    if (url.protocol !== "https:" && url.protocol !== "http:") throw new Error("backup_s3_endpoint must be an http(s) URL");
+    if ((url.pathname !== "/" && url.pathname !== "") || url.search || url.hash) {
+      throw new Error("backup_s3_endpoint: scheme, host and port only (the bucket is backup_s3_bucket)");
+    }
+  }
+  if (key === "backup_s3_bucket" && value !== "" && !/^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/.test(value)) {
+    throw new Error("backup_s3_bucket must be an S3 bucket name");
+  }
+  if (key === "backup_s3_region" && !/^[a-z0-9-]{1,40}$/.test(value)) throw new Error("backup_s3_region: e.g. eu-west-3");
+  if (key === "backup_s3_prefix" && (!/^[A-Za-z0-9._\/-]{0,200}$/.test(value) || value.split("/").includes(".."))) {
+    throw new Error("backup_s3_prefix: letters, digits, . _ - and /");
+  }
+  if (key === "backup_s3_access_key_id" && /\s/.test(value)) throw new Error("backup_s3_access_key_id: no whitespace");
   if (key === "smtp_port" && !(Number.isInteger(Number(value)) && Number(value) >= 1 && Number(value) <= 65535)) {
     throw new Error("smtp_port must be a port number");
   }
@@ -214,6 +315,18 @@ export async function getSettings(): Promise<Settings> {
   const ssoClientId = rows.get("sso_client_id") ?? d.ssoClientId;
   const ssoClientSecret = rows.has("sso_client_secret") ? decrypt(rows.get("sso_client_secret")!) : d.ssoClientSecret;
   const smtpSender = rows.get("smtp_sender_email") ?? d.smtpSenderEmail;
+  const get = (key: SettingKey, fallback: string) => rows.get(key) ?? fallback;
+  const s3 = {
+    endpoint: get("backup_s3_endpoint", d.backupS3Endpoint).replace(/\/+$/, ""),
+    bucket: get("backup_s3_bucket", d.backupS3Bucket),
+    region: get("backup_s3_region", d.backupS3Region),
+    accessKeyId: get("backup_s3_access_key_id", d.backupS3AccessKeyId),
+    secretAccessKey: rows.has("backup_s3_secret_access_key")
+      ? decrypt(rows.get("backup_s3_secret_access_key")!)
+      : d.backupS3SecretAccessKey,
+    prefix: get("backup_s3_prefix", d.backupS3Prefix).replace(/^\/+|\/+$/g, ""),
+    pathStyle: bool("backup_s3_path_style", get("backup_s3_path_style", d.backupS3PathStyle)),
+  };
   return {
     directDeploy,
     ciAllowedWorkflows: (rows.get("ci_allowed_workflows") ?? d.ciAllowedWorkflows)
@@ -249,6 +362,16 @@ export async function getSettings(): Promise<Settings> {
       requireVerifiedEmail: bool("sso_require_verified_email", rows.get("sso_require_verified_email") ?? d.ssoRequireVerifiedEmail),
       autoCreate: (rows.get("sso_auto_create") ?? d.ssoAutoCreate) as SsoAutoCreate,
       passwordLogin: (rows.get("sso_password_login") ?? d.ssoPasswordLogin) as PasswordLogin,
+    },
+    backup: {
+      enabled: bool("backup_enabled", get("backup_enabled", d.backupEnabled)),
+      hour: integer("backup_hour", get("backup_hour", d.backupHour), 0, 23),
+      keepDaily: integer("backup_keep_daily", get("backup_keep_daily", d.backupKeepDaily), 1, 366),
+      keepWeekly: integer("backup_keep_weekly", get("backup_keep_weekly", d.backupKeepWeekly), 0, 520),
+      manualRetentionDays: days("backup_manual_retention_days", get("backup_manual_retention_days", d.backupManualRetentionDays)),
+      finalRetentionDays: days("backup_final_retention_days", get("backup_final_retention_days", d.backupFinalRetentionDays)),
+      // usable only when complete: an empty backup_s3_endpoint row turns the environment's target off
+      s3: s3.endpoint && s3.bucket && s3.accessKeyId && s3.secretAccessKey ? s3 : null,
     },
   };
 }

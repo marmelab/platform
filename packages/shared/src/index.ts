@@ -107,6 +107,11 @@ export const toolInputs = {
     backup: z.boolean().default(true)
       .describe("false skips the final backup: the data is then lost for good. Only if the user explicitly asks"),
   },
+  list_backups: {
+    app: slug,
+    limit: z.number().int().positive().max(200).default(30),
+  },
+  create_backup: { app: slug },
   list_schema_changes: {
     app: slug,
     all: z.boolean().default(false)

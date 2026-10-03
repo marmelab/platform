@@ -216,3 +216,38 @@ begin
     alter table app_auth_config add constraint app_auth_config_sso_provider_check check (sso_provider in ('company'));
   end if;
 end $$;
+
+-- M7, A4: backups of the apps (backups.ts). One row per backup attempt: scheduled (daily), manual (create_backup, the
+-- admin console, the CLI), pre_restore (taken by a restore before it replaces the app's data) and final (delete_app,
+-- B8). location: the backup's directory on the backups volume, or s3://<bucket>/<key prefix>/ when the S3 target is
+-- configured. app_id is null once the app is deleted: the slug stays (a deleted app is restored from its slug).
+create table if not exists backups (
+  id uuid primary key default gen_random_uuid(),
+  app_id uuid references apps (id) on delete set null,
+  slug text not null,
+  kind text not null check (kind in ('scheduled', 'manual', 'pre_restore', 'final')),
+  status text not null default 'running' check (status in ('running', 'succeeded', 'failed')),
+  started_at timestamptz not null default now(),
+  finished_at timestamptz,
+  size_bytes bigint,
+  location text,
+  -- file name -> size in bytes
+  files jsonb,
+  -- the backup's manifest.json (no secret)
+  manifest jsonb,
+  error text,
+  created_by uuid references users (id) on delete set null
+);
+create index if not exists backups_slug_started on backups (slug, started_at desc);
+create index if not exists backups_app_started on backups (app_id, started_at desc);
+create index if not exists backups_status_started on backups (status, started_at desc);
+
+-- Scheduler state (one row): the UTC day whose scheduled run was claimed (one run per day across processes), and the
+-- last run's summary
+create table if not exists backup_state (
+  id integer primary key default 1 check (id = 1),
+  scheduled_on date,
+  run_started_at timestamptz,
+  run_finished_at timestamptz,
+  run_summary jsonb
+);

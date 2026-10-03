@@ -24,6 +24,7 @@ import {
   rollback,
   setDeploymentRelease,
 } from "./deployments.ts";
+import { createManualBackup, listBackups } from "./backups.ts";
 import { getLogs } from "./logs.ts";
 import { addMember, listMembers, removeMember, requireOwner } from "./members.ts";
 import {
@@ -425,8 +426,8 @@ export function buildMcpServer(user: User): McpServer {
     "delete_app",
     {
       description: "Irreversibly delete the app (owner or admin only): database, users, files, functions, secrets, " +
-        "deployments and members. A final backup (database dump and deployed files, kept on the platform host) is " +
-        "taken first and its path returned; if it fails, nothing is deleted. backup: false skips that backup: the " +
+        "deployments and members. A final backup (database, files and secrets, kept by the platform for its final " +
+        "backup retention, 90 days by default; an admin can restore the app from it) is taken first and its location returned; if it fails, nothing is deleted. backup: false skips that backup: the " +
         "data is then lost for good, with no way to restore it (only when the user explicitly asks for it). Only " +
         "with the user's explicit consent; confirm must repeat the slug.",
       inputSchema: t.delete_app,
@@ -436,6 +437,40 @@ export function buildMcpServer(user: User): McpServer {
         const target = await appForUser(user, app);
         requireOwner(user, target, "delete the app");
         return deleteAppConfirmed(user, target, confirm, backup);
+      }),
+  );
+
+  server.registerTool(
+    "list_backups",
+    {
+      description: "Backups of the app, newest first (owner or admin only, read-only): kind (scheduled: daily; manual: " +
+        "create_backup; pre_restore: taken before a restore; final: delete_app), status, size, live versions " +
+        "backed up, error of a failed one. Each backup holds the database, the Storage files, the live frontend and " +
+        "functions versions and the app's secrets (encrypted). Restoring is done by a platform admin: tell the user to " +
+        "ask them, with the backup id.",
+      inputSchema: t.list_backups,
+    },
+    ({ app, limit }) =>
+      run(async () => {
+        const target = await appForUser(user, app);
+        requireOwner(user, target, "list the backups");
+        return listBackups(target.id, limit ?? 30);
+      }),
+  );
+
+  server.registerTool(
+    "create_backup",
+    {
+      description: "Back up the app now (owner or admin only, audited), e.g. before a risky migration: database, " +
+        "Storage files, live frontend and functions versions, secrets (encrypted). Kept for the platform's manual " +
+        "retention (30 days by default). Waits for a backup in progress to finish. Also works on a stopped app.",
+      inputSchema: t.create_backup,
+    },
+    ({ app }) =>
+      run(async () => {
+        const target = await appForUser(user, app);
+        requireOwner(user, target, "back up the app");
+        return createManualBackup(user, target);
       }),
   );
 

@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { createWriteStream } from "node:fs";
 import { PassThrough } from "node:stream";
 import { finished } from "node:stream/promises";
+import * as tar from "tar";
 import { config } from "./config.ts";
 
 export interface ServiceSpec {
@@ -46,6 +47,10 @@ export interface Orchestrator {
   signal(container: string, signal: string): Promise<void>;
   /** Runs a command in a platform container, its stdout written to a local file. Throws on a non-zero exit. */
   execToFile(container: string, cmd: string[], env: Record<string, string>, file: string): Promise<void>;
+  /** Runs a command in a platform container and returns its stdout. Throws on a non-zero exit. */
+  exec(container: string, cmd: string[], env?: Record<string, string>): Promise<string>;
+  /** Copies local files into a platform container: `<cwd>/<path>` lands at `<dest>/<path>` (parents created). */
+  copyTo(container: string, cwd: string, paths: string[], dest: string): Promise<void>;
 }
 
 /** Splits Docker's multiplexed log stream (non-TTY) into timestamped lines. */
@@ -196,6 +201,34 @@ export class DockerOrchestrator implements Orchestrator {
     if (ExitCode !== 0) {
       throw new Error(`${cmd[0]} exited with ${ExitCode}: ${Buffer.concat(stderr).toString("utf8").trim().slice(0, 2000)}`);
     }
+  }
+
+  async exec(container: string, cmd: string[], env: Record<string, string> = {}): Promise<string> {
+    const exec = await this.docker.getContainer(container).exec({
+      Cmd: cmd,
+      Env: Object.entries(env).map(([key, value]) => `${key}=${value}`),
+      AttachStdout: true,
+      AttachStderr: true,
+    });
+    const stream = await exec.start({ hijack: true, stdin: false });
+    const out = new PassThrough();
+    const err = new PassThrough();
+    const stdout: Buffer[] = [];
+    const stderr: Buffer[] = [];
+    out.on("data", (chunk: Buffer) => stdout.push(chunk));
+    err.on("data", (chunk: Buffer) => stderr.push(chunk));
+    this.docker.modem.demuxStream(stream, out, err);
+    await finished(stream, { writable: false });
+    const { ExitCode } = await exec.inspect();
+    if (ExitCode !== 0) {
+      throw new Error(`${cmd[0]} exited with ${ExitCode}: ${Buffer.concat(stderr).toString("utf8").trim().slice(0, 2000)}`);
+    }
+    return Buffer.concat(stdout).toString("utf8");
+  }
+
+  async copyTo(container: string, cwd: string, paths: string[], dest: string): Promise<void> {
+    const archive = tar.c({ cwd, portable: true }, paths);
+    await this.docker.getContainer(container).putArchive(archive as unknown as NodeJS.ReadableStream, { path: dest });
   }
 
   async logs(container: string, sinceSeconds: number, tail: number): Promise<RawLogLine[]> {

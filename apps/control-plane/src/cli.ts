@@ -20,6 +20,13 @@
 //   node src/cli.ts sample-metrics                 (samples app_metrics now, as the control plane does every minute)
 //   node src/cli.ts realtime-migrate <slug>|--all  (after a Realtime upgrade: recreates the app's Realtime tenant, which
 //                                                  runs the new tenant migrations; its clients reconnect)
+//   node src/cli.ts backup-app <slug>              (manual backup now, audited; prints it as JSON)
+//   node src/cli.ts list-backups [<slug>]          (newest first, every app's or one slug's, deleted apps included)
+//   node src/cli.ts restore-app <backup-id> --confirm <slug> [--no-safety-backup]
+//                                                  (replaces the app's database, files and secrets with the backup's,
+//                                                  after a pre_restore backup; a deleted app is recreated; audited)
+//   node src/cli.ts run-backups [<slug>...]        (the daily run now: scheduled backups, retention, failure email)
+//   node src/cli.ts prune-backups [--now <iso date>]   (the retention alone; --now simulates another date)
 import { randomBytes } from "node:crypto";
 import { text } from "node:stream/consumers";
 import type { MemberRole } from "@platform/shared";
@@ -31,12 +38,26 @@ import { registerRealtime } from "./storage-realtime.ts";
 import { sampleMetrics } from "./metrics.ts";
 import { addMember, removeMember } from "./members.ts";
 import { setPassword } from "./sessions.ts";
-import { getSettings, setSetting, SMTP_KEYS, smtpSummary, SSO_PROVIDER_KEYS, ssoSummary, unsetSetting } from "./settings.ts";
+import {
+  backupSummary,
+  ENCRYPTED_KEYS,
+  getSettings,
+  setSetting,
+  SMTP_KEYS,
+  smtpSummary,
+  SSO_PROVIDER_KEYS,
+  ssoSummary,
+  unsetSetting,
+} from "./settings.ts";
 import { syncCompanySso } from "./app-sso.ts";
+import { backupView, type BackupRow, createManualBackup, pruneBackups, runScheduledBackups } from "./backups.ts";
+import { restoreBackup } from "./restore.ts";
 
 const USAGE = "usage: cli.ts init | create-user <email> [admin|developer] [token-name] | delete-user <email> | " +
   "set-password <email> [--generate] | add-member <slug> <email> [owner|collaborator] | remove-member <slug> <email> | stop-app <slug> | start-app <slug> | delete-app <slug> [--no-backup] | " +
-  "settings | set-setting <key> <value> | unset-setting <key> | sync-auth | sample-metrics | realtime-migrate <slug>|--all";
+  "settings | set-setting <key> <value> | unset-setting <key> | sync-auth | sample-metrics | realtime-migrate <slug>|--all | " +
+  "backup-app <slug> | list-backups [<slug>] | restore-app <backup-id> --confirm <slug> [--no-safety-backup] | " +
+  "run-backups [<slug>...] | prune-backups [--now <iso date>]";
 
 const [command, ...args] = process.argv.slice(2);
 
@@ -99,9 +120,10 @@ if (command === "init") {
     oidcJwks: settings.oidcJwks ? "(inline JWKS set: test only)" : null,
     smtp: smtpSummary(settings.smtp),
     sso: ssoSummary(settings.sso),
+    backup: backupSummary(settings.backup),
   }, null, 2));
 } else if (command === "set-setting" && args[0] && args[1] !== undefined) {
-  const secret = args[0] === "smtp_password" || args[0] === "sso_client_secret";
+  const secret = ENCRYPTED_KEYS.includes(args[0]);
   const value = secret && args[1] === "-" ? (await text(process.stdin)).trim() : args[1];
   await setSetting(args[0], value);
   console.log(`${args[0]} set`);
@@ -125,8 +147,37 @@ if (command === "init") {
     await registerRealtime(app, { migrate: true });
     console.log(`realtime tenant of ${app.slug} migrated`);
   }
+} else if (command === "backup-app" && args[0]) {
+  console.log(JSON.stringify(await createManualBackup(null, await appBySlug(args[0])), null, 2));
+} else if (command === "list-backups") {
+  const rows = await many<BackupRow>(
+    "select * from backups where ($1::text is null or slug = $1) order by started_at desc limit 200",
+    [args[0] ?? null],
+  );
+  for (const b of rows.map(backupView)) {
+    console.log([b.id, b.app, b.kind, b.status, b.started_at.toISOString(), b.size_bytes ?? "-", b.location ?? b.error ?? "-",
+      b.app_deleted ? "(app deleted)" : ""].join("  "));
+  }
+} else if (command === "restore-app" && args[0]) {
+  const confirm = args[args.indexOf("--confirm") + 1];
+  if (!args.includes("--confirm") || !confirm) throw new Error("restore-app replaces the app's data: add --confirm <slug>");
+  const result = await restoreBackup(null, args[0], { confirm, safetyBackup: !args.includes("--no-safety-backup") });
+  console.log(JSON.stringify(result, null, 2));
+} else if (command === "run-backups") {
+  const result = await runScheduledBackups({ apps: args.length ? args : undefined });
+  console.log(JSON.stringify(result, null, 2));
+  if (result.failed.length) process.exitCode = 1;
+} else if (command === "prune-backups") {
+  const at = args.indexOf("--now");
+  const now = at >= 0 ? new Date(args[at + 1] ?? "") : new Date();
+  if (Number.isNaN(now.getTime())) throw new Error("--now takes an ISO date, e.g. 2026-11-01T03:00:00Z");
+  const result = await pruneBackups({ now });
+  console.log(JSON.stringify({ pruned: result.pruned.length, errors: result.errors, ids: result.pruned.map((p) => p.id) }));
 } else {
   console.error(USAGE);
   process.exitCode = 1;
 }
 await platform.end();
+// provision() (start-app, restore-app) starts the app's schema relay (pgrst-relay.ts), a LISTEN connection meant for the
+// server process: the CLI must not keep it, nor wait for it
+process.exit();

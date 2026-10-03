@@ -19,11 +19,22 @@ import { getLogs } from "../logs.ts";
 import { sendPlatformMail } from "../mailer.ts";
 import { sampleMetrics } from "../metrics.ts";
 import { addMember, removeMember } from "../members.ts";
+import { backupView, type BackupRow, createManualBackup } from "../backups.ts";
+import { restoreBackup } from "../restore.ts";
 import { githubServerUrl } from "../oidc.ts";
 import { listSchemaChanges, schemaDrift } from "../schema-changes.ts";
 import { listSecrets } from "../secrets.ts";
 import { MIN_PASSWORD_LENGTH, setPassword } from "../sessions.ts";
-import { getSettings, setSetting, SSO_PROVIDER_KEYS, ssoActive, ssoSummary, unsetSetting, validateSetting } from "../settings.ts";
+import {
+  backupSummary,
+  getSettings,
+  setSetting,
+  SSO_PROVIDER_KEYS,
+  ssoActive,
+  ssoSummary,
+  unsetSetting,
+  validateSetting,
+} from "../settings.ts";
 import { syncCompanySso } from "../app-sso.ts";
 import { discover, ssoCallbackUrl, SsoError } from "../sso.ts";
 import { errorResponse, HttpError, includes, listInMemory, type ListParams, listParams, page, truthy } from "./rest.ts";
@@ -535,6 +546,80 @@ adminApi.get("/apps/:slug/logs", async (c) => {
   return c.json(await getLogs(app, { service, sinceMinutes, limit, query: c.req.query("q") || undefined }));
 });
 
+/** Manual backup now ("Backup now"), audited. Waits for a backup in progress. */
+adminApi.post("/apps/:slug/backup", async (c) => {
+  const app = await appRow(c.req.param("slug"));
+  return c.json(await createManualBackup(c.get("admin"), app));
+});
+
+// ---------------------------------------------------------------------------------------------------------------
+// backups (M7, A4): every app's, deleted apps included (filter app=<slug>, kind, status, deleted)
+
+adminApi.get("/backups", async (c) => {
+  const params = listParams(c);
+  const rows = (await many<BackupRow>(
+    "select * from backups where ($1::text is null or slug = $1) order by started_at desc",
+    [appFilter(params)],
+  )).map((row) => ({ ...backupView(row), started_at: row.started_at.toISOString() }));
+  const { rows: result, total } = listInMemory(rows, params, {
+    app: () => true,
+    q: (b, q) => includes(b.app, q) || includes(b.error, q) || includes(b.location, q),
+    kind: (b, v) => b.kind === v,
+    status: (b, v) => b.status === v,
+    deleted: (b, v) => b.app_deleted === truthy(v),
+  }, { field: "started_at", order: "DESC" });
+  return page(c, "backups", result, total, params.range);
+});
+
+adminApi.get("/backups/:id", async (c) => {
+  const id = c.req.param("id");
+  const row = z.uuid().safeParse(id).success ? await one<BackupRow>("select * from backups where id = $1", [id]) : undefined;
+  if (!row) throw new HttpError(404, "backup not found");
+  return c.json({ ...backupView(row), manifest: row.manifest });
+});
+adminApi.post("/backups", notAllowed("use POST /apps/<slug>/backup"));
+adminApi.put("/backups/:id", notAllowed("backups are read-only"));
+adminApi.delete("/backups/:id", notAllowed("backups are deleted by the retention policy"));
+
+/**
+ * Restores the backup into its app (stopped, data replaced, started), or recreates its deleted app. `confirm` must
+ * repeat the slug; `safety_backup: false` skips the pre_restore backup of the current state.
+ */
+adminApi.post("/backups/:id/restore", async (c) => {
+  const input = await body(c, z.object({ confirm: z.string(), safety_backup: z.boolean().default(true) }));
+  return c.json(await restoreBackup(c.get("admin"), c.req.param("id"), {
+    confirm: input.confirm,
+    safetyBackup: input.safety_backup,
+  }));
+});
+
+/** Effective backup settings (no secret) and the last scheduled run. */
+adminApi.get("/backup-settings", async (c) => c.json(await backupStatus()));
+
+async function backupStatus() {
+  const { backup } = await getSettings();
+  const state = await one<{ scheduled_on: string | null; run_started_at: Date | null; run_finished_at: Date | null; run_summary: unknown }>(
+    "select scheduled_on::text, run_started_at, run_finished_at, run_summary from backup_state where id = 1",
+  );
+  // apps whose last succeeded backup is older than 36 h (or that have none, once older than 36 h)
+  const stale = await many<{ slug: string; last_backup_at: Date | null }>(
+    `select a.slug, max(b.started_at) as last_backup_at from apps a
+       left join backups b on b.app_id = a.id and b.status = 'succeeded'
+      where a.status in ('running', 'stopped', 'error') and a.created_at < now() - interval '36 hours'
+      group by a.slug having coalesce(max(b.started_at), '-infinity') < now() - interval '36 hours'
+      order by a.slug`,
+  );
+  const failed = await one<{ count: number }>(
+    "select count(*)::int as count from backups where status = 'failed' and started_at > now() - interval '7 days'",
+  );
+  return {
+    ...backupSummary(backup),
+    last_run: state ?? null,
+    failed_7d: failed?.count ?? 0,
+    stale_apps: backup.enabled ? stale : [],
+  };
+}
+
 // ---------------------------------------------------------------------------------------------------------------
 // app_members (id = "<slug>:<user id>")
 
@@ -868,6 +953,9 @@ adminApi.get("/dashboard", async (c) => {
            from deployments d join apps a on a.id = d.app_id where d.status = 'failed'
          union all
          select a.updated_at, a.slug, 'app error', a.error from apps a where a.status = 'error'
+         union all
+         select coalesce(b.finished_at, b.started_at), b.slug, 'backup ' || b.kind, b.error
+           from backups b where b.status = 'failed'
        ) f where at > now() - interval '7 days' order by at desc limit 10`,
     ),
     one<{ outside_ci: number; accepted_lints: number }>(
@@ -907,6 +995,7 @@ adminApi.get("/dashboard", async (c) => {
       sampled_at: sampled?.sampled_at ?? null,
     },
     recent_failures: failures,
+    backups: await backupStatus(),
     database: { cluster_bytes: Number(cluster?.size ?? 0), app_databases_bytes: Number(cluster?.app_databases ?? 0) },
     // as seen from the control plane container: the host's memory and CPUs, the disk of the Docker volumes
     host: {
