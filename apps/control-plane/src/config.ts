@@ -64,6 +64,22 @@ export const config = {
     dbRole: env("REALTIME_DB_ROLE", "platform_realtime"),
     dbPassword: env("REALTIME_DB_PASSWORD"),
   },
+  /**
+   * Connection pooler (PgBouncer, README.md, "Connection pooler"): PostgREST and Storage reach the app databases through it,
+   * in transaction mode. The control plane writes its [databases] entries (one per app) into `databasesFile` (volume
+   * shared with the pooler) and reloads it through the admin console.
+   */
+  pooler: {
+    host: env("POOLER_HOST", "pooler"),
+    port: Number(env("POOLER_PORT", "6432")),
+    adminUser: env("POOLER_ADMIN_USER", "pooler_admin"),
+    adminPassword: env("POOLER_ADMIN_PASSWORD"),
+    /** Password of the auth_query role (POOLER_AUTH_ROLE), set by init. */
+    authPassword: env("POOLER_AUTH_PASSWORD"),
+    databasesFile: env("POOLER_DATABASES_FILE", "/data/pooler/databases.ini"),
+    /** Server connections per app database, all roles together (PgBouncer max_db_connections). */
+    maxDbConnections: Number(env("POOLER_MAX_DB_CONNECTIONS", "6")),
+  },
   dataDir: {
     sites: env("SITES_DIR", "/data/sites"),
     functions: env("FUNCTIONS_DIR", "/data/functions"),

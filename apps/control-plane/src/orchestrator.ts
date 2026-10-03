@@ -38,6 +38,8 @@ export interface Orchestrator {
   appContainers(app: string): Promise<ContainerStatus[]>;
   /** Memory used by a running container (Docker's "MEM USAGE": usage minus inactive page cache), null otherwise. */
   memoryUsage(container: string): Promise<number | null>;
+  /** Sends a signal to a running container (PostgREST reloads, pgrst-relay.ts). A stopped or missing one is ignored. */
+  signal(container: string, signal: string): Promise<void>;
   /** Runs a command in a platform container, its stdout written to a local file. Throws on a non-zero exit. */
   execToFile(container: string, cmd: string[], env: Record<string, string>, file: string): Promise<void>;
 }
@@ -155,6 +157,16 @@ export class DockerOrchestrator implements Orchestrator {
   async stopApp(app: string): Promise<void> {
     for (const c of await this.appContainers(app)) {
       if (c.state === "running" || c.state === "restarting") await this.docker.getContainer(c.name).stop();
+    }
+  }
+
+  async signal(container: string, signal: string): Promise<void> {
+    try {
+      await this.docker.getContainer(container).kill({ signal });
+    } catch (error) {
+      // 404: no such container; 409: not running
+      const status = (error as { statusCode?: number }).statusCode;
+      if (status !== 404 && status !== 409) throw error;
     }
   }
 

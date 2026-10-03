@@ -25,3 +25,7 @@ export function signJwt(payload: Record<string, unknown>, secret: string): strin
   const head = `${b64url(JSON.stringify({ alg: "HS256", typ: "JWT" }))}.${b64url(JSON.stringify(payload))}`;
   return `${head}.${createHmac("sha256", secret).update(head).digest("base64url")}`;
 }
+
+/** A stable secret derived from the master key (nothing to store): e.g. the password of a platform role. */
+export const derivedSecret = (label: string) =>
+  createHmac("sha256", config.masterKey).update(`platform:${label}`).digest("hex").slice(0, 40);
