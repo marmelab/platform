@@ -55,12 +55,15 @@ grep -q '^ALLOW_TEST_OIDC_JWKS=' .env || { echo "ALLOW_TEST_OIDC_JWKS=1" >> .env
 # Local installs only (M6): every email goes to the mailpit catcher (http://localhost:8025), started with the "mail"
 # compose profile. Production installs set SMTP_* to the company relay and leave COMPOSE_PROFILES unset.
 add_value() { grep -q "^$1=" .env || { echo "$1=$2" >> .env; echo "$1=$2 written to deploy/.env"; }; }
-add_value COMPOSE_PROFILES mail,sso-test
-# installs from before M6 part 2: add the mock IdP's profile
-if grep -q '^COMPOSE_PROFILES=mail$' .env; then
-  sed -i.bak 's/^COMPOSE_PROFILES=mail$/COMPOSE_PROFILES=mail,sso-test/' .env && rm -f .env.bak
-  echo "COMPOSE_PROFILES=mail,sso-test written to deploy/.env"
+add_value COMPOSE_PROFILES mail,sso-test,s3-test
+# installs from before M6 part 2 and M7: add the mock IdP's and the test S3 store's profiles
+if grep -Eq '^COMPOSE_PROFILES=mail(,sso-test)?$' .env; then
+  sed -i.bak -E 's/^COMPOSE_PROFILES=mail(,sso-test)?$/COMPOSE_PROFILES=mail,sso-test,s3-test/' .env && rm -f .env.bak
+  echo "COMPOSE_PROFILES=mail,sso-test,s3-test written to deploy/.env"
 fi
+# Local installs only (M7): secret key of the test S3 store (compose service s3, profile s3-test, access key
+# platform-test), the off-site backup target of the e2e suites
+add_secret S3_TEST_SECRET_KEY 24
 add_value SMTP_HOST mailpit
 add_value SMTP_PORT 1025
 add_value SMTP_SENDER_EMAIL noreply@platform.localhost
