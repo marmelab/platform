@@ -2,9 +2,10 @@
 
 Self-hosted hosting for the apps your team builds with Claude Code. Each app gets its own Supabase backend (Postgres database, Auth, REST API, Edge Functions) and its static frontend, all served from a single VM. Developers ("app builders") don't use a UI to deploy: they ask Claude Code to "deploy the app to the platform", through an MCP server and a Claude Code plugin. They inspect their apps in a multi-project Supabase Studio. Admins see every app, in Studio and in an admin console.
 
-> **Status: prototype.** Milestones M0 to M3 of [PLAN_1.md](PLAN_1.md) are validated (see `spikes/*/REPORT.md`), plus Studio access for app builders, most of the admin console (M4), Storage and Realtime (M5), and app emails and company SSO (M6). It runs locally; production deployment is not ready yet (see [Deploying](#deploying)).
+> **Status: prototype.** Milestones M0 to M3 of [PLAN_1.md](PLAN_1.md) are validated (see `spikes/*/REPORT.md`), plus Studio access for app builders, most of the admin console (M4), Storage and Realtime (M5), app emails and company SSO (M6), and operations (M7: backups, production installer with HTTPS, upgrades, security linter). It runs locally, and installs on a VM with a real domain ([docs/INSTALL.md](docs/INSTALL.md)); it has not run in production yet (see [Deploying](#deploying)).
 
 More docs:
+- [docs/INSTALL.md](docs/INSTALL.md): production installation (domain, TLS, GitHub, SMTP, backups), hardening, upgrades;
 - [docs/USER_JOURNEYS.md](docs/USER_JOURNEYS.md): personas, main journeys, product decisions;
 - [docs/TECH_DEBT.md](docs/TECH_DEBT.md): known debt and limitations;
 - [apps/control-plane/README.md](apps/control-plane/README.md): control plane, MCP tools, admin REST API, admin CLI;
@@ -25,7 +26,7 @@ packages/
   deploy-cli/         platform-deploy: checks or deploys an app repo (GitHub OIDC in CI, or a PAT)
 plugin/               Claude Code plugin (deploy and admin-deploy skills + MCP config)
 ci/                   reusable GitHub Actions deploy workflow, and an example caller for app repos
-deploy/               docker-compose stack ("plat"), Caddy bootstrap, install.sh
+deploy/               docker-compose stack ("plat"), Caddy bootstrap, install.sh, upgrade.sh
 examples/todo-app/    example app: personal todo list (Vite + React + supabase-js)
 examples/notes-app/   example app: notes shared between users (Vite + React + supabase-js)
 spikes/               milestone reports and prototypes
@@ -50,7 +51,7 @@ deploy/install.sh
 ```
 
 `install.sh` is safe to rerun. It:
-1. generates the stack secrets in `deploy/.env`, points the platform SMTP to the local mail catcher (mailpit, `SMTP_HOST=mailpit`), and adds a mock OpenID Connect provider for the company SSO (`COMPOSE_PROFILES=mail,sso-test`);
+1. generates the stack secrets in `deploy/.env`, points the platform SMTP to the local mail catcher (mailpit, `SMTP_HOST=mailpit`), and adds a mock OpenID Connect provider for the company SSO and a test S3 store (`COMPOSE_PROFILES=mail,sso-test,s3-test`);
 2. builds the Studio image on the first run, and the control plane image (which includes the admin console) (`STUDIO_BUILD=1 deploy/install.sh` forces a rebuild);
 3. starts the `plat` docker compose project;
 4. initializes the Postgres cluster (template database, `platform` database);
@@ -169,6 +170,8 @@ pnpm --filter @platform/control-plane e2e          # MCP end to end: provisionin
 pnpm --filter @platform/control-plane e2e:studio   # Studio: login and throttling, CSRF, per-app filtering, bypass attempts
 pnpm e2e:admin                                     # admin REST API, load metrics, then the admin console in Chromium (Playwright)
 pnpm --filter @platform/control-plane e2e:sso      # company SSO with the mock IdP (also part of e2e)
+pnpm --filter @platform/control-plane e2e:lints    # security linter rules and stored results (also part of e2e)
+pnpm --filter @platform/control-plane e2e:tls      # on-demand TLS ask endpoint (also part of e2e); HTTPS checks on a production-mode stack
 node apps/control-plane/scripts/verify-notes-app.ts # seeded notes-app: sharing rules, as its app users (after --seed)
 (cd apps/edge-main-worker && deno test --allow-read --allow-write)
 ```
@@ -177,9 +180,14 @@ The end-to-end suites create throwaway apps and users and delete them at the end
 
 ## Deploying
 
-Not production ready yet. The stack runs on a single VM with docker compose, as it does locally, but a few pieces are still missing:
-- the domain is hardcoded to `*.localhost` (`deploy/caddy/caddy.json`, `install.sh`);
-- there is no TLS: on-demand TLS with an `ask` endpoint on the control plane is planned;
-- there are no scheduled backups or restore, and no centralized logs (Loki).
+`deploy/install.sh --production --domain <domain> --acme-email <email> --admin-email <email>` installs the platform on
+a Linux VM: HTTPS on `api.`, `admin.`, `studio.` and `<app>.<domain>` with certificates obtained on demand by Caddy
+(Let's Encrypt) for the hosts the control plane approves, publishing through GitHub Actions only
+(`DIRECT_DEPLOY=admins`), no test service. `deploy/upgrade.sh` upgrades it (backups first, apps recycled without
+downtime, verification, rollback instructions). The whole procedure (prerequisites, DNS, firewall, GitHub
+organization, SMTP, backups and the master key, first login, hardening checklist, upgrades and measured downtime) is in
+[docs/INSTALL.md](docs/INSTALL.md).
 
-Target setup ([PLAN_1.md](PLAN_1.md) §9): a Linux VM with 16 GB of RAM or more, a wildcard DNS record `*.<domain>` pointing to it, ports 80 and 443 open, an SMTP relay and an optional S3 bucket for backups, then `install.sh`. Production blockers are tracked as P1 in [docs/TECH_DEBT.md](docs/TECH_DEBT.md).
+Not yet done: centralized logs (Loki), a run on a public VM with Let's Encrypt and a real GitHub organization (the CI
+path has only run against a simulated GitHub). Production blockers are tracked as P1 in
+[docs/TECH_DEBT.md](docs/TECH_DEBT.md).
