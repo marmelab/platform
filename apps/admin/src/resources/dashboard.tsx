@@ -8,6 +8,18 @@ import { bytes, dateTime, StatusBadge } from "./fields";
 import type { BackupStatus } from "./backups";
 
 interface Stats {
+  version: {
+    version: string;
+    since: string | null;
+    components: Record<string, string>;
+    previous: { version: string; started_at: string } | null;
+  };
+  lints: {
+    apps_with_errors: { app: string; errors: number; ran_at: string | null }[];
+    apps_with_warnings: number;
+    apps_linted: number;
+    failed_runs: string[];
+  };
   apps: { total: number; by_status: Record<string, number> };
   users: { total: number; admins: number; developers: number; disabled: number };
   tokens: { active: number };
@@ -77,6 +89,25 @@ export const Dashboard = () => {
             </Link>
           </div>
         </Stat>
+        <Stat title="Security linter">
+          <div data-testid="dashboard-lints">
+            <Link
+              className={stats.lints.apps_with_errors.length ? "text-destructive underline" : "underline"}
+              to={`/apps?filter=${encodeURIComponent(JSON.stringify({ lint_errors: true }))}`}
+            >
+              {stats.lints.apps_with_errors.length} app{stats.lints.apps_with_errors.length === 1 ? "" : "s"} with ERROR lints
+            </Link>
+          </div>
+          {stats.lints.apps_with_errors.slice(0, 5).map((a) => (
+            <div key={a.app} className="text-destructive">
+              <Link className="underline" to={`/apps/${a.app}/show`}>{a.app}</Link>: {a.errors}
+            </div>
+          ))}
+          <div className="text-muted-foreground">
+            {stats.lints.apps_with_warnings} with warnings · {stats.lints.apps_linted} apps linted
+            {stats.lints.failed_runs.length ? ` · last run failed for ${stats.lints.failed_runs.join(", ")}` : ""}
+          </div>
+        </Stat>
         <Stat title="Requests, 24 h (all apps)">
           <div className="flex items-end justify-between gap-2">
             <Big>{count(stats.load.requests_24h)}</Big>
@@ -130,6 +161,25 @@ export const Dashboard = () => {
             {stats.backups.target === "s3" ? "S3" : "local volume only"}
             {stats.backups.last_run?.run_started_at ? ` · last run ${dateTime(stats.backups.last_run.run_started_at)}` : ""}
           </div>
+        </Stat>
+        <Stat title="Platform version">
+          <div data-testid="dashboard-version">
+            <Big>{stats.version.version}</Big>
+          </div>
+          <div className="text-muted-foreground">
+            {stats.version.since ? `since ${dateTime(stats.version.since)}` : ""}
+            {stats.version.previous ? ` · previously ${stats.version.previous.version}` : ""}
+          </div>
+          <details className="mt-1">
+            <summary className="cursor-pointer text-muted-foreground">Components</summary>
+            <ul className="mt-1 font-mono text-xs">
+              {Object.entries(stats.version.components).map(([service, image]) => (
+                <li key={service}>
+                  {service}: {image}
+                </li>
+              ))}
+            </ul>
+          </details>
         </Stat>
         <Stat title="Volumes disk">
           {host.disk ? (

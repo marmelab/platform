@@ -18,7 +18,15 @@ export interface ServiceSpec {
   networks?: string[];
   /** Named volumes, mounted read-only. */
   volumes?: { source: string; target: string }[];
+  /**
+   * HTTP readiness check (port and path, any status below 500): with it, a running container is replaced without
+   * downtime (ensure()).
+   */
+  health?: { port: number; path: string };
 }
+
+/** What ensure() did: nothing, started a stopped container, created one, or replaced a running one. */
+export type EnsureResult = "unchanged" | "started" | "created" | "replaced";
 
 export interface ContainerStatus {
   name: string;
@@ -32,7 +40,11 @@ export interface RawLogLine {
 }
 
 export interface Orchestrator {
-  ensure(spec: ServiceSpec): Promise<void>;
+  /**
+   * Makes the container match the spec (its hash, and the image the tag currently points to). `force` recreates it
+   * anyway (a platform upgrade recycling every app).
+   */
+  ensure(spec: ServiceSpec, options?: { force?: boolean }): Promise<EnsureResult>;
   /** Pulls the image unless it is already present (DEP-1). */
   ensureImage(image: string): Promise<void>;
   removeApp(app: string): Promise<void>;
@@ -41,6 +53,8 @@ export interface Orchestrator {
   status(app: string): Promise<ContainerStatus[]>;
   logs(container: string, sinceSeconds: number, tail: number): Promise<RawLogLine[]>;
   appContainers(app: string): Promise<ContainerStatus[]>;
+  /** Images of the platform's own containers (compose services labelled platform.service), by service. */
+  platformImages(): Promise<Record<string, string>>;
   /** Memory used by a running container (Docker's "MEM USAGE": usage minus inactive page cache), null otherwise. */
   memoryUsage(container: string): Promise<number | null>;
   /** Sends a signal to a running container (PostgREST reloads, pgrst-relay.ts). A stopped or missing one is ignored. */
@@ -51,6 +65,24 @@ export interface Orchestrator {
   exec(container: string, cmd: string[], env?: Record<string, string>): Promise<string>;
   /** Copies local files into a platform container: `<cwd>/<path>` lands at `<dest>/<path>` (parents created). */
   copyTo(container: string, cwd: string, paths: string[], dest: string): Promise<void>;
+}
+
+/** Waits until `url` answers below 500. */
+export async function waitReady(url: string, timeoutMs = 60_000) {
+  const deadline = Date.now() + timeoutMs;
+  let last = "";
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetch(url, { signal: AbortSignal.timeout(2000) });
+      await response.body?.cancel();
+      if (response.status < 500) return;
+      last = `HTTP ${response.status}`;
+    } catch (error) {
+      last = String(error);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  throw new Error(`${url} not ready: ${last}`);
 }
 
 /** Splits Docker's multiplexed log stream (non-TTY) into timestamped lines. */
@@ -96,20 +128,33 @@ export class DockerOrchestrator implements Orchestrator {
     console.log(`pulled ${image}`);
   }
 
-  async ensure(spec: ServiceSpec): Promise<void> {
+  async ensure(spec: ServiceSpec, { force = false }: { force?: boolean } = {}): Promise<EnsureResult> {
     const hash = createHash("sha256").update(JSON.stringify(spec)).digest("hex").slice(0, 16);
     const existing = this.docker.getContainer(spec.name);
     const info = await existing.inspect().catch(() => null);
+    await this.ensureImage(spec.image);
     if (info) {
-      if (info.Config.Labels?.["platform.config-hash"] === hash) {
-        if (!info.State.Running) await existing.start();
-        return;
+      // the tag may point to another image since the container was created (a rebuilt or re-pulled image)
+      const imageId = (await this.docker.getImage(spec.image).inspect()).Id;
+      const current = info.Config.Labels?.["platform.config-hash"] === hash && info.Image === imageId;
+      if (current && !force) {
+        if (info.State.Running) return "unchanged";
+        await existing.start();
+        return "started";
+      }
+      if (info.State.Running && spec.health) {
+        await this.replace(spec, hash, existing);
+        return "replaced";
       }
       await existing.remove({ force: true });
     }
-    await this.ensureImage(spec.image);
+    await this.create(spec, spec.name, hash);
+    return "created";
+  }
+
+  private async create(spec: ServiceSpec, name: string, hash: string) {
     const container = await this.docker.createContainer({
-      name: spec.name,
+      name,
       Image: spec.image,
       Cmd: spec.cmd,
       Env: Object.entries(spec.env).map(([key, value]) => `${key}=${value}`),
@@ -125,9 +170,34 @@ export class DockerOrchestrator implements Orchestrator {
         RestartPolicy: { Name: "unless-stopped" },
         Mounts: spec.volumes?.map((v) => ({ Type: "volume" as const, Source: v.source, Target: v.target, ReadOnly: true })),
       },
+      // a replacement container answers to the service's name too (replace())
+      NetworkingConfig: { EndpointsConfig: { [config.docker.network]: { Aliases: [spec.name] } } },
     });
     for (const network of spec.networks ?? []) await this.docker.getNetwork(network).connect({ Container: container.id });
     await container.start();
+    return container;
+  }
+
+  /**
+   * Replaces a running container without downtime (A8 rolling recycle, configure_auth, SMTP changes): the new
+   * container starts next to the old one as `<name>-next`, with `<name>` as a network alias, so that Caddy's upstream
+   * (`<name>:<port>`, resolved for each new connection) reaches either of them; once it answers its readiness check,
+   * the old one is stopped (graceful, 10 s), removed, and the new one renamed. If the new one never gets ready, it is
+   * removed and the old one keeps serving.
+   */
+  private async replace(spec: ServiceSpec, hash: string, old: Docker.Container) {
+    const nextName = `${spec.name}-next`;
+    await this.docker.getContainer(nextName).remove({ force: true }).catch(() => {});
+    const next = await this.create(spec, nextName, hash);
+    try {
+      await waitReady(`http://${nextName}:${spec.health!.port}${spec.health!.path}`);
+    } catch (error) {
+      await next.remove({ force: true }).catch(() => {});
+      throw new Error(`${spec.name}: the new container did not get ready, the old one keeps serving: ${error}`);
+    }
+    await old.stop({ t: 10 }).catch(() => {});
+    await old.remove({ force: true });
+    await next.rename({ name: spec.name });
   }
 
   async appContainers(app: string): Promise<ContainerStatus[]> {
@@ -144,6 +214,16 @@ export class DockerOrchestrator implements Orchestrator {
 
   status(app: string) {
     return this.appContainers(app);
+  }
+
+  async platformImages(): Promise<Record<string, string>> {
+    const list = await this.docker.listContainers({ all: true, filters: { label: ["platform.service"] } });
+    const images: Record<string, string> = {};
+    for (const c of list) {
+      if (c.Labels["platform.managed"] === "true") continue;
+      images[c.Labels["platform.service"]!] = c.Image;
+    }
+    return Object.fromEntries(Object.entries(images).sort(([a], [b]) => a.localeCompare(b)));
   }
 
   async memoryUsage(container: string): Promise<number | null> {

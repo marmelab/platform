@@ -27,6 +27,11 @@
 //                                                  after a pre_restore backup; a deleted app is recreated; audited)
 //   node src/cli.ts run-backups [<slug>...]        (the daily run now: scheduled backups, retention, failure email)
 //   node src/cli.ts prune-backups [--now <iso date>]   (the retention alone; --now simulates another date)
+//   node src/cli.ts lint-apps [--source manual|upgrade] [<slug>...]  (security linter now, results recorded)
+//   node src/cli.ts recycle-apps [--force] [<slug>...]  (A8: recreates the GoTrue and PostgREST containers whose spec or
+//                                                  image changed, one app at a time, without downtime; --force: all)
+//   node src/cli.ts verify [--json]                (A8: checks the shared services and every app; exit 1 on a failure)
+//   node src/cli.ts version                        (running version, previous one, components)
 import { randomBytes } from "node:crypto";
 import { text } from "node:stream/consumers";
 import type { MemberRole } from "@platform/shared";
@@ -52,12 +57,17 @@ import {
 import { syncCompanySso } from "./app-sso.ts";
 import { backupView, type BackupRow, createManualBackup, pruneBackups, runScheduledBackups } from "./backups.ts";
 import { restoreBackup } from "./restore.ts";
+import { lintApps, type LintSource } from "./lint.ts";
+import { recycleApps } from "./apps.ts";
+import { verifyPlatform } from "./verify.ts";
+import { platformVersion } from "./version.ts";
 
 const USAGE = "usage: cli.ts init | create-user <email> [admin|developer] [token-name] | delete-user <email> | " +
   "set-password <email> [--generate] | add-member <slug> <email> [owner|collaborator] | remove-member <slug> <email> | stop-app <slug> | start-app <slug> | delete-app <slug> [--no-backup] | " +
   "settings | set-setting <key> <value> | unset-setting <key> | sync-auth | sample-metrics | realtime-migrate <slug>|--all | " +
   "backup-app <slug> | list-backups [<slug>] | restore-app <backup-id> --confirm <slug> [--no-safety-backup] | " +
-  "run-backups [<slug>...] | prune-backups [--now <iso date>]";
+  "run-backups [<slug>...] | prune-backups [--now <iso date>] | lint-apps [--source manual|upgrade] [<slug>...] | " +
+  "recycle-apps [--force] [<slug>...] | verify [--json] | version";
 
 const [command, ...args] = process.argv.slice(2);
 
@@ -173,6 +183,40 @@ if (command === "init") {
   if (Number.isNaN(now.getTime())) throw new Error("--now takes an ISO date, e.g. 2026-11-01T03:00:00Z");
   const result = await pruneBackups({ now });
   console.log(JSON.stringify({ pruned: result.pruned.length, errors: result.errors, ids: result.pruned.map((p) => p.id) }));
+} else if (command === "lint-apps") {
+  const at = args.indexOf("--source");
+  const source = (at >= 0 ? args[at + 1] : "manual") as LintSource;
+  if (!["manual", "upgrade"].includes(source)) throw new Error("--source is manual or upgrade");
+  const slugs = args.filter((_, i) => at < 0 || (i !== at && i !== at + 1));
+  const results = await lintApps(source, { only: slugs.length ? slugs : undefined });
+  for (const r of results) {
+    console.log(r.error ? `${r.app}: lint failed: ${r.error}`
+      : `${r.app}: ${r.errors} errors (${r.unaccepted_errors} not accepted), ${r.warnings} warnings, ${r.infos} infos`);
+  }
+  if (results.some((r) => r.error)) process.exitCode = 1;
+} else if (command === "recycle-apps") {
+  const slugs = args.filter((a) => a !== "--force");
+  const results = await recycleApps({ only: slugs.length ? slugs : undefined, force: args.includes("--force") });
+  for (const r of results) {
+    console.log(r.error ? `${r.app}: FAILED after ${r.ms} ms: ${r.error}` : `${r.app}: auth ${r.auth}, rest ${r.rest} (${r.ms} ms)`);
+  }
+  console.log(`${results.filter((r) => !r.error).length}/${results.length} apps recycled`);
+  if (results.some((r) => r.error)) process.exitCode = 1;
+} else if (command === "verify") {
+  const report = await verifyPlatform();
+  if (args.includes("--json")) console.log(JSON.stringify(report, null, 2));
+  else {
+    console.log(`platform ${report.version}: ${report.ok ? "OK" : "FAILED"}`);
+    for (const c of report.shared) console.log(`  ${c.ok ? "ok  " : "FAIL"} ${c.name} (${c.detail})`);
+    for (const a of report.apps) {
+      const failed = a.checks.filter((c) => !c.ok);
+      const lints = a.lints ? `, lints: ${a.lints.unaccepted_errors} errors, ${a.lints.warnings} warnings` : "";
+      console.log(`  ${a.ok ? "ok  " : "FAIL"} ${a.app} (${a.status}${lints})${failed.length ? ": " + failed.map((c) => `${c.name} ${c.detail}`).join("; ") : ""}`);
+    }
+  }
+  if (!report.ok) process.exitCode = 1;
+} else if (command === "version") {
+  console.log(JSON.stringify(await platformVersion(), null, 2));
 } else {
   console.error(USAGE);
   process.exitCode = 1;

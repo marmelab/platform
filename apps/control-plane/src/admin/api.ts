@@ -21,6 +21,8 @@ import { sampleMetrics } from "../metrics.ts";
 import { addMember, removeMember } from "../members.ts";
 import { backupView, type BackupRow, createManualBackup } from "../backups.ts";
 import { restoreBackup } from "../restore.ts";
+import { latestLints, lintApp, lintHistory } from "../lint.ts";
+import { platformVersion } from "../version.ts";
 import { githubServerUrl } from "../oidc.ts";
 import { listSchemaChanges, schemaDrift } from "../schema-changes.ts";
 import { listSecrets } from "../secrets.ts";
@@ -327,6 +329,7 @@ interface AppListRow extends Record<string, unknown> {
   owners: { id: string; email: string; name: string | null }[];
   last_release: LastRelease | null;
   accepted_lints: number;
+  lint: { ran_at: string; errors: number; warnings: number; failed: boolean; unaccepted_errors: number } | null;
   last_request_at: Date | null;
   created_at: Date;
   requests_24h: string;
@@ -363,6 +366,14 @@ const APPS_SQL = `
        where r.app_id = a.id order by r.started_at desc limit 1) x) as last_release,
     (select coalesce(sum(jsonb_array_length(d.manifest->'accepted_lints')), 0)::int from deployments d
       where d.app_id = a.id and d.kind = 'migrations' and jsonb_typeof(d.manifest->'accepted_lints') = 'array') as accepted_lints,
+    -- security linter (lint.ts): the latest run's counts, ERRORs accepted by a migration left out
+    (select json_build_object('ran_at', lr.ran_at, 'errors', lr.errors, 'warnings', lr.warnings, 'failed', lr.error is not null,
+        'unaccepted_errors', (select count(*)::int from jsonb_array_elements(lr.lints) l
+          where l->>'level' = 'ERROR' and not exists (
+            select 1 from deployments d, jsonb_array_elements(d.manifest->'accepted_lints') acc
+             where d.app_id = a.id and d.kind = 'migrations' and jsonb_typeof(d.manifest->'accepted_lints') = 'array'
+               and acc->>'name' = l->>'name' and acc->>'object' = l->>'object')))
+       from lint_runs lr where lr.app_id = a.id order by lr.ran_at desc limit 1) as lint,
     (select max(d.version) from deployments d where d.app_id = a.id and d.kind = 'frontend' and d.status = 'live') as frontend_version,
     (select max(d.version) from deployments d where d.app_id = a.id and d.kind = 'functions' and d.status = 'live') as functions_version,
     (select pg_database_size(db.datname) from pg_database db where db.datname = a.db_name) as db_size,
@@ -420,6 +431,8 @@ function decorateApp(row: AppListRow, github: string, activity: Activity) {
       stopped: row.status === "stopped",
       error: row.status === "error",
       accepted_lints: row.accepted_lints,
+      /** ERROR lints of the latest linter run not accepted by a migration (PLAN_1 §8). */
+      lint_errors: row.lint?.unaccepted_errors ?? 0,
       no_repo: !row.github_repo,
       /** Filled for the returned page only (it reads every app database). */
       schema_drift: null as number | null,
@@ -463,11 +476,12 @@ adminApi.get("/apps", async (c) => {
     stopped: flag("stopped"),
     no_repo: flag("no_repo"),
     accepted_lints: flag("accepted_lints"),
+    lint_errors: flag("lint_errors"),
     schema_drift: flag("schema_drift"),
     last_release_failed: flag("last_release_failed"),
     abandoned: flag("abandoned"),
     flagged: (a, value) =>
-      (a.flags.outside_ci || a.flags.accepted_lints > 0 || a.flags.error || a.flags.last_release_failed ||
+      (a.flags.outside_ci || a.flags.accepted_lints > 0 || a.flags.lint_errors > 0 || a.flags.error || a.flags.last_release_failed ||
         a.flags.abandoned) === truthy(value),
   }, { field: "slug", order: "ASC" });
   return page(c, "apps", driftFilter ? rows : await Promise.all(rows.map(withDrift)), total, params.range);
@@ -544,6 +558,25 @@ adminApi.get("/apps/:slug/logs", async (c) => {
   const sinceMinutes = Math.min(Math.max(Number(c.req.query("since_minutes")) || 60, 1), 7 * 24 * 60);
   const limit = Math.min(Math.max(Number(c.req.query("limit")) || 200, 1), 1000);
   return c.json(await getLogs(app, { service, sinceMinutes, limit, query: c.req.query("q") || undefined }));
+});
+
+/** Security linter (PLAN_1 §8): the latest run with its lints (`accepted` marked), and the previous runs' counts. */
+adminApi.get("/apps/:slug/lints", async (c) => {
+  const app = await appRow(c.req.param("slug"));
+  const history = await lintHistory(app.id, 20);
+  return c.json({
+    app: app.slug,
+    latest: await latestLints(app.id),
+    history: history.map(({ lints: _lints, ...run }) => run),
+  });
+});
+
+/** Runs the linter now ("Run linter"), audited. */
+adminApi.post("/apps/:slug/lint", async (c) => {
+  const app = await appRow(c.req.param("slug"));
+  const run = await lintApp(app, "manual");
+  await audit(c.get("admin").id, app.id, "lint_app", { errors: run.errors, warnings: run.warnings, infos: run.infos });
+  return c.json({ app: app.slug, latest: await latestLints(app.id) });
 });
 
 /** Manual backup now ("Backup now"), audited. Waits for a backup in progress. */
@@ -981,8 +1014,18 @@ adminApi.get("/dashboard", async (c) => {
     }
   }
   const sampled = await one<{ sampled_at: Date | null }>("select sampled_at from metrics_state where id = 1");
+  const linted = records.filter((a) => a.lint);
   return c.json({
+    version: await platformVersion(),
     apps: { total: apps.reduce((n, a) => n + a.count, 0), by_status: Object.fromEntries(apps.map((a) => [a.status, a.count])) },
+    // security linter (PLAN_1 §8): apps whose latest run has ERROR lints not accepted by a migration, or warnings
+    lints: {
+      apps_with_errors: records.filter((a) => a.flags.lint_errors > 0)
+        .map((a) => ({ app: a.slug, errors: a.flags.lint_errors, ran_at: a.lint?.ran_at ?? null })),
+      apps_with_warnings: linted.filter((a) => (a.lint?.warnings ?? 0) > 0).length,
+      apps_linted: linted.length,
+      failed_runs: linted.filter((a) => a.lint?.failed).map((a) => a.slug),
+    },
     users,
     tokens,
     flagged: { ...flagged, abandoned: records.filter((a) => a.flags.abandoned).length },

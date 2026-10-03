@@ -22,6 +22,7 @@ RUN pnpm install --frozen-lockfile --prod --filter @platform/control-plane...
 COPY packages/shared packages/shared
 COPY packages/sql packages/sql
 COPY apps/control-plane/src apps/control-plane/src
+COPY VERSION ./
 COPY --from=admin /repo/apps/admin/dist apps/admin/dist
 WORKDIR /repo/apps/control-plane
 ENV NODE_ENV=production

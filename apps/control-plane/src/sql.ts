@@ -1,10 +1,11 @@
-import { appRoles, lintsSql } from "@platform/sql";
+import { appRoles } from "@platform/sql";
 import type { AcceptedLint, LintResult, Migration } from "@platform/shared";
 import type pg from "pg";
 import { type AppRow, appSecrets, dbId, requireWritable, UserError } from "./apps.ts";
 import { audit } from "./audit.ts";
 import type { Actor, User } from "./auth.ts";
 import { platform, withClient } from "./db.ts";
+import { lintsOf, recordLintRun } from "./lint.ts";
 
 const MAX_ROWS = 200;
 
@@ -20,11 +21,6 @@ export function withOwner<T>(app: AppRow, fn: (client: pg.Client) => Promise<T>,
   );
 }
 
-const lintsOf = async (c: pg.Client) => (await c.query<LintResult>(lintsSql())).rows;
-
-export async function lint(app: AppRow): Promise<LintResult[]> {
-  return withOwner(app, lintsOf);
-}
 
 function pgError(error: unknown) {
   const e = error as { message?: string; code?: string; position?: string; hint?: string };
@@ -140,6 +136,9 @@ export async function applyMigrations(user: Actor, app: AppRow, migrations: Migr
        values ($1, 'migrations', $2, 'live', $3, now(), $4, $5)`,
       [app.id, next.rows[0].v, user.id, JSON.stringify({ applied: pending, accepted_lints: accepted, txid }), releaseId],
     );
+    // the linter's results on the committed schema, kept with the release (admin console, PLAN_1 §8)
+    await recordLintRun(app.id, "migrations", lints, { releaseId })
+      .catch((error) => console.error(`recording the lints of ${app.slug} failed`, error));
   }
   await audit(user.id, app.id, "apply_migrations", {
     applied: pending,

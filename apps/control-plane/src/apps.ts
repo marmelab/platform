@@ -20,7 +20,7 @@ import type { User } from "./auth.ts";
 import { takeBackup } from "./backups.ts";
 import { appUrl, config, internalAppUrl } from "./config.ts";
 import { decrypt, encrypt, randomHex, signJwt } from "./crypto.ts";
-import { many, one, platform, runAll, withAdmin } from "./db.ts";
+import { many, one, platform, runAll, withAdmin, withClient } from "./db.ts";
 import { currentTarget, switchCurrent, writeFileAtomic } from "./fsutil.ts";
 import { DockerOrchestrator, type Orchestrator } from "./orchestrator.ts";
 import { CaddyRouter, type Router } from "./router.ts";
@@ -32,7 +32,7 @@ import { unwatchSchema, watchSchema } from "./pgrst-relay.ts";
 import { authConfig, authEnv, ensureAuthHook, policyApp } from "./app-auth.ts";
 import { ensureCompanySso } from "./app-sso.ts";
 import { getSettings } from "./settings.ts";
-import type { ServiceSpec } from "./orchestrator.ts";
+import type { EnsureResult, ServiceSpec } from "./orchestrator.ts";
 
 export const orchestrator: Orchestrator = new DockerOrchestrator();
 export const router: Router = new CaddyRouter();
@@ -237,6 +237,7 @@ async function authServiceSpec(app: AppRow, secrets: AppSecrets): Promise<Servic
     service: "gotrue",
     memoryMb: 256,
     cmd: ["auth"],
+    health: { port: 9999, path: "/health" },
     env: {
       GOTRUE_API_HOST: "0.0.0.0",
       GOTRUE_API_PORT: "9999",
@@ -268,20 +269,36 @@ const SSO_TEST_CA_DIR = "/etc/platform-test-ca";
 
 /** Recreates the app's GoTrue if its environment changed (configure_auth, SMTP settings), and waits for it. */
 export async function ensureAuthService(app: AppRow) {
-  await orchestrator.ensure(await authServiceSpec(app, appSecrets(app)));
+  await ensureService(await authServiceSpec(app, appSecrets(app)));
   await waitHealthy(`http://${containerName(app.slug, "auth")}:9999/health`);
 }
 
-async function startServices(app: AppRow, secrets: AppSecrets) {
+/**
+ * orchestrator.ensure() under a cluster-wide advisory lock per container: the server's startup sync, a configure_auth
+ * call and the upgrade's `recycle-apps` (another process) never recreate the same container at the same time.
+ */
+async function ensureService(spec: ServiceSpec, options: { force?: boolean } = {}): Promise<EnsureResult> {
+  return withClient({ database: config.pg.platformDb, applicationName: "control-plane-ensure" }, async (c) => {
+    await c.query("select pg_advisory_lock(hashtext($1))", [`container:${spec.name}`]);
+    try {
+      return await orchestrator.ensure(spec, options);
+    } finally {
+      await c.query("select pg_advisory_unlock(hashtext($1))", [`container:${spec.name}`]).catch(() => {});
+    }
+  });
+}
+
+function restServiceSpec(app: AppRow, secrets: AppSecrets): ServiceSpec {
   const slug = app.slug;
   const roles = appRoles(dbId(slug));
-  await orchestrator.ensure(await authServiceSpec(app, secrets));
-  await orchestrator.ensure({
+  return {
     name: containerName(slug, "rest"),
     image: config.docker.postgrestImage,
     app: slug,
     service: "postgrest",
     memoryMb: 256,
+    // the admin server's readiness: connected, schema cache loaded
+    health: { port: 3001, path: "/ready" },
     env: {
       // through the pooler in transaction mode (README.md, "Connection pooler"): no prepared statements, and no LISTEN
       // channel: the control plane relays the "pgrst" notifications as signals (pgrst-relay.ts)
@@ -298,7 +315,45 @@ async function startServices(app: AppRow, secrets: AppSecrets) {
       PGRST_ADMIN_SERVER_PORT: "3001",
       GHCRTS: "-N2",
     },
-  });
+  };
+}
+
+async function startServices(app: AppRow, secrets: AppSecrets, options: { force?: boolean } = {}) {
+  const auth = await ensureService(await authServiceSpec(app, secrets), options);
+  const rest = await ensureService(restServiceSpec(app, secrets), options);
+  return { auth, rest };
+}
+
+/**
+ * A8, platform upgrade: recreates the GoTrue and PostgREST containers of every running app (or the given slugs), one
+ * app at a time, each container replaced only once its successor is ready (orchestrator.replace: no downtime). Only
+ * the containers whose spec or image changed, unless `force`. Then the steps that a new GoTrue or Storage may need:
+ * GoTrue's migrations ran at its start; Studio's `platform_owner_read` policies on auth.users and auth.identities are
+ * re-applied (PG-4), Storage's tenant migrations re-run, the edge config rewritten.
+ */
+export async function recycleApps({ only, force = false }: { only?: string[]; force?: boolean } = {}) {
+  const apps = await many<AppRow>(
+    "select * from apps where status = 'running' and ($1::text[] is null or slug = any($1)) order by slug",
+    [only ?? null],
+  );
+  const results: { app: string; auth?: EnsureResult; rest?: EnsureResult; ms: number; error?: string }[] = [];
+  for (const app of apps) {
+    const started = Date.now();
+    try {
+      await ensurePasswords(app);
+      const secrets = appSecrets(app);
+      const { auth, rest } = await startServices(app, secrets, { force });
+      await waitHealthy(`http://${containerName(app.slug, "auth")}:9999/health`);
+      await waitHealthy(`http://${containerName(app.slug, "rest")}:3001/ready`);
+      await studio.register(app);
+      await registerStorage(app);
+      await writeEdgeConfig(app);
+      results.push({ app: app.slug, auth, rest, ms: Date.now() - started });
+    } catch (error) {
+      results.push({ app: app.slug, ms: Date.now() - started, error: error instanceof Error ? error.message : String(error) });
+    }
+  }
+  return results;
 }
 
 async function prepareDirectories(slug: string) {
