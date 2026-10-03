@@ -762,16 +762,24 @@ describe("control plane M2 e2e", () => {
     // the backup: a restorable dump of the database (schema, data, auth users) and the deployed files
     const inCp = (...args: string[]) => execFileSync("docker", ["exec", "plat-control-plane", ...args]);
     assert.deepEqual(inCp("ls", deleted.backup).toString().trim().split("\n").sort(),
-      ["database.dump", "functions.tar.gz", "manifest.json", "sites.tar.gz"]);
+      ["database.dump", "functions.tar.gz", "manifest.json", "secrets.enc", "sites.tar.gz"]);
+    // M7: recorded as a final backup of the deleted app
+    assert.equal(psql(`select concat_ws(',', kind, status, app_id is null, location) from backups where id = '${deleted.backup_id}'`),
+      `final,succeeded,true,${deleted.backup}`);
     const dump = inCp("cat", `${deleted.backup}/database.dump`);
     assert.ok(dump.length > 10_000, `dump of ${dump.length} bytes`);
     const listing = execFileSync("docker", ["exec", "-i", "plat-db", "pg_restore", "--list"], { input: dump, encoding: "utf8" });
     assert.match(listing, /TABLE public todos /);
     assert.match(listing, /TABLE DATA auth users /);
     assert.match(listing, /TABLE DATA supabase_migrations schema_migrations /);
-    assert.match(inCp("tar", "-tzf", `${deleted.backup}/sites.tar.gz`).toString(), new RegExp(`^${APP}/current`, "m"));
+    // the live versions only (M7)
+    const manifest = JSON.parse(inCp("cat", `${deleted.backup}/manifest.json`).toString());
+    assert.equal(manifest.slug, APP);
+    assert.match(inCp("tar", "-tzf", `${deleted.backup}/sites.tar.gz`).toString(),
+      new RegExp(`^${APP}/v${manifest.versions.frontend}/index.html`, "m"));
     assert.match(inCp("tar", "-tzf", `${deleted.backup}/functions.tar.gz`).toString(), /\/ping\//);
-    assert.equal(JSON.parse(inCp("cat", `${deleted.backup}/manifest.json`).toString()).slug, APP);
+    // the keys and function secrets: encrypted with the platform key, never in clear
+    assert.doesNotMatch(inCp("cat", `${deleted.backup}/secrets.enc`).toString(), /jwt_secret|service_role/);
   });
 
   test("13. delete_app with backup: false: nothing kept, audited as skipped", async () => {
@@ -781,7 +789,7 @@ describe("control plane M2 e2e", () => {
       new RegExp(`irreversible: pass confirm="${NO_BACKUP_APP}"`));
 
     const deleted = await call(admin, "delete_app", { app: NO_BACKUP_APP, confirm: NO_BACKUP_APP, backup: false });
-    assert.deepEqual(deleted, { slug: NO_BACKUP_APP, deleted: true, backup: null, backup_skipped: true });
+    assert.deepEqual(deleted, { slug: NO_BACKUP_APP, deleted: true, backup: null, backup_id: null, backup_skipped: true });
     await refused(admin, "get_app", { app: NO_BACKUP_APP }, /not found/);
     const backups = execFileSync("docker", ["exec", "plat-control-plane", "sh", "-c",
       `ls -d /data/backups/${NO_BACKUP_APP}-* 2>/dev/null || true`], { encoding: "utf8" });

@@ -65,6 +65,8 @@ export async function cleanup(apps: string[], users: string[]) {
     for (const slug of apps.filter((s) => /^[a-z][a-z0-9-]*$/.test(s))) {
       attempt(() => execFileSync("docker", ["exec", "plat-control-plane", "sh", "-c", `rm -rf /data/backups/${slug}-*`]));
     }
+    // their rows (M7; a suite that backs up to S3 removes its objects itself)
+    attempt(() => psql(`delete from backups where slug in (${list(apps)})`));
   }
   // after the apps: an app's creator (apps.owner_id) cannot be deleted while the app exists
   for (const [, email] of existing) attempt(() => cli(["delete-user", email]));
