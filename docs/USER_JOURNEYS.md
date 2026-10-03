@@ -18,7 +18,7 @@ Legend: ✅ done · 🟡 partial · ❌ missing. Milestones refer to [PLAN_1.md]
 | Members management | Both through MCP tools (for the owner) and through the admin UI. |
 | Visibility | A builder only sees the apps they are a member of. No catalog. |
 | App auth configuration | Shared. The builder manages signup, redirect URLs and simple providers. The admin configures the company SSO once; the builder enables it on their app with one click. |
-| App users management | In Studio (Auth tab) and through MCP tools, by any member of the app (owner or collaborator). Until the shared SMTP (M6), an invitation returns its link to the builder, who hands it over. |
+| App users management | In Studio (Auth tab) and through MCP tools, by any member of the app (owner or collaborator). Invitations are emailed through the platform SMTP (M6); on a platform without SMTP, the invitation link is returned to the builder, who hands it over. |
 | Environments | One instance per app, for good. Staging is the builder's local `supabase start`. |
 | Alerts | Admin dashboard, plus an email to the owner of the affected app. |
 | Abandoned apps | After N days without traffic or deployment, the app is flagged to the admin and the owner. The admin decides: put it to sleep, or delete it after a final backup. |
@@ -45,7 +45,7 @@ Trigger: a team member wants to host their first app.
 5. They log into Studio with their credentials.
 
 Channel: admin, then Claude Code + MCP, and Studio.
-Status: 🟡. Local accounts with passwords are done (M0ter). The admin console (M4 phase 1) creates the account (with a password) and issues the PAT, shown once; the `create-user` CLI also exists. Missing: a secure way to hand over the PAT (the admin copies it), and storing the token in the keychain (sensitive `userConfig`).
+Status: 🟡. Local accounts with passwords are done (M0ter). The admin console (M4 phase 1) creates the account (with a password) and issues the PAT, shown once; the `create-user` CLI also exists. With the platform SMTP, an account created in the console gets a welcome email with the Studio URL, without any secret (M6). Missing: a secure way to hand over the PAT (the admin copies it), and storing the token in the keychain (sensitive `userConfig`).
 
 ### B2. First deployment
 Trigger: "deploy the app to the platform" in a Vite + Supabase repo.
@@ -86,7 +86,7 @@ Trigger: invite, delete or unblock an account, count sign-ups.
 2. Or in Claude: dedicated MCP tools.
 
 Channel: Studio and MCP.
-Status: 🟡. Studio is ✅ (M0ter). The MCP tools are ✅ (B5), for any member of the app or an admin: `list_auth_users` (paginated, email filter; read from the database, so it also works on a stopped app), `invite_user`, `delete_user`, `ban_user` and `unban_user` (through the app's GoTrue admin API, audited, refused on a stopped app). Without SMTP, `invite_user` creates the account and returns a single-use invite link (24 h) for the builder to hand over, instead of emailing it; the invitation email comes with M6 (TECH_DEBT CP-16).
+Status: 🟡. Studio is ✅ (M0ter). The MCP tools are ✅ (B5), for any member of the app or an admin: `list_auth_users` (paginated, email filter; read from the database, so it also works on a stopped app), `invite_user`, `delete_user`, `ban_user` and `unban_user` (through the app's GoTrue admin API, audited, refused on a stopped app). `invite_user` emails the invitation through the platform SMTP (M6, single-use link valid 24 h, never returned to the caller); only on a platform without SMTP does it return the link for the builder to hand over (TECH_DEBT CP-16). Invitations respect the app's allowed email domains (B6).
 
 ### B6. App auth and SSO
 Trigger: an internal app restricted to employees, or a public app.
@@ -95,7 +95,7 @@ Trigger: an internal app restricted to employees, or a public app.
 3. Sender and email templates.
 
 Channel: Claude Code + MCP.
-Status: ❌ M6.
+Status: 🟡 (M6 part 1). `configure_auth` ✅ (owner or admin, audited, refused on a stopped app): sign-up on or off (invitations still work), email confirmation, allowed email domains (GoTrue's before-user-created hook: sign-ups and invitations outside them are refused), extra redirect URLs (the app's own URL is always allowed), sender name and address (address within the platform sender's domain, any for admins). The app's Auth restarts for a few seconds; `get_app` and the admin console's app page show the policy in effect. Missing ❌: simple OAuth providers, company SSO (A7, M6 part 2), custom email templates (TECH_DEBT CP-17).
 
 ### B7. Sharing an app
 Trigger: a colleague needs to co-maintain the app.
@@ -119,14 +119,14 @@ Status: 🟡. The MCP tools `stop_app`, `start_app` and `delete_app` exist, for 
 ## Admin journeys
 
 ### A1. Installation
-1. Prerequisites: a VM with 16 GB or more, a wildcard DNS record, ports 80 and 443, an SMTP server, an S3 bucket, a GitHub organization (github.com or GitHub Enterprise Server). The control plane API must be reachable from the GitHub Actions runners (or self-hosted runners in the company network), and the control plane must reach the GitHub OIDC issuer.
+1. Prerequisites: a VM with 16 GB or more, a wildcard DNS record, ports 80 and 443, an SMTP server (relay), an S3 bucket, a GitHub organization (github.com or GitHub Enterprise Server). The control plane API must be reachable from the GitHub Actions runners (or self-hosted runners in the company network), and the control plane must reach the GitHub OIDC issuer.
 2. `install.sh`: secrets, startup, initialization, first admin.
 3. Domain and on-demand TLS.
 4. Publishing the internal repo that holds the plugin marketplace and the reusable deploy workflow, and adding the company checks to that workflow.
 5. Platform settings: the GitHub organization, the OIDC issuer, the allowed `job_workflow_ref` values; organization variable `PLATFORM_URL`.
 
 Channel: shell.
-Status: 🟡. `install.sh` works locally (and writes `DIRECT_DEPLOY=everyone`), but `api.localhost` is hardcoded, and there is neither the TLS `ask` endpoint nor Loki. The platform settings of step 5 exist (`OIDC_ISSUER`, `OIDC_AUDIENCE`, `CI_ALLOWED_WORKFLOWS`, `DIRECT_DEPLOY`, in the environment or with the `set-setting` CLI); `install.sh` does not ask for them yet.
+Status: 🟡. `install.sh` works locally (and writes `DIRECT_DEPLOY=everyone`), but `api.localhost` is hardcoded, and there is neither the TLS `ask` endpoint nor Loki. The platform settings of step 5 exist (`OIDC_ISSUER`, `OIDC_AUDIENCE`, `CI_ALLOWED_WORKFLOWS`, `DIRECT_DEPLOY`, in the environment or with the `set-setting` CLI); `install.sh` does not ask for them yet. The platform SMTP (M6) is set the same way (`SMTP_*`, `smtp_*` settings); local installs send every email to a mailpit catcher (`http://localhost:8025`).
 
 ### A2. Builders, tokens and quotas
 1. Create a builder (email, password).
@@ -144,7 +144,7 @@ Status: 🟡. Admin console (M4 phase 1): accounts (create with a password, role
 4. Audit log.
 
 Channel: admin and email.
-Status: 🟡. Admin console dashboard (M4 phase 1): apps by status, flagged apps (deployed outside CI, accepted lints), failures of the last 7 days (failed releases and deployments, apps in error), accounts, Postgres cluster size, host memory, CPU load and volumes disk; audit log screen with filters (app, user, action, search). Per-app load (M4 phase 2): requests and 5xx of every app over 24 h with a 7-day sparkline, memory of the app containers, and abandoned apps on the dashboard; per-app load in the apps list and an hourly chart on the app page (`app_metrics`, sampled every minute from Caddy's access log, `pg_database_size` and Docker stats). Missing ❌: email alerts, `BOOT_ERROR` and linter results (lints are only stored when accepted), failed backups (no scheduled backups, M7), alerts on error rates.
+Status: 🟡. Admin console dashboard (M4 phase 1): apps by status, flagged apps (deployed outside CI, accepted lints), failures of the last 7 days (failed releases and deployments, apps in error), accounts, Postgres cluster size, host memory, CPU load and volumes disk; audit log screen with filters (app, user, action, search). Per-app load (M4 phase 2): requests and 5xx of every app over 24 h with a 7-day sparkline, memory of the app containers, and abandoned apps on the dashboard; per-app load in the apps list and an hourly chart on the app page (`app_metrics`, sampled every minute from Caddy's access log, `pg_database_size` and Docker stats). Email: only the abandoned-app notice to owners (A6, M6). Missing ❌: other email alerts, `BOOT_ERROR` and linter results (lints are only stored when accepted), failed backups (no scheduled backups, M7), alerts on error rates.
 
 ### A4. Backups and restore
 Daily backup of each database to S3, with retention, failure tracking and restore into the same app.
@@ -166,7 +166,7 @@ Status: 🟡. Admin console (M4 phase 1): disable the account (its sessions end 
 2. The admin decides: put it to sleep, or delete it after a final backup.
 
 Channel: admin and email.
-Status: 🟡. Admin console (M4 phase 2): an app whose last request, last release and creation are all older than the `abandoned_after_days` setting (30 days by default) is flagged "abandoned" in the apps list (with a filter) and counted on the dashboard (step 1, admin side); the app page has Stop and Delete with the final backup (step 2). Requests come from Caddy's access log (`apps.last_request_at`), and no app is flagged before the metrics have been collected for N days. Missing ❌: the email to the owner (M6).
+Status: 🟡. Admin console (M4 phase 2): an app whose last request, last release and creation are all older than the `abandoned_after_days` setting (30 days by default) is flagged "abandoned" in the apps list (with a filter) and counted on the dashboard (step 1, admin side); the app page has Stop and Delete with the final backup (step 2). Requests come from Caddy's access log (`apps.last_request_at`), and no app is flagged before the metrics have been collected for N days. The owners are emailed once per transition through the platform SMTP (M6): "Your app ... looks abandoned", with what the admin may do and how to keep the app (recorded and audited, sent again only after the app was active in between; stopped apps are not notified) ✅. Missing ❌: a reminder to the admin by email (the console flag only).
 
 ### A7. Platform company SSO
 The admin configures the company's OIDC and SAML providers once. Builders then enable them on their apps (B6).
@@ -206,7 +206,7 @@ Status: 🟡. Control plane ✅: with `DIRECT_DEPLOY=admins`, only admins publis
 
 ### U1. Email sign-up and login
 Sign-up, email confirmation, login, then access to data under RLS.
-Status: 🟡. Sign-up, login and RLS are verified. Confirmation is automatic as long as there is no SMTP (M6).
+Status: ✅ (M6). Sign-up, email confirmation (GoTrue's default email through the platform SMTP, link on the app's `/auth/v1/verify`, then a session on the app), login and RLS are verified end to end (e2e with mailpit). The builder can turn confirmation off or restrict sign-ups (B6). On a platform without SMTP, users are confirmed automatically. Emails use GoTrue's default English templates (TECH_DEBT CP-17).
 
 ### U2. Company SSO login
 "Sign in with Entra ID / Google", account created on first login, rejected if the domain is not allowed.
@@ -218,7 +218,7 @@ Status: ✅.
 
 ### U4. Password reset
 Email sent through the shared SMTP, then a reset page in the app.
-Status: ❌ M6.
+Status: ✅ (M6). `supabase.auth.resetPasswordForEmail(email, { redirectTo })` sends the email, the link signs the user in on the app's page (`redirectTo` within the app's URL or its allowed redirect URLs, the app's URL otherwise) with a recovery session, and `updateUser({ password })` sets the new password: verified end to end with supabase-js (e2e with mailpit). The reset page itself is the app's (the examples do not have one).
 
 ### U5. Files
 Upload, list and download files with `supabase.storage`, restricted by the app's policies on `storage.objects` (e.g. one folder per user); public buckets for public assets.
