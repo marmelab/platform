@@ -20,7 +20,18 @@ export interface AuthConfig {
   /** Sender of the app's emails; null: the app's name and the platform sender address. */
   sender_name: string | null;
   sender_email: string | null;
+  /** M6 part 2 (U2): "company" adds the platform's company SSO to the app's GoTrue (app-sso.ts). */
+  sso_provider: "company" | null;
   updated_at: Date | null;
+}
+
+/** The app's company SSO provider in GoTrue: supabase-js signs in with signInWithOAuth({ provider: this }). */
+export const COMPANY_SSO_PROVIDER = "custom:company";
+
+/** The platform's company SSO, as the app policy needs it (no secret). */
+export interface CompanySso {
+  name: string;
+  active: boolean;
 }
 
 export const DEFAULT_AUTH: AuthConfig = {
@@ -30,6 +41,7 @@ export const DEFAULT_AUTH: AuthConfig = {
   redirect_urls: [],
   sender_name: null,
   sender_email: null,
+  sso_provider: null,
   updated_at: null,
 };
 
@@ -118,7 +130,7 @@ export function authHookSql(authAdminRole: string, domains: string[]): string[] 
 }
 
 /** get_app and the admin console: the stored policy and what is in effect. No secret. */
-export function authView(app: PolicyApp, auth: AuthConfig, smtp: SmtpSettings | null) {
+export function authView(app: PolicyApp, auth: AuthConfig, smtp: SmtpSettings | null, companySso: CompanySso | null = null) {
   const sender = appSender(app, auth, smtp);
   return {
     signup_enabled: auth.signup_enabled,
@@ -134,6 +146,18 @@ export function authView(app: PolicyApp, auth: AuthConfig, smtp: SmtpSettings | 
     sender_email: sender.email,
     sender_overridden: auth.sender_name !== null || auth.sender_email !== null,
     email_templates: "default",
+    sso: auth.sso_provider === "company"
+      ? {
+        provider: "company",
+        name: companySso?.name ?? null,
+        /** False while the platform's company SSO is off or incomplete: the app's provider is then removed. */
+        effective: Boolean(companySso?.active),
+        gotrue_provider: COMPANY_SSO_PROVIDER,
+        /** Redirect URI to register at the identity provider for the platform's SSO client. */
+        callback_url: `${app.url}/auth/v1/callback`,
+        sign_in: `supabase.auth.signInWithOAuth({ provider: "${COMPANY_SSO_PROVIDER}", options: { redirectTo } })`,
+      }
+      : null,
     updated_at: auth.updated_at,
   };
 }

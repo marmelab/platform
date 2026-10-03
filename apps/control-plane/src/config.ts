@@ -140,6 +140,27 @@ export const config = {
     smtpPassword: optional("SMTP_PASSWORD") ?? "",
     smtpSenderEmail: optional("SMTP_SENDER_EMAIL") ?? "",
     smtpSenderName: optional("SMTP_SENDER_NAME") ?? "Platform",
+    /** Company SSO (M6 part 2, sso.ts): off until an admin configures it (admin console, SSO). */
+    ssoEnabled: optional("SSO_ENABLED") ?? "false",
+    ssoName: optional("SSO_NAME") ?? "company SSO",
+    ssoIssuer: optional("SSO_ISSUER") ?? "",
+    ssoDiscoveryUrl: optional("SSO_DISCOVERY_URL") ?? "",
+    ssoClientId: optional("SSO_CLIENT_ID") ?? "",
+    ssoClientSecret: optional("SSO_CLIENT_SECRET") ?? "",
+    ssoAllowedDomains: optional("SSO_ALLOWED_DOMAINS") ?? "",
+    ssoRequireVerifiedEmail: optional("SSO_REQUIRE_VERIFIED_EMAIL") ?? "true",
+    ssoAutoCreate: optional("SSO_AUTO_CREATE") ?? "off",
+    ssoPasswordLogin: optional("SSO_PASSWORD_LOGIN") ?? "everyone",
+  },
+  /**
+   * Local installs only (written by deploy/install.sh, never in production): the mock IdP of the dev stack (`idp`
+   * service, profile sso-test) is reached by the apps' GoTrue over HTTPS on a network with a non-private address
+   * (GoTrue refuses private and plain-HTTP issuers for custom providers). Each app's GoTrue joins this network and
+   * trusts the mock's CA (volume mounted on /etc/platform-test-ca).
+   */
+  ssoTest: {
+    network: optional("SSO_TEST_NETWORK"),
+    caVolume: optional("SSO_TEST_CA_VOLUME"),
   },
   /**
    * SEC-10: the test-only `oidc_jwks` setting (inline JWKS trusted by the CI API) is honoured only with

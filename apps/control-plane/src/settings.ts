@@ -24,6 +24,55 @@ export interface Settings {
   metricsRetentionDays: number;
   /** Platform SMTP (M6): null when no host or no sender address is set (apps then auto-confirm their users). */
   smtp: SmtpSettings | null;
+  /** Company SSO (M6 part 2, sso.ts): platform login (A7) and the apps' "custom:company" provider (U2). */
+  sso: SsoSettings;
+}
+
+export type SsoAutoCreate = "off" | "developer";
+export type PasswordLogin = "everyone" | "admins";
+
+export interface SsoSettings {
+  /** Turned on by an admin; effective only when `configured` (ssoActive). */
+  enabled: boolean;
+  /** Issuer, client id and secret are all set. */
+  configured: boolean;
+  /** Shown on the buttons ("Sign in with <name>") and as the provider name in the apps' GoTrue. */
+  name: string;
+  issuer: string;
+  /** Where the control plane reads the discovery document; `<issuer>/.well-known/openid-configuration` by default. */
+  discoveryUrl: string;
+  clientId: string;
+  /** Never returned by an API, never logged. Stored encrypted in the settings table. */
+  clientSecret: string;
+  /** Lowercase email domains allowed to sign in to the platform with SSO; empty: any address the IdP vouches for. */
+  allowedDomains: string[];
+  /** Refuse an ID token whose `email_verified` is not true (turn off for IdPs that never send it, e.g. Entra ID). */
+  requireVerifiedEmail: boolean;
+  /** Unknown email: refuse ("off", the default) or create a developer account (just-in-time provisioning). */
+  autoCreate: SsoAutoCreate;
+  /** "admins": password sign-in is refused to developers while SSO is active (admins keep it: break-glass). */
+  passwordLogin: PasswordLogin;
+}
+
+/** SSO usable: turned on and fully configured. */
+export const ssoActive = (sso: SsoSettings) => sso.enabled && sso.configured;
+
+/** What may be shown of the SSO settings (CLI, admin API): no client secret. */
+export function ssoSummary(sso: SsoSettings) {
+  return {
+    enabled: sso.enabled,
+    configured: sso.configured,
+    active: ssoActive(sso),
+    name: sso.name,
+    issuer: sso.issuer || null,
+    discovery_url: sso.discoveryUrl || null,
+    client_id: sso.clientId || null,
+    client_secret_set: sso.clientSecret !== "",
+    allowed_domains: sso.allowedDomains,
+    require_verified_email: sso.requireVerifiedEmail,
+    auto_create: sso.autoCreate,
+    password_login: sso.passwordLogin,
+  };
 }
 
 export interface SmtpSettings {
@@ -67,12 +116,33 @@ export const SETTING_KEYS = {
   smtp_password: "SMTP_PASSWORD",
   smtp_sender_email: "SMTP_SENDER_EMAIL",
   smtp_sender_name: "SMTP_SENDER_NAME",
+  sso_enabled: "SSO_ENABLED",
+  sso_name: "SSO_NAME",
+  sso_issuer: "SSO_ISSUER",
+  sso_discovery_url: "SSO_DISCOVERY_URL",
+  sso_client_id: "SSO_CLIENT_ID",
+  sso_client_secret: "SSO_CLIENT_SECRET",
+  sso_allowed_domains: "SSO_ALLOWED_DOMAINS",
+  sso_require_verified_email: "SSO_REQUIRE_VERIFIED_EMAIL",
+  sso_auto_create: "SSO_AUTO_CREATE",
+  sso_password_login: "SSO_PASSWORD_LOGIN",
 } as const;
 
 /** Settings that change every app's GoTrue environment: setting them re-provisions the apps' Auth (app-auth.ts). */
 export const SMTP_KEYS = ["smtp_host", "smtp_port", "smtp_user", "smtp_password", "smtp_sender_email", "smtp_sender_name"];
+/** Settings of the company SSO provider: changing them updates the apps' "custom:company" provider (app-sso.ts). */
+export const SSO_PROVIDER_KEYS = ["sso_enabled", "sso_name", "sso_issuer", "sso_client_id", "sso_client_secret"];
 /** Stored encrypted with the master key. */
-const ENCRYPTED_KEYS = ["smtp_password"];
+const ENCRYPTED_KEYS = ["smtp_password", "sso_client_secret"];
+const BOOLEANS = ["sso_enabled", "sso_require_verified_email"];
+const bool = (key: string, value: string) => {
+  if (value !== "true" && value !== "false") throw new Error(`${key} must be true or false`);
+  return value === "true";
+};
+/** Same pattern as the apps' allowed email domains (auth-policy.ts). */
+const SSO_DOMAIN_RE = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]{0,61}[a-z0-9]$/;
+export const parseDomains = (value: string) =>
+  [...new Set(value.split(",").map((d) => d.trim().toLowerCase().replace(/^@/, "")).filter(Boolean))].sort();
 const EMAIL_RE = /^[^\s@<>,"]+@[^\s@<>,"]+\.[^\s@<>,"]+$/;
 
 const DAYS = ["abandoned_after_days", "metrics_retention_days"];
@@ -97,6 +167,28 @@ export function validateSetting(key: string, value: string): asserts key is Sett
   }
   if (key === "smtp_host" && /[\s,]/.test(value)) throw new Error("smtp_host must be a host name");
   if (key === "smtp_sender_name" && /[\r\n<>"]/.test(value)) throw new Error("smtp_sender_name: no quotes, angle brackets or line breaks");
+  if (BOOLEANS.includes(key)) bool(key, value);
+  if (key === "sso_auto_create" && !["off", "developer"].includes(value)) throw new Error("sso_auto_create must be off or developer");
+  if (key === "sso_password_login" && !["everyone", "admins"].includes(value)) {
+    throw new Error("sso_password_login must be everyone or admins");
+  }
+  if ((key === "sso_issuer" || key === "sso_discovery_url") && value !== "") {
+    let url: URL;
+    try {
+      url = new URL(value);
+    } catch {
+      throw new Error(`${key} must be a URL`);
+    }
+    if (url.protocol !== "https:" && url.protocol !== "http:") throw new Error(`${key} must be an http(s) URL`);
+    if (url.search || url.hash) throw new Error(`${key}: no query string nor fragment`);
+  }
+  if (key === "sso_allowed_domains") {
+    for (const d of parseDomains(value)) if (!SSO_DOMAIN_RE.test(d)) throw new Error(`invalid email domain "${d}"`);
+  }
+  if (key === "sso_name" && (value.trim() === "" || value.length > 60 || /[\r\n<>"]/.test(value))) {
+    throw new Error("sso_name: 1 to 60 characters, no quotes, angle brackets or line breaks");
+  }
+  if (key === "sso_client_id" && /[\s]/.test(value)) throw new Error("sso_client_id: no whitespace");
   if (key === "oidc_jwks") {
     if (!config.allowTestOidcJwks) {
       throw new Error("oidc_jwks is test only: it requires ALLOW_TEST_OIDC_JWKS=1 on the control plane (local installs)");
@@ -117,6 +209,10 @@ export async function getSettings(): Promise<Settings> {
   const issuer = (rows.get("oidc_issuer") ?? d.oidcIssuer).replace(/\/+$/, "");
   const smtpPassword = rows.has("smtp_password") ? decrypt(rows.get("smtp_password")!) : d.smtpPassword;
   const smtpHost = rows.get("smtp_host") ?? d.smtpHost;
+  // kept as typed: the ID token's `iss` must match it exactly (some IdPs end it with a slash)
+  const ssoIssuer = rows.get("sso_issuer") ?? d.ssoIssuer;
+  const ssoClientId = rows.get("sso_client_id") ?? d.ssoClientId;
+  const ssoClientSecret = rows.has("sso_client_secret") ? decrypt(rows.get("sso_client_secret")!) : d.ssoClientSecret;
   const smtpSender = rows.get("smtp_sender_email") ?? d.smtpSenderEmail;
   return {
     directDeploy,
@@ -140,6 +236,20 @@ export async function getSettings(): Promise<Settings> {
         senderName: rows.get("smtp_sender_name") ?? d.smtpSenderName,
       }
       : null,
+    sso: {
+      enabled: bool("sso_enabled", rows.get("sso_enabled") ?? d.ssoEnabled),
+      configured: Boolean(ssoIssuer && ssoClientId && ssoClientSecret),
+      name: rows.get("sso_name") ?? d.ssoName,
+      issuer: ssoIssuer,
+      discoveryUrl: (rows.get("sso_discovery_url") ?? d.ssoDiscoveryUrl) ||
+        (ssoIssuer ? `${ssoIssuer.replace(/\/+$/, "")}/.well-known/openid-configuration` : ""),
+      clientId: ssoClientId,
+      clientSecret: ssoClientSecret,
+      allowedDomains: parseDomains(rows.get("sso_allowed_domains") ?? d.ssoAllowedDomains),
+      requireVerifiedEmail: bool("sso_require_verified_email", rows.get("sso_require_verified_email") ?? d.ssoRequireVerifiedEmail),
+      autoCreate: (rows.get("sso_auto_create") ?? d.ssoAutoCreate) as SsoAutoCreate,
+      passwordLogin: (rows.get("sso_password_login") ?? d.ssoPasswordLogin) as PasswordLogin,
+    },
   };
 }
 

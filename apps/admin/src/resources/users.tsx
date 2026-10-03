@@ -140,6 +140,11 @@ export const UserEdit = () => (
         helperText="Leave empty to keep the current one; setting it signs the user out everywhere"
         validate={minPassword}
       />
+      <BooleanInput
+        source="sso_linked"
+        label="Linked to an SSO identity"
+        helperText="Set at the first company SSO sign-in. Turn off to unlink: the next SSO sign-in links the account again by its email"
+      />
     </SimpleForm>
     <UserRelated />
   </Edit>

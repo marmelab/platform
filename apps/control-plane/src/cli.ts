@@ -12,8 +12,9 @@
 //                                                     fails; --no-backup skips it: the data is lost for good)
 //   node src/cli.ts settings                       (effective platform settings)
 //   node src/cli.ts set-setting <key> <value>      (overrides the environment, e.g. direct_deploy admins; smtp_password
-//                                                  is read from stdin when the value is "-"; an smtp_* change recreates
-//                                                  the GoTrue of every running app, one at a time)
+//                                                  and sso_client_secret are read from stdin when the value is "-"; an
+//                                                  smtp_* change recreates the GoTrue of every running app, one at a
+//                                                  time; an sso_* provider change updates the apps using company SSO)
 //   node src/cli.ts unset-setting <key>            (back to the environment's value)
 //   node src/cli.ts sync-auth                      (recreates the GoTrue of running apps whose environment changed)
 //   node src/cli.ts sample-metrics                 (samples app_metrics now, as the control plane does every minute)
@@ -30,7 +31,8 @@ import { registerRealtime } from "./storage-realtime.ts";
 import { sampleMetrics } from "./metrics.ts";
 import { addMember, removeMember } from "./members.ts";
 import { setPassword } from "./sessions.ts";
-import { getSettings, setSetting, SMTP_KEYS, smtpSummary, unsetSetting } from "./settings.ts";
+import { getSettings, setSetting, SMTP_KEYS, smtpSummary, SSO_PROVIDER_KEYS, ssoSummary, unsetSetting } from "./settings.ts";
+import { syncCompanySso } from "./app-sso.ts";
 
 const USAGE = "usage: cli.ts init | create-user <email> [admin|developer] [token-name] | delete-user <email> | " +
   "set-password <email> [--generate] | add-member <slug> <email> [owner|collaborator] | remove-member <slug> <email> | stop-app <slug> | start-app <slug> | delete-app <slug> [--no-backup] | " +
@@ -96,16 +98,20 @@ if (command === "init") {
     ...settings,
     oidcJwks: settings.oidcJwks ? "(inline JWKS set: test only)" : null,
     smtp: smtpSummary(settings.smtp),
+    sso: ssoSummary(settings.sso),
   }, null, 2));
 } else if (command === "set-setting" && args[0] && args[1] !== undefined) {
-  const value = args[0] === "smtp_password" && args[1] === "-" ? (await text(process.stdin)).trim() : args[1];
+  const secret = args[0] === "smtp_password" || args[0] === "sso_client_secret";
+  const value = secret && args[1] === "-" ? (await text(process.stdin)).trim() : args[1];
   await setSetting(args[0], value);
   console.log(`${args[0]} set`);
   if (SMTP_KEYS.includes(args[0])) await syncAuth();
+  if (SSO_PROVIDER_KEYS.includes(args[0])) console.log(JSON.stringify(await syncCompanySso()));
 } else if (command === "unset-setting" && args[0]) {
   await unsetSetting(args[0]);
   console.log(`${args[0]} unset`);
   if (SMTP_KEYS.includes(args[0])) await syncAuth();
+  if (SSO_PROVIDER_KEYS.includes(args[0])) console.log(JSON.stringify(await syncCompanySso()));
 } else if (command === "sync-auth") {
   await syncAuth();
 } else if (command === "sample-metrics") {

@@ -63,8 +63,11 @@ async function findAuthUser(app: AppRow, ref: { user_id?: string; email?: string
   return rows[0]!;
 }
 
-/** GoTrue's admin API, reached directly on the app network with a service_role JWT valid one minute. */
-async function gotrueAdmin(app: AppRow, method: string, path: string, body?: unknown) {
+/**
+ * GoTrue's admin API, reached directly on the app network with a service_role JWT valid one minute. `allowNotFound`
+ * returns null on a 404 instead of throwing.
+ */
+export async function gotrueAdmin(app: AppRow, method: string, path: string, body?: unknown, { allowNotFound = false } = {}) {
   const iat = Math.floor(Date.now() / 1000);
   const claims = { iss: "supabase", ref: app.slug, role: "service_role", iat, exp: iat + 60 };
   const token = signJwt(claims, appSecrets(app).jwt_secret);
@@ -87,6 +90,7 @@ async function gotrueAdmin(app: AppRow, method: string, path: string, body?: unk
       return null;
     }
   })();
+  if (allowNotFound && response.status === 404) return null;
   if (!response.ok) {
     const message = json?.msg ?? json?.message ?? json?.error_description ?? text.slice(0, 500);
     const error = `GoTrue ${method} ${path.split("?")[0]}: ${response.status} ${message}`;

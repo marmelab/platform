@@ -14,13 +14,30 @@ const layout = (title: string, body: string) => `<!doctype html>
   input { border: 1px solid #8886; background: Field; color: FieldText; }
   button { margin-top: 1.25rem; border: 0; background: #3ecf8e; color: #111; font-weight: 600; cursor: pointer; }
   .error { color: #e5484d; }
+  a.button { display: block; box-sizing: border-box; width: 100%; padding: .55rem .7rem; border-radius: 6px; text-align: center;
+    text-decoration: none; background: #3ecf8e; color: #111; font-weight: 600; }
+  .muted { margin: 1.25rem 0 0; font-size: .875rem; opacity: .75; }
 </style></head><body><main>${body}</main></body></html>`;
 
-export function loginPage({ next, email = "", error }: { next: string; email?: string; error?: string }) {
+export interface SsoOption {
+  /** Shown as "Sign in with <name>". */
+  name: string;
+  /** "admins": the password form is the admins' break-glass access. */
+  passwordLogin: "everyone" | "admins";
+}
+
+export function loginPage(
+  { next, email = "", error, sso }: { next: string; email?: string; error?: string; sso?: SsoOption | null },
+) {
+  const ssoButton = sso
+    ? `<a class="button" href="/_platform/sso/start?next=${encodeURIComponent(next)}">Sign in with ${escape(sso.name)}</a>
+<p class="muted">${sso.passwordLogin === "admins" ? "Password sign-in is reserved to platform admins." : "Or with your platform password:"}</p>`
+    : "";
   return layout(
     "Sign in · Platform Studio",
     `<h1>Sign in to Studio</h1>
 ${error ? `<p class="error" role="alert">${escape(error)}</p>` : ""}
+${ssoButton}
 <form method="post" action="/_platform/login">
   <input type="hidden" name="next" value="${escape(next)}">
   <label for="email">Email</label>
