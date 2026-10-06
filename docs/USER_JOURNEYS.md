@@ -102,7 +102,7 @@ Status: 🟡 (M6). `configure_auth` ✅ (owner or admin, audited, refused on a s
 Trigger: a colleague needs to co-maintain the app.
 1. The owner adds the colleague as a collaborator, through an MCP tool or through the admin UI.
 2. The owner gives the colleague write access to the GitHub repo (outside the platform).
-3. The colleague clones the repo (`.platform.json` is committed) and ships through PRs; CI deploys. Their PAT is used for logs, SQL reads, secrets and rollback.
+3. The colleague clones the repo (`.platform.json` is committed) and ships through PRs; CI deploys. Their Claude Code, signed in to the platform through the browser (B1), handles logs, SQL reads, secrets and rollback.
 4. The app shows up in their `whoami` and in their Studio.
 
 Channel: Claude Code + MCP (owner), GitHub, and admin.
