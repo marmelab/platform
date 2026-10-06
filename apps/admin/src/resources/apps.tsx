@@ -257,30 +257,26 @@ function DeleteAppButton({ app }: { app: AppRecord }) {
   );
 }
 
-const AppActions = ({ app }: { app: AppRecord }) => (
-  <div className="flex flex-wrap items-start gap-2">
-    {app.status === "stopped" ? (
-      <ActionButton
-        label="Start"
-        icon={<Play />}
-        action={() => api(`/apps/${app.slug}/start`, { body: {} })}
-        successMessage="App started"
-      />
-    ) : (
-      <ActionButton
-        label="Stop"
-        icon={<Square />}
-        action={() => api(`/apps/${app.slug}/stop`, { body: {} })}
-        confirm={{
-          title: `Stop ${app.slug}?`,
-          content: "The app is replaced by a maintenance page, its containers are stopped and its database becomes read-only.",
-        }}
-        successMessage="App stopped"
-      />
-    )}
-    <DeleteAppButton app={app} />
-  </div>
-);
+const StartStopButton = ({ app }: { app: AppRecord }) =>
+  app.status === "stopped" ? (
+    <ActionButton
+      label="Start"
+      icon={<Play />}
+      action={() => api(`/apps/${app.slug}/start`, { body: {} })}
+      successMessage="App started"
+    />
+  ) : (
+    <ActionButton
+      label="Stop"
+      icon={<Square />}
+      action={() => api(`/apps/${app.slug}/stop`, { body: {} })}
+      confirm={{
+        title: `Stop ${app.slug}?`,
+        content: "The app is replaced by a maintenance page, its containers are stopped and its database becomes read-only.",
+      }}
+      successMessage="App stopped"
+    />
+  );
 
 /** Load of the app (app_metrics): stat tiles and requests per hour over 7 days. */
 function Load({ app }: { app: AppRecord }) {
@@ -360,7 +356,10 @@ const Overview = ({ app }: { app: AppRecord }) => (
   <div className="flex flex-col gap-6">
     <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
       <Field label="Status">
-        <StatusBadge status={app.status} />
+        <div className="flex items-center gap-2">
+          <StatusBadge status={app.status} />
+          <StartStopButton app={app} />
+        </div>
         {app.error && <p className="mt-1 text-destructive">{app.error}</p>}
       </Field>
       <Field label="URL">
@@ -409,7 +408,9 @@ const Overview = ({ app }: { app: AppRecord }) => (
     </Field>
     <Load app={app} />
     {app.auth && <AuthPolicyCard auth={app.auth} />}
-    <AppActions app={app} />
+    <div>
+      <DeleteAppButton app={app} />
+    </div>
   </div>
 );
 
