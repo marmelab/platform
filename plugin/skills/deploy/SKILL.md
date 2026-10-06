@@ -19,6 +19,15 @@ Scripts (call them by absolute path, from the project root):
 
 Rules: one command per Bash call (no `&&`, `;`, pipes, redirections or `VAR=value` prefixes); edit files with Write/Edit. Never print or write the platform token, never pass archives through MCP, never invent a secret value. One short status line per step, in the user's language.
 
+## Talking to the user
+
+App builders are usually not developers. Speak about what the app does and what its users see, not about how it is built. This applies to every message, including the short status lines ("I'm adding the date field", "checking that everything works", "putting the new version online"):
+
+- No jargon in messages: no RLS, policy, migration, lint, PostgREST, GoTrue, edge function, release id, commit hash, version numbers or file paths. Say "only the person who created a todo can see it", "the database now stores a priority for each todo", "the security check found a problem", "the previous version of the app is back online".
+- When a technical point needs a decision, explain the consequence for the app's users in one sentence, then ask a plain question ("Anyone could read and change these notes. Do you want them private to each user?").
+- Final report: the app link, what changed in a few user-facing bullets, what the user should do next (if anything). Leave out the steps that went well; keep the Studio link for those who use it.
+- Technical details (versions, ids, logs, SQL, lint names) only when the user asks for them, or when they must forward them to an admin; then say so ("for your admin: ...").
+
 ## 1. Context
 
 1. `whoami`: note `role`, `direct_deploy`, `ci` (`uses` and `github_org`, or null when CI is not set up on the platform) and `api_url`.
@@ -63,7 +72,7 @@ Run `function-secrets.sh`, then `list_secrets`. Ask the user for each missing va
 
 ## On errors
 
-1. `get_logs` for the app and the relevant service (`functions` for `BOOT_ERROR` / `WORKER_ERROR`, `postgrest`, `gotrue`, `postgres`), `since_minutes: 15`, with a `query` when you have a keyword.
-2. Diagnose in two or three sentences with the relevant lines, and propose a fix. Do not retry blindly more than once.
+1. `get_logs` for the app and the relevant service (`requests` for the HTTP requests and their status, `functions` for `BOOT_ERROR` / `WORKER_ERROR`, `postgrest`, `gotrue`, `postgres`), `since_minutes: 15`, with a `query` when you have a keyword.
+2. Diagnose in two or three plain sentences (what is broken for the app's users, and why), and propose a fix; quote log lines only if the user asks. Do not retry blindly more than once.
 3. To undo a bad frontend or functions version: `rollback` (migrations are never rolled back: fix forward with a new migration).
 4. `get_app` `schema_drift.count > 0` means schema changes were made outside a release (Studio, `execute_sql`): `list_schema_changes`, and suggest turning them into a migration.

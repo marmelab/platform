@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // platform-deploy: checks or deploys an app repository (migrations, functions, frontend) to the platform.
 // See ../README.md.
+import "./localhost-dns.ts";
 import { appendFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { parseArgs } from "node:util";

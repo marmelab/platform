@@ -213,8 +213,9 @@ export class CaddyRouter implements Router {
   /**
    * The public server logs every request, except the platform hosts (API, admin, Studio), into a JSON file rotated by
    * Caddy (20 MB, 5 files kept, not compressed: the sampler finishes reading a rotated file by its inode). Only what the
-   * metrics need is kept: no headers (cookies, apikey, Authorization), no URI (tokens in query strings), no client IP.
-   * Two config changes (two reloads) on the first start after an upgrade, none afterwards.
+   * metrics and get_logs (service "requests") need is kept: the URI without its query string (tokens, apikey), no
+   * headers (cookies, apikey, Authorization), no client IP. Two config changes (two reloads) on the first start after
+   * an upgrade, none afterwards.
    */
   ensureAccessLog({ file, skipHosts }: { file: string; skipHosts: string[] }): Promise<void> {
     return this.serialized(async () => {
@@ -223,14 +224,16 @@ export class CaddyRouter implements Router {
       const logging = ((await current.json()) ?? {}) as { logs?: Record<string, { exclude?: string[] }> };
       const logs = { ...logging.logs };
       const name = `http.log.access.${ACCESS_LOGGER}`;
-      const drop = ["request>headers", "request>uri", "request>remote_ip", "request>remote_port", "request>client_ip",
-        "request>tls", "resp_headers", "user_id"];
+      const drop = ["request>headers", "request>remote_ip", "request>remote_port", "request>client_ip", "request>tls",
+        "resp_headers", "user_id"];
+      const fields: Record<string, unknown> = Object.fromEntries(drop.map((field) => [field, { filter: "delete" }]));
+      fields["request>uri"] = { filter: "regexp", regexp: "\\?.*$", value: "" };
       logs[ACCESS_LOGGER] = {
         writer: { output: "file", filename: file, roll_size_mb: 20, roll_keep: 5, roll_gzip: false, mode: "0640" },
         encoder: {
           format: "filter",
           wrap: { format: "json" },
-          fields: Object.fromEntries(drop.map((field) => [field, { filter: "delete" }])),
+          fields,
         },
         include: [name],
       } as never;

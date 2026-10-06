@@ -78,7 +78,7 @@ Trigger: a user reports a bug, or an alert comes in.
 4. Optionally, inspection in Studio (tables, SQL, RLS).
 
 Channel: Claude Code + MCP, and Studio.
-Status: 🟡. `get_logs` reads Docker logs with no history (Loki is not done). Studio is ✅ (M0ter). A fix made in Studio or with `execute_sql(write=true)` that changes the schema is recorded by the DDL event trigger: `get_app` shows `schema_drift` and `list_schema_changes` lists the changes, so that the builder turns them into a migration ✅. Alerts are ❌.
+Status: 🟡. `get_logs` reads Docker logs with no history (Loki is not done), and the app's HTTP requests from Caddy's access log (`service: "requests"`: method, path without query string, status, duration). Studio is ✅ (M0ter). A fix made in Studio or with `execute_sql(write=true)` that changes the schema is recorded by the DDL event trigger: `get_app` shows `schema_drift` and `list_schema_changes` lists the changes, so that the builder turns them into a migration ✅. Alerts are ❌.
 
 ### B5. Managing the app's users
 Trigger: invite, delete or unblock an account, count sign-ups.
@@ -233,4 +233,4 @@ Status: ✅ (M5). Works per app on the shared Realtime, isolated between apps, B
 1. **Thresholds**: default app quota per builder, and number of days before an app is flagged as abandoned.
 2. **Reaching the platform from CI**: if the platform is only reachable inside the company network, GitHub-hosted runners cannot deploy; the client then needs self-hosted runners. To check with each client before installation.
 3. **Without OIDC** (old GitHub Enterprise Server, other forges): fallback to a per-app deploy token stored as a GitHub environment secret restricted to the default branch, which the skill would create. Not planned for V1.
-4. **Existing apps** deployed directly (the M3 model): the owner links a repo and sets up CI with the `deploy` skill; until then, they are flagged in A9.
+4. **Existing apps** deployed directly (the M3 model): the owner links a repo and sets up CI with the `deploy` skill; until then, they are flagged "no repo" in A9. Their deployments from before releases (M3bis) belong to no release: the console shows "never deployed" as their last release and does not flag them "deployed outside CI" until their next deployment (TECH_DEBT CP-25).

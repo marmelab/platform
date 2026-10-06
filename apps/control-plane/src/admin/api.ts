@@ -3,7 +3,7 @@
 // MCP tools and the CLI (same guards), with the signed-in admin as the audited actor.
 import { statfs } from "node:fs/promises";
 import { cpus, freemem, loadavg, totalmem, uptime } from "node:os";
-import { deploymentKind, memberRole } from "@platform/shared";
+import { deploymentKind, memberRole, toolInputs } from "@platform/shared";
 import { Hono } from "hono";
 import { z } from "zod";
 import { type AppRow, deleteAppConfirmed, orchestrator, startApp, stopApp, studio } from "../apps.ts";
@@ -553,8 +553,7 @@ adminApi.post("/metrics/sample", async (c) => c.json(await sampleMetrics()));
 
 adminApi.get("/apps/:slug/logs", async (c) => {
   const app = await appRow(c.req.param("slug"));
-  const service = z.enum(["gotrue", "postgrest", "functions", "postgres"]).optional()
-    .parse(c.req.query("service") || undefined);
+  const service = toolInputs.get_logs.service.parse(c.req.query("service") || undefined);
   const sinceMinutes = Math.min(Math.max(Number(c.req.query("since_minutes")) || 60, 1), 7 * 24 * 60);
   const limit = Math.min(Math.max(Number(c.req.query("limit")) || 200, 1), 1000);
   return c.json(await getLogs(app, { service, sinceMinutes, limit, query: c.req.query("q") || undefined }));

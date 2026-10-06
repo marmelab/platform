@@ -1,11 +1,13 @@
 import { appRoles } from "@platform/sql";
 import type { LogLine } from "@platform/shared";
+import { readRecent, requestLines } from "./access-log.ts";
 import { type AppRow, dbId, orchestrator } from "./apps.ts";
 import { config } from "./config.ts";
+import { MAINTENANCE_FIELD } from "./router.ts";
 
-type Service = "gotrue" | "postgrest" | "functions" | "postgres";
+type Service = "gotrue" | "postgrest" | "functions" | "postgres" | "requests";
 
-/** M2 version of get_logs: Docker logs (no Loki yet), filtered per app. */
+/** M2 version of get_logs: Docker logs (no Loki yet) and the requests of Caddy's access log, filtered per app. */
 export async function getLogs(
   app: AppRow,
   options: { service?: Service; sinceMinutes: number; limit: number; query?: string },
@@ -39,6 +41,13 @@ export async function getLogs(
     const marker = `db=${appRoles(dbId(app.slug)).database} `;
     for (const l of await orchestrator.logs(config.docker.dbContainer, since, tail * 4).catch(() => [])) {
       if (l.line.includes(marker)) lines.push({ ts: l.ts, service: "postgres", line: l.line });
+    }
+  }
+
+  if (wanted("requests")) {
+    const text = await readRecent(config.accessLog.path).catch(() => "");
+    for (const l of requestLines(text, app.slug, config.appsDomain, MAINTENANCE_FIELD, Date.now() - since * 1000)) {
+      lines.push({ ts: l.ts, service: "requests", line: l.line });
     }
   }
 

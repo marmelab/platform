@@ -1,10 +1,10 @@
 // Unit tests of the access log reader and counter (metrics sampler): incremental reads, partial lines, rotation.
 import assert from "node:assert/strict";
-import { appendFileSync, mkdtempSync, renameSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdtempSync, renameSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { countAccessLines, type LogCursor, readNewLines } from "../src/access-log.ts";
+import { countAccessLines, type LogCursor, readNewLines, readRecent, requestLines } from "../src/access-log.ts";
 
 const HOUR = 3_600_000;
 const T0 = Date.UTC(2026, 9, 2, 10, 0, 0);
@@ -79,4 +79,36 @@ test("reads appended lines incrementally, leaves a partial line, follows a rotat
   const first = await readNewLines(path, { inode: null, offset: 0 }, line("b1.localhost", 200, T0).length + 5);
   assert.equal(first.text, line("b1.localhost", 200, T0));
   assert.equal((await readNewLines(path, first.cursor)).text, line("b2.localhost", 200, T0));
+});
+
+test("lists one app's requests since a time, with path, status and duration", () => {
+  const req = (host: string, at: number, uri?: string, extra: Record<string, unknown> = {}) =>
+    JSON.stringify({ ts: at / 1000, request: { host, method: "GET", ...(uri ? { uri } : {}) }, status: 200, duration: 0.0123, ...extra }) + "\n";
+  const text = [
+    req("todo.localhost:8100", T0 - 1000, "/old"),
+    req("todo.localhost:8100", T0 + 1000, "/rest/v1/todos"),
+    req("other.localhost:8100", T0 + 2000, "/rest/v1/todos"),
+    req("todo.localhost", T0 + 3000),
+    req("todo.localhost:8100", T0 + 4000, "/", { status: 503, platform_maintenance: "1" }),
+    "not json\n",
+  ].join("");
+  assert.deepEqual(requestLines(text, "todo", "localhost", "platform_maintenance", T0), [
+    { ts: new Date(T0 + 1000).toISOString(), line: "GET /rest/v1/todos 200 12 ms" },
+    { ts: new Date(T0 + 3000).toISOString(), line: "GET (path not logged) 200 12 ms" },
+    { ts: new Date(T0 + 4000).toISOString(), line: "GET / 503 12 ms (maintenance)" },
+  ]);
+});
+
+test("reads the end of the log, rotated files first, within a byte budget", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "access-recent-"));
+  const path = join(dir, "access.log");
+  writeFileSync(join(dir, "access-2026-10-01T00-00-00.000.log"), "rotated-1\nrotated-2\n");
+  writeFileSync(path, "current-1\ncurrent-2\n");
+  const now = Date.now() / 1000;
+  utimesSync(join(dir, "access-2026-10-01T00-00-00.000.log"), now - 60, now - 60);
+  assert.equal(await readRecent(path), "rotated-1\nrotated-2\ncurrent-1\ncurrent-2\n");
+  // the current file (20 bytes), then the end of the rotated one: a cut line is dropped, a whole one kept
+  assert.equal(await readRecent(path, 25), "current-1\ncurrent-2\n");
+  assert.equal(await readRecent(path, 30), "rotated-2\ncurrent-1\ncurrent-2\n");
+  assert.equal(await readRecent(join(dir, "missing.log")), "");
 });

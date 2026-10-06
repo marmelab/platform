@@ -41,10 +41,10 @@ spikes/               milestone reports and prototypes
 - Claude Code, to deploy apps through the plugin
 - About 16 GB of free RAM on the host to build Studio (Next.js build, ~8 GB peak)
 
-`*.localhost` resolves to `127.0.0.1` out of the box in browsers, in `curl` and on Linux, so no DNS setup is needed. On macOS, Node does not resolve these names (`ENOTFOUND`) and `/etc/hosts` has no wildcard, so load the shim before running the e2e tests or the deploy CLI:
+`*.localhost` resolves to `127.0.0.1` out of the box in browsers, in `curl` and on Linux, so no DNS setup is needed. On macOS, Node does not resolve these names (`ENOTFOUND`) and `/etc/hosts` has no wildcard: the deploy CLI (and the plugin, which ships it) resolves them itself, and the e2e tests need the same shim:
 
 ```bash
-export NODE_OPTIONS="--import $PWD/deploy/localhost-dns.mjs"
+export NODE_OPTIONS="--import $PWD/packages/deploy-cli/src/localhost-dns.ts"
 ```
 
 ## Install and run locally

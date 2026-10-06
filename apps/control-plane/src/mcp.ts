@@ -477,7 +477,8 @@ export function buildMcpServer(user: User): McpServer {
   server.registerTool(
     "get_logs",
     {
-      description: "Recent logs of the app: gotrue, postgrest, functions (edge runtime), postgres",
+      description: "Recent logs of the app: gotrue, postgrest, functions (edge runtime), postgres, and requests (HTTP " +
+        "requests to the app: method, path, status, duration)",
       inputSchema: t.get_logs,
     },
     ({ app, service, since_minutes, limit, query }) =>

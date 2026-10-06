@@ -152,7 +152,8 @@ export const toolInputs = {
   },
   get_logs: {
     app: slug,
-    service: z.enum(["gotrue", "postgrest", "functions", "postgres"]).optional(),
+    service: z.enum(["gotrue", "postgrest", "functions", "postgres", "requests"]).optional()
+      .describe("requests: the HTTP requests to the app (method, path without query string, status, duration)"),
     since_minutes: z.number().int().positive().max(1440).default(60),
     limit: z.number().int().positive().max(1000).default(200),
     query: z.string().optional().describe("Case-insensitive substring filter"),

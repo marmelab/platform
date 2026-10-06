@@ -626,8 +626,9 @@ function Logs({ app }: { app: AppRecord }) {
           <option value="postgrest">postgrest</option>
           <option value="functions">functions</option>
           <option value="postgres">postgres</option>
+          <option value="requests">requests</option>
         </select>
-        <span className="text-muted-foreground">last hour, Docker logs (no history before Loki)</span>
+        <span className="text-muted-foreground">last hour: Docker logs (no history before Loki) and HTTP requests</span>
       </div>
       {error && <p className="text-destructive">{error}</p>}
       <pre className="max-h-[32rem] overflow-auto rounded-md bg-muted p-3 text-xs">

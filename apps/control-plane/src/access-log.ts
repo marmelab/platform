@@ -106,6 +106,7 @@ export interface AccessCounts {
 
 const HOUR = 3_600_000;
 const SLUG = "[a-z][a-z0-9-]{1,30}[a-z0-9]";
+const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 /**
  * Counts requests and 5xx responses per app host (`<slug>.<appsDomain>`, with or without port) and hour. Entries of
@@ -114,7 +115,7 @@ const SLUG = "[a-z][a-z0-9-]{1,30}[a-z0-9]";
  */
 export function countAccessLines(text: string, appsDomain: string, maintenanceField: string, into?: AccessCounts): AccessCounts {
   const result = into ?? { counts: new Map(), last: new Map(), lines: 0 };
-  const hostPattern = new RegExp(`^(${SLUG})\\.${appsDomain.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?::\\d+)?$`, "i");
+  const hostPattern = new RegExp(`^(${SLUG})\\.${escapeRegExp(appsDomain)}(?::\\d+)?$`, "i");
   for (const line of text.split("\n")) {
     if (!line) continue;
     let entry: { ts?: unknown; status?: unknown; request?: { host?: unknown }; [key: string]: unknown };
@@ -139,4 +140,63 @@ export function countAccessLines(text: string, appsDomain: string, maintenanceFi
     if (at > (result.last.get(slug) ?? 0)) result.last.set(slug, at);
   }
   return result;
+}
+
+/**
+ * The last `maxBytes` of the log, newest file first: the current file, then the rotated ones (`access-<time>.log`) by
+ * modification time, as long as the budget lasts. A line cut by the budget is dropped.
+ */
+export async function readRecent(path: string, maxBytes = 16 * 1024 * 1024): Promise<string> {
+  const dir = dirname(path);
+  const prefix = basename(path).replace(/\.log$/, "");
+  const files: { path: string; mtime: number; size: number }[] = [];
+  for (const name of await readdir(dir).catch(() => [] as string[])) {
+    if (!name.startsWith(prefix) || !name.endsWith(".log")) continue;
+    const info = await stat(join(dir, name)).catch(() => null);
+    if (info) files.push({ path: join(dir, name), mtime: info.mtimeMs, size: info.size });
+  }
+  files.sort((a, b) => b.mtime - a.mtime);
+  const parts: string[] = [];
+  let budget = maxBytes;
+  for (const file of files) {
+    if (budget <= 0) break;
+    const start = Math.max(0, file.size - budget);
+    // from the byte before the cut, so that a cut on a line boundary keeps that line
+    let text = (await readRange(file.path, Math.max(0, start - 1), file.size)).toString("utf8");
+    if (start > 0) text = text.slice(text.indexOf("\n") + 1);
+    if (text && !text.endsWith("\n")) text += "\n";
+    parts.unshift(text);
+    budget -= file.size - start;
+  }
+  return parts.join("");
+}
+
+export interface RequestLine {
+  /** ISO time */
+  ts: string;
+  /** `GET /rest/v1/todos 200 12 ms`, with `(maintenance)` for a stopped app's response */
+  line: string;
+}
+
+/** Requests to one app's host (`<slug>.<appsDomain>`, with or without port) since `sinceMs`, oldest first. */
+export function requestLines(text: string, slug: string, appsDomain: string, maintenanceField: string, sinceMs: number): RequestLine[] {
+  const hostPattern = new RegExp(`^${escapeRegExp(slug)}\\.${escapeRegExp(appsDomain)}(?::\\d+)?$`, "i");
+  const lines: RequestLine[] = [];
+  for (const raw of text.split("\n")) {
+    if (!raw) continue;
+    let entry: { ts?: unknown; status?: unknown; duration?: unknown; request?: { host?: unknown; method?: unknown; uri?: unknown }; [key: string]: unknown };
+    try {
+      entry = JSON.parse(raw);
+    } catch {
+      continue;
+    }
+    const host = typeof entry.request?.host === "string" ? entry.request.host : "";
+    if (!hostPattern.test(host) || typeof entry.ts !== "number" || entry.ts * 1000 < sinceMs) continue;
+    const method = typeof entry.request?.method === "string" ? entry.request.method : "?";
+    const uri = typeof entry.request?.uri === "string" ? entry.request.uri : "(path not logged)";
+    const ms = typeof entry.duration === "number" ? ` ${Math.round(entry.duration * 1000)} ms` : "";
+    const maintenance = entry[maintenanceField] ? " (maintenance)" : "";
+    lines.push({ ts: new Date(entry.ts * 1000).toISOString(), line: `${method} ${uri} ${entry.status}${ms}${maintenance}` });
+  }
+  return lines;
 }

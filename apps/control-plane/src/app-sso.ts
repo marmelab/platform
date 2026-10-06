@@ -25,7 +25,9 @@ export async function ensureCompanySso(app: AppRow, ssoProvider?: string | null)
   // loaded here: auth-users.ts imports apps.ts, which imports this module (provisioning)
   const { gotrueAdmin } = await import("./auth-users.ts");
   const path = `/admin/custom-providers/${COMPANY_SSO_PROVIDER}`;
-  const existing = await gotrueAdmin(app, "GET", path, undefined, { allowNotFound: true });
+  // the list, not GET <path>: GoTrue logs a 404 warning for a missing provider, the usual case
+  const { providers } = await gotrueAdmin(app, "GET", "/admin/custom-providers") as { providers?: { identifier: string }[] };
+  const existing = providers?.some((p) => p.identifier === COMPANY_SSO_PROVIDER);
   if (provider === "company" && ssoActive(sso)) {
     const body = {
       name: sso.name,
