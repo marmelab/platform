@@ -138,8 +138,9 @@ README, "Settings"): a database setting overrides the environment.
    `PLATFORM_ADMIN_PASSWORD` from `deploy/.env.local`. Keep the PAT for your own Claude Code (admin deployments) or
    revoke it on the Tokens screen.
 3. Optionally configure the company SSO (SSO screen, OpenID Connect): builders then sign in to Studio with it.
-4. Create the builders' accounts (Users) and their PATs (Tokens: the value is shown once). With SMTP, each new account
-   gets a welcome email.
+4. Create the builders' accounts (Users). They need no token: Claude Code signs them in through the browser, on the
+   platform's login page (password or company SSO). With SMTP, each new account gets a welcome email. PATs (Tokens:
+   the value is shown once) are for admins, scripts and tests.
 5. The dashboard shows the platform version, the apps, the backups and the security linter's alerts.
 
 ## 7. GitHub organization
@@ -165,8 +166,9 @@ Deployments go through the company's GitHub Actions (PLAN_1 §5.1 and §6.2). In
    organization rulesets to require pull requests and reviews on the default branch of every repository, or let the
    `deploy` skill set a minimal protection per repository.
 7. **Builders** install the plugin: `claude plugin marketplace add <org>/platform`, then
-   `claude plugin install platform@platform-local`, with `PLATFORM_TOKEN` (their PAT) and
-   `PLATFORM_URL=https://api.<domain>/mcp` in their environment, and the GitHub CLI logged in.
+   `claude plugin install platform@platform-local`, and have the GitHub CLI logged in. At the first use, Claude Code
+   asks them to sign in (`/mcp`, then Authenticate): the browser opens on the platform's login page, then a consent
+   page. Admins who prefer a PAT export `PLATFORM_TOKEN` before starting Claude Code.
 
 GitHub Enterprise Server: install with `--oidc-issuer https://<host>/_services/token`; the control plane must reach
 that host.

@@ -111,12 +111,17 @@ export function slugify(name: string): string {
 }
 
 /** Resolves an app the user may access. Unknown and forbidden apps look the same. */
+/**
+ * The app if the user is a member (or an admin), and if the request's credential reaches it: a token restricted to
+ * some apps (a deploy token, SEC-8) sees no other app.
+ */
 export async function appForUser(user: User, slug: string): Promise<AppRow & { member_role: string }> {
   const app = await one<AppRow & { member_role: string }>(
     `select a.*, coalesce(m.role, 'admin') as member_role
        from apps a left join app_members m on m.app_id = a.id and m.user_id = $2
-      where a.slug = $1 and a.status <> 'deleted' and (m.user_id is not null or $3)`,
-    [slug, user.id, user.role === "admin"],
+      where a.slug = $1 and a.status <> 'deleted' and (m.user_id is not null or $3)
+        and ($4::uuid[] is null or a.id = any($4))`,
+    [slug, user.id, user.role === "admin", user.token?.appIds ?? null],
   );
   if (!app) throw new UserError(`app "${slug}" not found`);
   return app;
@@ -126,9 +131,9 @@ export async function appsForUser(user: User) {
   return many<AppRow & { member_role: string }>(
     `select a.*, coalesce(m.role, 'admin') as member_role
        from apps a left join app_members m on m.app_id = a.id and m.user_id = $1
-      where a.status <> 'deleted' and (m.user_id is not null or $2)
+      where a.status <> 'deleted' and (m.user_id is not null or $2) and ($3::uuid[] is null or a.id = any($3))
       order by a.slug`,
-    [user.id, user.role === "admin"],
+    [user.id, user.role === "admin", user.token?.appIds ?? null],
   );
 }
 
@@ -182,7 +187,7 @@ export async function writeEdgeConfig(app: AppRow) {
   );
 }
 
-async function waitHealthy(url: string, timeoutMs = 60_000) {
+export async function waitHealthy(url: string, timeoutMs = 60_000) {
   const deadline = Date.now() + timeoutMs;
   let last = "";
   while (Date.now() < deadline) {
@@ -277,7 +282,7 @@ export async function ensureAuthService(app: AppRow) {
  * orchestrator.ensure() under a cluster-wide advisory lock per container: the server's startup sync, a configure_auth
  * call and the upgrade's `recycle-apps` (another process) never recreate the same container at the same time.
  */
-async function ensureService(spec: ServiceSpec, options: { force?: boolean } = {}): Promise<EnsureResult> {
+export async function ensureService(spec: ServiceSpec, options: { force?: boolean } = {}): Promise<EnsureResult> {
   return withClient({ database: config.pg.platformDb, applicationName: "control-plane-ensure" }, async (c) => {
     await c.query("select pg_advisory_lock(hashtext($1))", [`container:${spec.name}`]);
     try {

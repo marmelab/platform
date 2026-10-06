@@ -1,4 +1,4 @@
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { McpServer, type RegisteredTool } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { toolInputs } from "@platform/shared";
 import {
@@ -13,6 +13,7 @@ import {
   UserError,
 } from "./apps.ts";
 import type { User } from "./auth.ts";
+import { toolAllowed } from "./token-scopes.ts";
 import { appAuthView, configureAuth } from "./app-auth.ts";
 import { BAN_FOREVER_HOURS, deleteUser, inviteUser, listAuthUsers, setBan } from "./auth-users.ts";
 import { apiUrl } from "./config.ts";
@@ -25,6 +26,7 @@ import {
   setDeploymentRelease,
 } from "./deployments.ts";
 import { createManualBackup, listBackups } from "./backups.ts";
+import { createDeployToken } from "./deploy-tokens.ts";
 import { getLogs } from "./logs.ts";
 import { addMember, listMembers, removeMember, requireOwner } from "./members.ts";
 import {
@@ -58,11 +60,19 @@ async function run(fn: () => Promise<unknown>): Promise<CallToolResult> {
 export function buildMcpServer(user: User): McpServer {
   const server = new McpServer({ name: "platform", version: "0.1.0" });
   const t = toolInputs;
+  // a token restricted to some tools (deploy token, SEC-8): the others are not listed and cannot be called
+  const register = server.registerTool.bind(server);
+  server.registerTool = ((name: string, ...rest: unknown[]) => {
+    const registered = (register as (...args: unknown[]) => RegisteredTool)(name, ...rest);
+    if (!toolAllowed(user, name)) registered.remove();
+    return registered;
+  }) as typeof server.registerTool;
 
   server.registerTool(
     "whoami",
     {
-      description: "Current user, the apps they can access, direct_deploy (whether this user may publish directly " +
+      description: "Current user, credential (oauth: signed in through the browser, pat, or deploy), the apps they " +
+        "can access, direct_deploy (whether this user may publish directly " +
         "with their token; otherwise deployments go through the app's GitHub Actions CI) and ci (the reusable " +
         "workflow an app repository calls, and the company GitHub organization; null when CI is not set up)",
     },
@@ -75,6 +85,8 @@ export function buildMcpServer(user: User): McpServer {
           name: user.name,
           role: user.role,
           api_url: apiUrl(),
+          // how this session authenticates: "oauth" (browser sign-in), "pat" or "deploy" (create_deploy_token)
+          credential: user.token?.kind ?? null,
           // DIRECT_DEPLOY: admins always publish directly (the audited exception when the setting is "admins")
           direct_deploy: user.role === "admin" || directDeploy === "everyone",
           direct_deploy_setting: directDeploy,
@@ -373,6 +385,19 @@ export function buildMcpServer(user: User): McpServer {
       inputSchema: t.unban_user,
     },
     ({ app, user_id, email }) => run(async () => setBan(user, await appForUser(user, app), { user_id, email }, null)),
+  );
+
+  server.registerTool(
+    "create_deploy_token",
+    {
+      description: "Short-lived token (15 minutes) for platform-deploy when this session is signed in through the " +
+        "browser (whoami credential \"oauth\"), restricted to this app and to the tools platform-deploy calls. Any " +
+        "member gets one: check (dry run) works for all, deploy follows DIRECT_DEPLOY (direct_deploy in the result). " +
+        "Pass it to platform-deploy in the PLATFORM_DEPLOY_TOKEN environment variable; never show it to the user " +
+        "nor write it to a file.",
+      inputSchema: t.create_deploy_token,
+    },
+    ({ app }) => run(async () => createDeployToken(user, await appForUser(user, app))),
   );
 
   server.registerTool(

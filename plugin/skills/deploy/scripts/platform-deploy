@@ -1,13 +1,21 @@
 #!/usr/bin/env bash
 # Usage: platform-deploy <check|deploy> [--reason "<why>"] [other platform-deploy options]  (run from the project root)
-# Direct mode of platform-deploy (packages/deploy-cli, shipped in the plugin as the deploy-cli symlink) with the
-# builder's PAT: the same CLI as the CI workflow. check publishes nothing (migrations dry run, lints, build).
+# Direct mode of platform-deploy (packages/deploy-cli, shipped in the plugin as the deploy-cli symlink): the same CLI
+# as the CI workflow. check publishes nothing (migrations dry run, lints, build).
+# Credentials: PLATFORM_DEPLOY_TOKEN, the short-lived token of the create_deploy_token tool (what the skills pass, for a
+# builder signed in through the browser), else PLATFORM_TOKEN (a PAT: admins, scripts, tests, CI outside GitHub).
 set -euo pipefail
 cli="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)/deploy-cli/main.ts"
 [ -f "$cli" ] || { echo "platform-deploy not found at $cli" >&2; exit 2; }
-[ -n "${PLATFORM_TOKEN:-}" ] || { echo "PLATFORM_TOKEN is not set: export the personal access token given by a platform admin" >&2; exit 2; }
+token="${PLATFORM_DEPLOY_TOKEN:-${PLATFORM_TOKEN:-}}"
+[ -n "$token" ] || {
+  echo "no platform token: pass the create_deploy_token result in PLATFORM_DEPLOY_TOKEN, or export a personal access token in PLATFORM_TOKEN" >&2
+  exit 2
+}
 command -v node > /dev/null || { echo "node not found: Node.js >= 22.18 is required" >&2; exit 2; }
 node -e 'const [a, b] = process.versions.node.split(".").map(Number); process.exit(a > 22 || (a === 22 && b >= 18) ? 0 : 1)' ||
   { echo "Node.js >= 22.18 is required (found $(node --version))" >&2; exit 2; }
 export PLATFORM_URL="${PLATFORM_URL:-http://api.localhost:8100/mcp}"
+export PLATFORM_TOKEN="$token"
+unset PLATFORM_DEPLOY_TOKEN
 exec node "$cli" "$@" --auth token

@@ -91,6 +91,9 @@ describe("admin SPA smoke test", () => {
       if ((await api("GET", `/apps/${APP}`)).requests_24h >= 12) break;
       await new Promise((resolve) => setTimeout(resolve, 250));
     }
+    // a Claude Code connection (OAuth): the flow itself is covered by control-plane/test/oauth.e2e.test.ts
+    psql(`insert into tokens (user_id, name, kind, oauth_session_id, oauth_client_id, last_used_at)
+      values ('${user.id}', 'Claude Code (platform)', 'oauth', gen_random_uuid(), gen_random_uuid(), now())`);
     browser = await chromium.launch();
     page = await browser.newPage({ viewport: { width: 1680, height: 900 } });
   });
@@ -209,6 +212,17 @@ describe("admin SPA smoke test", () => {
     await page.goto(`${ADMIN}/#/tokens`);
     await page.getByRole("cell", { name: "ui-e2e" }).waitFor();
     await shot(page, "10-tokens");
+    // Claude Code connections: type, client, last use, and revocation
+    await page.getByRole("button", { name: "Claude Code" }).click();
+    // PATs filtered out
+    await page.getByRole("cell", { name: "ui-e2e" }).waitFor({ state: "detached" });
+    const connection = page.getByRole("row").filter({ hasText: BUILDER });
+    await connection.getByRole("cell", { name: "Claude Code connection" }).waitFor();
+    await connection.getByRole("cell", { name: "Claude Code (platform)" }).waitFor();
+    await shot(page, "10b-tokens-claude-code");
+    await connection.getByRole("button", { name: "Revoke" }).click();
+    await page.getByRole("button", { name: "Confirm" }).click();
+    await connection.getByText("revoked").waitFor();
     await page.goto(`${ADMIN}/#/audit_log`);
     await page.getByRole("cell", { name: "stop_app" }).first().waitFor();
     await shot(page, "11-audit-log");

@@ -42,6 +42,7 @@ import { initCluster } from "./init.ts";
 import { registerRealtime } from "./storage-realtime.ts";
 import { sampleMetrics } from "./metrics.ts";
 import { addMember, removeMember } from "./members.ts";
+import { deleteShadowUser } from "./platform-auth.ts";
 import { setPassword } from "./sessions.ts";
 import {
   backupSummary,
@@ -95,6 +96,7 @@ if (command === "init") {
 } else if (command === "delete-user" && args[0]) {
   const deleted = await one<{ id: string }>("delete from users where email = $1 returning id", [args[0].toLowerCase()]);
   if (!deleted) throw new Error(`unknown user ${args[0]}`);
+  await deleteShadowUser(deleted.id);
   console.log(`user ${args[0]} deleted`);
 } else if (command === "set-password" && args[0]) {
   const generate = args[1] === "--generate";

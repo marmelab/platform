@@ -165,6 +165,26 @@ export function serviceDatabaseRoleSql(role: string, password: string): string[]
   ];
 }
 
+/** GoTrue of the platform's own accounts (OAuth for Claude Code, platform-auth.ts): its login role. */
+export const PLATFORM_AUTH_ROLE = "platform_auth_admin";
+
+/**
+ * Role and `auth` schema of the platform's GoTrue, in the platform database (run there as supabase_admin). GoTrue owns
+ * the schema and creates its tables with its own migrations, as an app's GoTrue does. Idempotent.
+ */
+export function platformAuthSql(database: string, password: string): string[] {
+  const r = PLATFORM_AUTH_ROLE;
+  return [
+    ensureRole(r),
+    `alter role ${r} with login noinherit nosuperuser nocreatedb nocreaterole noreplication connection limit 20 password ${secret(password)}`,
+    `alter role ${r} set search_path = auth`,
+    `alter role ${r} set idle_in_transaction_session_timeout = 60000`,
+    `alter role ${r} set log_statement = none`,
+    `grant connect on database ${ident(database)} to ${r}`,
+    `create schema if not exists auth authorization ${r}`,
+  ];
+}
+
 const ensureRole = (role: string) =>
   `do $$ begin if not exists (select from pg_roles where rolname = '${role}') then create role ${role}; end if; end $$`;
 

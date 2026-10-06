@@ -1,7 +1,7 @@
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
-import { config } from "./config.ts";
+import { config, loopbackTokenHost } from "./config.ts";
 
 export interface StudioRoute {
   host: string;
@@ -159,7 +159,9 @@ export class CaddyRouter implements Router {
       const pub = servers.public;
       if (!next.apps || !http || !pub) throw new Error("caddy: no public server in the loaded config");
       const api = pub.routes?.find((r) => r["@id"] === "api");
-      if (api) api.match = [{ host: [config.apiHost] }];
+      // local installs: the OAuth token endpoint is also served on localhost (config.loopbackTokenHost)
+      const loopback = loopbackTokenHost();
+      if (api) api.match = [{ host: [config.apiHost] }, ...(loopback ? [{ host: [loopback], path: ["/oauth/token"] }] : [])];
       if (config.tls.mode === "off") {
         pub.listen = [`:${config.publicPort}`];
         pub.automatic_https = { disable: true };

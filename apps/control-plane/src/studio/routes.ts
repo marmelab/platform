@@ -9,7 +9,9 @@ import { createSession, logout, SESSION_COOKIE, throttledCredentials, userForSes
 import { getSettings, ssoActive } from "../settings.ts";
 import { finishSsoLogin, SSO_COOKIE, SSO_PENDING_SECONDS, ssoCookiePath, SsoError, startSsoLogin } from "../sso.ts";
 import { passwordLoginRefused, safeNext as localPath } from "../sso-policy.ts";
-import { loginPage, refusedPage, type SsoOption } from "./pages.ts";
+import { ConsentError, consentRequest, decideConsent } from "../oauth.ts";
+import { CONSENT_PATH } from "../platform-auth.ts";
+import { consentPage, loginPage, oauthMessagePage, refusedPage, type SsoOption } from "./pages.ts";
 import { crossSiteRefusal, studioAccess } from "./policy.ts";
 
 
@@ -135,6 +137,43 @@ studioPublicRoutes.post("/_platform/logout", async (c) => {
   await logout(getCookie(c, SESSION_COOKIE));
   deleteCookie(c, SESSION_COOKIE, { path: "/", secure: secure() });
   return c.redirect("/_platform/login", 303);
+});
+
+// Consent of a Claude Code sign-in (OAuth, oauth.ts): GoTrue's /oauth/authorize sends the browser here, behind the
+// platform's own login (password or company SSO, throttled); the form is protected like the login form (Origin).
+const consentLogin = (c: Context, authorizationId: string) =>
+  c.redirect(`/_platform/login?next=${encodeURIComponent(`${CONSENT_PATH}?authorization_id=${encodeURIComponent(authorizationId)}`)}`, 302);
+
+const consentFailure = (c: Context, error: unknown) => {
+  if (!(error instanceof ConsentError)) throw error;
+  return c.html(oauthMessagePage("Sign-in request expired", error.message), 400);
+};
+
+studioPublicRoutes.get(CONSENT_PATH, async (c) => {
+  const authorizationId = c.req.query("authorization_id") ?? "";
+  if (!authorizationId) return c.html(oauthMessagePage("Invalid request", "Start again from Claude Code."), 400);
+  const user = await userForSession(getCookie(c, SESSION_COOKIE));
+  if (!user) return consentLogin(c, authorizationId);
+  try {
+    const request = await consentRequest(user, authorizationId);
+    if ("redirect" in request) return c.redirect(request.redirect, 302);
+    return c.html(consentPage({ authorizationId, clientName: request.clientName, email: user.email }));
+  } catch (error) {
+    return consentFailure(c, error);
+  }
+});
+
+studioPublicRoutes.post(CONSENT_PATH, async (c) => {
+  const form = await c.req.parseBody();
+  const authorizationId = String(form.authorization_id ?? "");
+  const user = await userForSession(getCookie(c, SESSION_COOKIE));
+  if (!user) return consentLogin(c, authorizationId);
+  try {
+    const redirect = await decideConsent(user, authorizationId, form.decision === "approve");
+    return c.redirect(redirect, 303);
+  } catch (error) {
+    return consentFailure(c, error);
+  }
 });
 
 /** Internal listener: Caddy forward auth and Studio's project configs. Never routed by the public Caddy server. */

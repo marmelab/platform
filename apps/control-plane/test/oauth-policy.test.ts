@@ -1,0 +1,153 @@
+// Unit tests of the OAuth front's rules (journey B1, src/oauth-policy.ts) and of the token scopes (SEC-8,
+// src/token-scopes.ts): native clients only, loopback port changes (RFC 8252), PKCE S256 only, the resource indicator,
+// the 60 s code lifetime, and the tools of a deploy token. The flows themselves (single-use code, PKCE verification,
+// refresh rotation and reuse, revocation) run against GoTrue in test/oauth.e2e.test.ts.
+import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { test } from "node:test";
+import {
+  checkAuthorizeRequest,
+  CODE_TTL_SECONDS,
+  codeFresh,
+  errorRedirect,
+  isLoopbackRedirect,
+  MAX_LOOPBACK_REDIRECTS,
+  OAuthError,
+  redirectsToRegister,
+  sameLoopbackExceptPort,
+  sanitizeRegistration,
+} from "../src/oauth-policy.ts";
+import { scopeTools, toolAllowed } from "../src/token-scopes.ts";
+
+const error = (fn: () => unknown) => {
+  try {
+    fn();
+  } catch (e) {
+    assert.ok(e instanceof OAuthError, String(e));
+    return e.error;
+  }
+  return "accepted";
+};
+
+test("redirect URIs: plain HTTP on the loopback interface, canonical, without fragment or credentials", () => {
+  for (const uri of ["http://localhost:53987/callback", "http://127.0.0.1:8080/cb", "http://[::1]:3000/callback", "http://localhost/callback"]) {
+    assert.ok(isLoopbackRedirect(uri), uri);
+  }
+  for (const uri of [
+    "https://localhost:53987/callback", // native clients listen in plain HTTP; anything else is a web client
+    "http://evil.example/callback",
+    "http://localhost.evil.example/callback",
+    "http://127.0.0.2/callback",
+    "http://api.localhost:8100/callback",
+    "http://user:pw@localhost:1234/callback",
+    "http://localhost:1234/callback#frag",
+    "http://LOCALHOST:1234/callback", // not canonical: GoTrue compares strings
+    "http://localhost:1234",
+    "myapp://callback",
+    "not a url",
+  ]) {
+    assert.equal(isLoopbackRedirect(uri), false, uri);
+  }
+});
+
+test("a native client may pick another port at each sign-in (RFC 8252 §7.3), nothing else may change", () => {
+  assert.ok(sameLoopbackExceptPort("http://localhost:1111/callback", "http://localhost:2222/callback"));
+  assert.equal(sameLoopbackExceptPort("http://localhost:1111/callback", "http://127.0.0.1:2222/callback"), false);
+  assert.equal(sameLoopbackExceptPort("http://localhost:1111/callback", "http://localhost:2222/other"), false);
+  assert.equal(sameLoopbackExceptPort("http://localhost:1111/callback", "http://localhost:2222/callback?x=1"), false);
+
+  const registered = ["http://localhost:1111/callback"];
+  assert.equal(redirectsToRegister(registered, "http://localhost:1111/callback"), null);
+  assert.deepEqual(redirectsToRegister(registered, "http://localhost:2222/callback"), [
+    "http://localhost:1111/callback",
+    "http://localhost:2222/callback",
+  ]);
+  assert.equal(error(() => redirectsToRegister(registered, "http://evil.example/callback")), "invalid_request");
+  assert.equal(error(() => redirectsToRegister(registered, "http://localhost:2222/elsewhere")), "invalid_request");
+
+  // the list stays bounded: the oldest ports go first
+  const many = Array.from({ length: MAX_LOOPBACK_REDIRECTS }, (_, i) => `http://localhost:${1000 + i}/callback`);
+  const next = redirectsToRegister(many, "http://localhost:9999/callback")!;
+  assert.equal(next.length, MAX_LOOPBACK_REDIRECTS);
+  assert.equal(next.at(-1), "http://localhost:9999/callback");
+  assert.ok(!next.includes("http://localhost:1000/callback"));
+});
+
+test("dynamic registration: public native clients only, other metadata dropped", () => {
+  const claudeCode = {
+    client_name: "Claude Code (platform)",
+    redirect_uris: ["http://localhost:53987/callback"],
+    grant_types: ["authorization_code", "refresh_token"],
+    response_types: ["code"],
+    token_endpoint_auth_method: "none",
+    scope: "openid email",
+    jwks_uri: "https://evil.example/jwks",
+  };
+  assert.deepEqual(sanitizeRegistration(claudeCode), {
+    redirect_uris: ["http://localhost:53987/callback"],
+    client_name: "Claude Code (platform)",
+    token_endpoint_auth_method: "none",
+    grant_types: ["authorization_code", "refresh_token"],
+  });
+  assert.deepEqual(sanitizeRegistration({ redirect_uris: ["http://127.0.0.1:1/cb"] }).grant_types, ["authorization_code", "refresh_token"]);
+  assert.equal(sanitizeRegistration({ redirect_uris: ["http://127.0.0.1:1/cb"], client_name: "x".repeat(500) }).client_name?.length, 100);
+  assert.equal(sanitizeRegistration({ redirect_uris: ["http://127.0.0.1:1/cb"], client_uri: "javascript:alert(1)" }).client_uri, undefined);
+
+  assert.equal(error(() => sanitizeRegistration(null)), "invalid_redirect_uri");
+  assert.equal(error(() => sanitizeRegistration({ redirect_uris: [] })), "invalid_redirect_uri");
+  assert.equal(error(() => sanitizeRegistration({ redirect_uris: ["https://app.example/callback"] })), "invalid_redirect_uri");
+  assert.equal(error(() => sanitizeRegistration({ redirect_uris: ["http://localhost:1/cb", "https://evil.example/cb"] })), "invalid_redirect_uri");
+  assert.equal(
+    error(() => sanitizeRegistration({ redirect_uris: ["http://localhost:1/cb"], token_endpoint_auth_method: "client_secret_basic" })),
+    "invalid_client_metadata",
+  );
+  assert.equal(
+    error(() => sanitizeRegistration({ redirect_uris: ["http://localhost:1/cb"], grant_types: ["client_credentials"] })),
+    "invalid_client_metadata",
+  );
+});
+
+test("authorization requests: code flow with PKCE S256 only, and the MCP endpoint as the only resource", () => {
+  const resource = "https://api.example.com/mcp";
+  const verifier = "a".repeat(64);
+  const challenge = createHash("sha256").update(verifier).digest("base64url");
+  const valid = { response_type: "code", code_challenge: challenge, code_challenge_method: "S256", resource };
+  assert.equal(error(() => checkAuthorizeRequest(valid, resource)), "accepted");
+  assert.equal(error(() => checkAuthorizeRequest({ ...valid, resource: undefined }, resource)), "accepted");
+  assert.equal(error(() => checkAuthorizeRequest({ ...valid, response_type: "token" }, resource)), "unsupported_response_type");
+  assert.equal(error(() => checkAuthorizeRequest({ ...valid, code_challenge_method: "plain" }, resource)), "invalid_request");
+  assert.equal(error(() => checkAuthorizeRequest({ ...valid, code_challenge_method: undefined }, resource)), "invalid_request");
+  assert.equal(error(() => checkAuthorizeRequest({ ...valid, code_challenge: undefined }, resource)), "invalid_request");
+  assert.equal(error(() => checkAuthorizeRequest({ ...valid, code_challenge: "short" }, resource)), "invalid_request");
+  assert.equal(error(() => checkAuthorizeRequest({ ...valid, code_challenge: `${challenge}+/=` }, resource)), "invalid_request");
+  assert.equal(error(() => checkAuthorizeRequest({ ...valid, resource: "https://evil.example/mcp" }, resource)), "invalid_target");
+
+  const redirect = new URL(errorRedirect("http://localhost:1/callback", new OAuthError("invalid_request", "no PKCE"), "xyz"));
+  assert.equal(redirect.origin + redirect.pathname, "http://localhost:1/callback");
+  assert.deepEqual(Object.fromEntries(redirect.searchParams), { error: "invalid_request", error_description: "no PKCE", state: "xyz" });
+});
+
+test(`authorization codes are exchanged within ${CODE_TTL_SECONDS} s of the consent`, () => {
+  const approved = new Date("2026-10-06T10:00:00Z");
+  assert.ok(codeFresh(approved, new Date("2026-10-06T10:00:59Z")));
+  assert.ok(codeFresh(approved, new Date("2026-10-06T10:01:00Z")));
+  assert.equal(codeFresh(approved, new Date("2026-10-06T10:01:01Z")), false);
+  assert.equal(codeFresh(null, approved), false);
+});
+
+test("token scopes: none means every tool, deploy means what platform-deploy calls", () => {
+  assert.equal(scopeTools([]), null);
+  assert.deepEqual(scopeTools(["unknown"]), []);
+  const deploy = scopeTools(["deploy"])!;
+  for (const tool of ["get_app", "apply_migrations", "begin_release", "create_deployment", "finalize_deployment", "finish_release"]) {
+    assert.ok(deploy.includes(tool), tool);
+  }
+  for (const tool of ["execute_sql", "create_deploy_token", "set_secrets", "add_member", "delete_app", "create_app"]) {
+    assert.equal(deploy.includes(tool), false, tool);
+  }
+  const user = (tools: string[] | null) => ({ token: { id: "t", kind: "deploy" as const, appIds: null, tools } });
+  assert.ok(toolAllowed({}, "delete_app"));
+  assert.ok(toolAllowed(user(null), "delete_app"));
+  assert.ok(toolAllowed(user(deploy), "get_app"));
+  assert.equal(toolAllowed(user(deploy), "execute_sql"), false);
+});

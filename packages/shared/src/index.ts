@@ -84,6 +84,9 @@ export const toolInputs = {
       .describe("collaborator: deploy, inspect, manage app users; owner: also members, stop, start, delete"),
   },
   remove_member: { app: slug, email: z.email() },
+  create_deploy_token: {
+    app: slug,
+  },
   link_repo: {
     app: slug,
     repo: z.string().regex(GITHUB_REPO_RE, "owner/name").describe("GitHub repository, owner/name"),

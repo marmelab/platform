@@ -23,6 +23,7 @@ import { backupView, type BackupRow, createManualBackup } from "../backups.ts";
 import { restoreBackup } from "../restore.ts";
 import { latestLints, lintApp, lintHistory } from "../lint.ts";
 import { platformVersion } from "../version.ts";
+import { deleteShadowUser, endOAuthSessions, revokeGrant } from "../platform-auth.ts";
 import { githubServerUrl } from "../oidc.ts";
 import { listSchemaChanges, schemaDrift } from "../schema-changes.ts";
 import { listSecrets } from "../secrets.ts";
@@ -144,12 +145,12 @@ async function sendWelcome(email: string, role: "admin" | "developer") {
       "",
       `An account was created for you (${email}) on the company's app platform${role === "admin" ? ", as an admin" : ""}.`,
       "",
-      "- Build and deploy apps with Claude Code: install the platform plugin, then set the personal access token " +
-      "your admin gives you (PLATFORM_TOKEN).",
+      "- Build and deploy apps with Claude Code: install the platform plugin, then ask Claude to deploy your app. " +
+      "The first time, Claude Code opens your browser: sign in with your platform account and allow the access.",
       `- Inspect your apps' data in Studio: ${studioUrl()} (sign in ${ssoLogin ? `with ${sso.name}${passwordToo ? ", or with this email and the password your admin gives you" : ""}` : "with this email and the password your admin gives you"}).`,
       ...(role === "admin" ? [`- Administration console: ${adminUrl()}`] : []),
       "",
-      `Your admin gives you your ${passwordToo ? "password and " : ""}token over a private channel: they are never sent by email.`,
+      ...(passwordToo ? ["Your admin gives you your password over a private channel: it is never sent by email."] : []),
     ].join("\n"),
   });
 }
@@ -185,8 +186,12 @@ adminApi.put("/users/:id", async (c) => {
       next.role,
       next.active,
     ]);
-    // a disabled account loses its browser sessions at once (its PATs stop working too: authenticate() checks active)
-    if (!next.active) await platform.query("delete from sessions where user_id = $1", [before.id]);
+    // a disabled account loses its browser sessions at once (its tokens stop working too: authenticate() checks
+    // active), and its Claude Code connections can no longer refresh their access tokens
+    if (!next.active) {
+      await platform.query("delete from sessions where user_id = $1", [before.id]);
+      await endOAuthSessions(before.id);
+    }
     await audit(admin.id, null, "update_user", { email: before.email, changes });
   }
   if (input.password) {
@@ -227,23 +232,33 @@ adminApi.delete("/users/:id", async (c) => {
     );
     await tx.query("delete from users where id = $1", [user.id]);
   });
+  await deleteShadowUser(user.id);
   await audit(admin.id, null, "delete_user", { email: user.email, role: user.role });
   return c.json(user);
 });
 
 // ---------------------------------------------------------------------------------------------------------------
-// tokens (personal access tokens)
+// tokens: personal access tokens, Claude Code connections (OAuth, oauth.ts) and deploy tokens (deploy-tokens.ts)
 
 const TOKENS_SQL = `
-  select t.id, t.user_id, u.email as user_email, t.name, t.scopes, t.created_at, t.last_used_at, t.expires_at,
-    t.revoked_at,
+  select t.id, t.user_id, u.email as user_email, t.name, t.kind, t.scopes, t.created_at, t.last_used_at, t.expires_at,
+    t.revoked_at, t.oauth_client_id, t.parent_id,
+    case when t.kind = 'oauth' then t.name end as client_name,
+    (select string_agg(a.slug, ', ' order by a.slug) from apps a where a.id = any(t.app_ids)) as apps,
     case when t.revoked_at is not null then 'revoked'
          when t.expires_at is not null and t.expires_at <= now() then 'expired' else 'active' end as status
   from tokens t join users u on u.id = t.user_id`;
 
 async function tokenRecord(id: string) {
   if (!z.uuid().safeParse(id).success) throw new HttpError(404, "token not found");
-  const token = await one<Record<string, unknown> & { id: string; user_email: string; name: string }>(
+  const token = await one<Record<string, unknown> & {
+    id: string;
+    user_id: string;
+    user_email: string;
+    name: string;
+    kind: string;
+    oauth_client_id: string | null;
+  }>(
     `${TOKENS_SQL} where t.id = $1`,
     [id],
   );
@@ -290,14 +305,38 @@ adminApi.post("/tokens", async (c) => {
 
 adminApi.put("/tokens/:id", notAllowed("tokens cannot be edited: revoke it and create a new one"));
 
-/** DELETE revokes (the row stays, with revoked_at, for the audit trail). Idempotent. */
+/**
+ * DELETE revokes (the row stays, with revoked_at, for the audit trail), with the deploy tokens it minted. A Claude
+ * Code connection is revoked for its client as a whole: the consent and every session of the account with this client
+ * (GoTrue), so that the next use asks to sign in again. Idempotent.
+ */
 adminApi.delete("/tokens/:id", async (c) => {
   const admin = c.get("admin");
   const token = await tokenRecord(c.req.param("id"));
-  const revoked = await one("update tokens set revoked_at = now() where id = $1 and revoked_at is null returning id", [
-    token.id,
-  ]);
-  if (revoked) await audit(admin.id, null, "revoke_token", { token_id: token.id, email: token.user_email, name: token.name });
+  const revoked = token.kind === "oauth" && token.oauth_client_id
+    ? await many<{ id: string }>(
+      `update tokens set revoked_at = now()
+        where kind = 'oauth' and user_id = $1 and oauth_client_id = $2 and revoked_at is null returning id`,
+      [token.user_id, token.oauth_client_id],
+    )
+    : await many<{ id: string }>("update tokens set revoked_at = now() where id = $1 and revoked_at is null returning id", [
+      token.id,
+    ]);
+  const ids = [token.id, ...revoked.map((r) => r.id)];
+  await platform.query("update tokens set revoked_at = now() where parent_id = any($1) and revoked_at is null", [ids]);
+  if (token.kind === "oauth" && token.oauth_client_id) {
+    const owner = await one<User>("select id, email, name, role from users where id = $1", [token.user_id]);
+    if (owner) await revokeGrant(owner, token.oauth_client_id);
+  }
+  if (revoked.length) {
+    await audit(admin.id, null, token.kind === "oauth" ? "oauth_token_revoked" : "revoke_token", {
+      token_id: token.id,
+      email: token.user_email,
+      name: token.name,
+      kind: token.kind,
+      ...(token.kind === "oauth" ? { client_id: token.oauth_client_id, connections: revoked.length } : {}),
+    });
+  }
   return c.json(await tokenRecord(token.id));
 });
 

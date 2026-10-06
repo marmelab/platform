@@ -43,10 +43,48 @@ for skill in "$plugin"/skills/*/SKILL.md; do
   done
 done
 
-# 4. platform-deploy wrapper: runs the shipped CLI, refuses to run without a token
+# 4. platform-deploy wrapper: runs the shipped CLI with a deploy token or a PAT, refuses to run without either
 scripts="$plugin/skills/deploy/scripts"
 check "platform-deploy --help (copied plugin)" bash -c "PLATFORM_TOKEN=x '$scripts/platform-deploy' --help 2>&1 | grep -q 'Usage: platform-deploy'"
-refuses "platform-deploy without PLATFORM_TOKEN" "PLATFORM_TOKEN is not set" env -u PLATFORM_TOKEN "$scripts/platform-deploy" check
+check "platform-deploy accepts a deploy token" bash -c "env -u PLATFORM_TOKEN PLATFORM_DEPLOY_TOKEN=x '$scripts/platform-deploy' --help 2>&1 | grep -q 'Usage: platform-deploy'"
+refuses "platform-deploy without a token" "no platform token" env -u PLATFORM_TOKEN -u PLATFORM_DEPLOY_TOKEN "$scripts/platform-deploy" check
+
+# 4b. MCP server: the PAT, when PLATFORM_TOKEN is set, goes in X-Platform-Token (empty otherwise); a static
+# Authorization header would disable the browser sign-in (OAuth)
+check ".mcp.json sends PLATFORM_TOKEN in X-Platform-Token" grep -q '"X-Platform-Token": "${PLATFORM_TOKEN:-}"' "$plugin/.mcp.json"
+check ".mcp.json has no Authorization header" bash -c "! grep -qi authorization '$plugin/.mcp.json'"
+
+# 4c. check-connection.sh, against a fake platform (OAuth metadata, and /mcp accepting one PAT)
+port_file="$tmp/port"
+node -e '
+  const http = require("node:http");
+  const server = http.createServer((req, res) => {
+    if (req.url === "/.well-known/oauth-protected-resource/mcp") return res.end("{}");
+    if (req.url === "/mcp" && req.method === "POST") {
+      res.statusCode = req.headers.authorization === "Bearer plat_good" ? 200 : 401;
+      return res.end("{}");
+    }
+    res.statusCode = 404;
+    res.end();
+  });
+  server.listen(0, "127.0.0.1", () => require("node:fs").writeFileSync(process.argv[1], String(server.address().port)));
+' "$port_file" &
+fake=$!
+trap 'kill $fake 2> /dev/null; wait $fake 2> /dev/null || true; rm -rf "$tmp"' EXIT
+for _ in $(seq 50); do [ -s "$port_file" ] && break; sleep 0.1; done
+fake_url="http://127.0.0.1:$(cat "$port_file")/mcp"
+# expect <word> <PLATFORM_TOKEN value, or ""> [script argument]
+expect() {
+  local word="$1" token="$2"; shift 2
+  env -u PLATFORM_TOKEN PLATFORM_URL="$fake_url" ${token:+PLATFORM_TOKEN="$token"} "$scripts/check-connection.sh" "$@" > "$tmp/word" 2> "$tmp/api"
+  test "$(cat "$tmp/word")" = "$word" && test "$(cat "$tmp/api")" = "api: $fake_url"
+}
+check "check-connection.sh: not signed in" expect NOT_SIGNED_IN ""
+check "check-connection.sh: refused after an auth error" expect ACCOUNT_REFUSED "" --after-auth-error
+check "check-connection.sh: PAT accepted" expect OK plat_good
+check "check-connection.sh: PAT refused" expect ACCOUNT_REFUSED plat_revoked
+check "check-connection.sh never prints the token" bash -c "! grep -q plat_ '$tmp/word' '$tmp/api'"
+check "check-connection.sh: unreachable" bash -c "test \"\$(env -u PLATFORM_TOKEN PLATFORM_URL=http://127.0.0.1:9/mcp '$scripts/check-connection.sh' 2> /dev/null)\" = UNREACHABLE"
 
 # 5. function-secrets.sh
 app="$tmp/app"

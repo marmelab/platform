@@ -112,6 +112,7 @@ const UserRelated = () => {
         <ReferenceManyField reference="tokens" target="user_id" perPage={100} empty={<p className="text-sm text-muted-foreground">No token.</p>}>
           <DataTable rowClick={false} bulkActionButtons={false}>
             <DataTable.Col source="name" />
+            <DataTable.Col source="kind" label="Type" />
             <DataTable.Col source="status" render={(t) => <StatusBadge status={t.status} />} />
             <DataTable.Col source="last_used_at" label="Last used" render={(t) => dateTime(t.last_used_at)} />
             <DataTable.Col source="created_at" label="Created" render={(t) => dateTime(t.created_at)} />

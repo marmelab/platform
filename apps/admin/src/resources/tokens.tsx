@@ -1,4 +1,6 @@
-// Personal access tokens (journey A2): the value is shown once, at creation; revoking keeps the row for the audit.
+// Tokens (journeys A2, B1): personal access tokens, whose value is shown once at creation; Claude Code connections
+// (a builder signed in from Claude Code through the browser); short-lived deploy tokens restricted to one app. Revoking
+// keeps the row for the audit.
 import { useState } from "react";
 import { required, useNotify } from "ra-core";
 import { Copy } from "lucide-react";
@@ -21,6 +23,8 @@ import { dataProvider } from "../providers";
 import { ActionButton } from "./actions";
 import { dateTime, StatusBadge } from "./fields";
 
+const KIND_LABELS: Record<string, string> = { pat: "PAT", oauth: "Claude Code connection", deploy: "Deploy token" };
+
 export const TokenList = () => (
   <List
     filters={[
@@ -35,10 +39,14 @@ export const TokenList = () => (
     <div className="mb-3 flex gap-2">
       <ToggleFilterButton className="w-auto border" label="Active" value={{ status: "active" }} />
       <ToggleFilterButton className="w-auto border" label="Revoked" value={{ status: "revoked" }} />
+      <ToggleFilterButton className="w-auto border" label="PAT" value={{ kind: "pat" }} />
+      <ToggleFilterButton className="w-auto border" label="Claude Code" value={{ kind: "oauth" }} />
+      <ToggleFilterButton className="w-auto border" label="Deploy" value={{ kind: "deploy" }} />
     </div>
     <DataTable rowClick={false} bulkActionButtons={false}>
       <DataTable.Col source="user_email" label="User" />
-      <DataTable.Col source="name" />
+      <DataTable.Col source="kind" label="Type" render={(t) => KIND_LABELS[t.kind as string] ?? t.kind} />
+      <DataTable.Col source="name" label="Name / client" render={(t) => (t.kind === "deploy" ? `${t.name} (${t.apps ?? "?"})` : t.name)} />
       <DataTable.Col source="status" render={(t) => <StatusBadge status={t.status} />} />
       <DataTable.Col source="last_used_at" label="Last used" render={(t) => dateTime(t.last_used_at)} />
       <DataTable.Col source="created_at" label="Created" render={(t) => dateTime(t.created_at)} />
@@ -52,8 +60,13 @@ export const TokenList = () => (
               label="Revoke"
               variant="outline"
               action={() => dataProvider.delete("tokens", { id: t.id, previousData: t })}
-              confirm={{ title: `Revoke token "${t.name}" of ${t.user_email}?`, content: "Clients using it are refused at once." }}
-              successMessage="Token revoked"
+              confirm={t.kind === "oauth"
+                ? {
+                  title: `Disconnect ${t.name} of ${t.user_email}?`,
+                  content: "Its requests are refused at once; to use it again, they must sign in from Claude Code.",
+                }
+                : { title: `Revoke token "${t.name}" of ${t.user_email}?`, content: "Clients using it are refused at once." }}
+              successMessage={t.kind === "oauth" ? "Connection revoked" : "Token revoked"}
             />
           ) : null}
       />

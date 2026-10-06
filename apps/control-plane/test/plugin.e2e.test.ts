@@ -51,12 +51,16 @@ const git = (...args: string[]) =>
   execFileSync("git", ["-c", "user.email=e2e@example.com", "-c", "user.name=e2e", ...args], { cwd: repo, encoding: "utf8" })
     .trim();
 
-/** A skill command, run like Claude runs it: from the project root, the token in the environment. */
-function script(path: string, args: string[], token: string) {
+/**
+ * A skill command, run like Claude runs it: from the project root, with a PAT in PLATFORM_TOKEN, or (`deployToken`)
+ * the deploy token of a builder signed in through the browser, who has no PLATFORM_TOKEN.
+ */
+function script(path: string, args: string[], token: string, { deployToken = false } = {}) {
+  const { PLATFORM_TOKEN: _, ...rest } = process.env;
   const result = spawnSync(path, args, {
     cwd: repo,
     encoding: "utf8",
-    env: { ...process.env, PLATFORM_TOKEN: token, PLATFORM_URL: MCP_URL },
+    env: { ...rest, PLATFORM_URL: MCP_URL, ...(deployToken ? { PLATFORM_DEPLOY_TOKEN: token } : { PLATFORM_TOKEN: token }) },
     timeout: 300_000,
   });
   return { code: result.status, stdout: result.stdout, output: `${result.stdout}\n${result.stderr}` };
@@ -135,6 +139,39 @@ describe("plugin skills: direct path of deploy, and admin-deploy, on examples/to
     assert.ok(ping.status < 500, `function preflight: ${ping.status}`);
   });
 
+  test("1b. deploy skill, signed in through the browser: step 0, then a deploy token restricted to the app", async (t) => {
+    if (!directDeploy) return t.skip("DIRECT_DEPLOY is not everyone on this stack");
+    // step 0: without any token, the platform answers and Claude is not signed in; with a PAT, OK
+    const signedOut = spawnSync(join(deployScripts, "check-connection.sh"), [], {
+      encoding: "utf8",
+      env: { PATH: process.env.PATH, PLATFORM_URL: MCP_URL },
+    });
+    assert.equal(signedOut.stdout.trim(), "NOT_SIGNED_IN", signedOut.stderr);
+    assert.equal(signedOut.stderr.trim(), `api: ${MCP_URL}`, "the API URL, for the admin");
+    assert.equal(signedOut.stderr.trim(), `api: ${MCP_URL}`);
+    assert.equal(script(join(deployScripts, "check-connection.sh"), [], builderToken).stdout.trim(), "OK");
+    assert.equal(script(join(deployScripts, "check-connection.sh"), [], "plat_revoked").stdout.trim(), "ACCOUNT_REFUSED");
+
+    // what the skill does when whoami says credential "oauth": one deploy token per command (the mint is the same
+    // for an OAuth connection, covered by oauth.e2e.test.ts)
+    const mint = async () => (await call(builder, "create_deploy_token", { app: APP })).token as string;
+    const check = script(join(deployScripts, "platform-deploy"), ["check"], await mint(), { deployToken: true });
+    assert.equal(check.code, 0, check.output);
+    const before = (await call(builder, "get_app", { app: APP })).last_release.id;
+    const deploy = script(join(deployScripts, "platform-deploy"), ["deploy"], await mint(), { deployToken: true });
+    assert.equal(deploy.code, 0, deploy.output);
+    assert.doesNotMatch(deploy.output, /plat_dep_/, "the token is never printed");
+    const release = (await call(builder, "get_app", { app: APP })).last_release;
+    assert.notEqual(release.id, before);
+    assert.equal(release.status, "succeeded");
+    assert.equal(release.created_by, BUILDER);
+
+    // restricted to its app: platform-deploy on another app is refused
+    const other = script(join(deployScripts, "platform-deploy"), ["check", "--app", "todo-app"], await mint(), { deployToken: true });
+    assert.notEqual(other.code, 0, other.output);
+    assert.match(other.output, /not found/);
+  });
+
   test("2. admin-deploy: preflight refuses a dirty tree or an unpushed commit, then deploys with a reason", async (t) => {
     if (!directDeploy) return t.skip("DIRECT_DEPLOY is not everyone on this stack");
     const repoName = "acme/todo-app";
@@ -164,6 +201,6 @@ describe("plugin skills: direct path of deploy, and admin-deploy, on examples/to
     assert.equal(release.reason, "plugin e2e: CI is down");
     assert.equal(release.commit_sha, git("rev-parse", "HEAD"));
     assert.equal(psql(`select count(*) from releases r join apps a on a.id = r.app_id
-      where a.slug = '${APP}' and r.status = 'succeeded'`), "2");
+      where a.slug = '${APP}' and r.status = 'succeeded'`), "3", "tests 1, 1b and this one");
   });
 });

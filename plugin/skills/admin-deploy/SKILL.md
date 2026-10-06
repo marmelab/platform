@@ -1,14 +1,14 @@
 ---
 name: admin-deploy
 description: Platform admins only. Deploy an app directly from a local checkout of its linked repository, outside CI, as an audited exception (CI down, app without CI, takeover of an orphaned app). Use when an admin asks for an emergency, direct or admin deployment on the platform.
-allowed-tools: mcp__plugin_platform_platform__*, Bash(git *), Bash(${CLAUDE_PLUGIN_ROOT}/skills/deploy/scripts/*), Bash(${CLAUDE_PLUGIN_ROOT}/skills/admin-deploy/scripts/*), Read, Glob, Grep
+allowed-tools: mcp__plugin_platform_platform__*, Bash(git *), Bash(${CLAUDE_PLUGIN_ROOT}/skills/deploy/scripts/*), Bash(PLATFORM_DEPLOY_TOKEN=* ${CLAUDE_PLUGIN_ROOT}/skills/deploy/scripts/platform-deploy *), Bash(${CLAUDE_PLUGIN_ROOT}/skills/admin-deploy/scripts/*), Read, Glob, Grep
 ---
 
 # Admin deployment (exception)
 
-Runs the same `platform-deploy` as CI, with the admin's token. The release is recorded as `source = direct`, with the reason and the admin, flagged `admin_exception` when the platform reserves direct deployment to admins, and audited. The app is flagged "deployed outside CI" until its next CI deployment.
+Runs the same `platform-deploy` as CI, with the admin's credentials: their PAT (`PLATFORM_TOKEN`) when `whoami` says `credential: "pat"`; when it says `"oauth"` (signed in through the browser), a deploy token from `create_deploy_token` passed as `PLATFORM_DEPLOY_TOKEN=<token> ${CLAUDE_PLUGIN_ROOT}/skills/deploy/scripts/platform-deploy ...`, a new one for each command. The release is recorded as `source = direct`, with the reason and the admin, flagged `admin_exception` when the platform reserves direct deployment to admins, and audited. The app is flagged "deployed outside CI" until its next CI deployment.
 
-Rules: one command per Bash call (no `&&`, `;`, pipes or redirections); do not modify, commit or push anything in the checkout; never print the token.
+Rules: one command per Bash call (no `&&`, `;`, pipes or redirections); do not modify, commit or push anything in the checkout; never print, repeat or write a token. If the platform tools are missing or `whoami` fails, follow step 0 of the `deploy` skill (`check-connection.sh`).
 
 1. `whoami`: if `role` is not `admin`, refuse and point to the `deploy` skill (CI). If `direct_deploy_setting` is `everyone`, say that no exception is needed and the `deploy` skill would do, but go on if the admin insists.
 2. Read `.platform.json` for the app slug, then `get_app`: note `github_repo`, `status` (a stopped app refuses deployments: stop) and `last_release`.

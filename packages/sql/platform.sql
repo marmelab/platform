@@ -278,3 +278,20 @@ create table if not exists platform_versions (
   started_at timestamptz not null default now(),
   components jsonb not null default '{}'::jsonb
 );
+
+-- Browser sign-in for Claude Code (OAuth, oauth.ts and platform-auth.ts): one table for every credential the MCP
+-- endpoint accepts. kind 'pat': personal access token (hash of the value). 'oauth': a Claude Code connection, i.e. one
+-- session of the platform's GoTrue (auth.sessions, in this database) opened by an OAuth client; its access tokens are
+-- GoTrue JWTs, not stored (hash null). 'deploy': short-lived token minted by create_deploy_token, restricted to one app
+-- (app_ids) and to the publishing tools (scopes = {deploy}), child of the credential that minted it (parent_id).
+alter table tokens add column if not exists kind text not null default 'pat';
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conname = 'tokens_kind_check') then
+    alter table tokens add constraint tokens_kind_check check (kind in ('pat', 'oauth', 'deploy'));
+  end if;
+end $$;
+alter table tokens alter column hash drop not null;
+alter table tokens add column if not exists oauth_session_id uuid unique;
+alter table tokens add column if not exists oauth_client_id uuid;
+alter table tokens add column if not exists parent_id uuid references tokens (id) on delete cascade;

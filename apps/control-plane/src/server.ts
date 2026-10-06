@@ -6,6 +6,7 @@ import { authenticate } from "./auth.ts";
 import { ciRoutes } from "./ci.ts";
 import { receiveUpload } from "./deployments.ts";
 import { buildMcpServer } from "./mcp.ts";
+import { mcpChallenge, oauthRoutes } from "./oauth.ts";
 import { studioPublicRoutes } from "./studio/routes.ts";
 
 export const app = new Hono();
@@ -19,12 +20,18 @@ app.use("*", async (c, next) => {
 app.get("/health", (c) => c.json({ ok: true }));
 app.route("/", studioPublicRoutes);
 app.route("/ci", ciRoutes);
+app.route("/", oauthRoutes);
 
 app.all("/mcp", async (c) => {
-  const user = await authenticate(c.req.header("authorization"));
+  // the plugin sends a PAT in X-Platform-Token (empty without PLATFORM_TOKEN): a static Authorization header would
+  // keep Claude Code from falling back to the browser sign-in (OAuth), whose tokens come in Authorization
+  const pat = c.req.header("x-platform-token");
+  const authorization = c.req.header("authorization") ?? (pat ? `Bearer ${pat}` : undefined);
+  const user = await authenticate(authorization);
   if (!user) {
     return c.json({ jsonrpc: "2.0", error: { code: -32001, message: "invalid or missing token" }, id: null }, 401, {
-      "WWW-Authenticate": 'Bearer realm="platform"',
+      // OAuth discovery (RFC 9728): Claude Code signs the user in through the browser from here (oauth.ts)
+      "WWW-Authenticate": mcpChallenge(authorization !== undefined),
     });
   }
   // Stateless: one MCP server per request, bound to the authenticated user.

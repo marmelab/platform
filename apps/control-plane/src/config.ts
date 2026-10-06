@@ -232,3 +232,13 @@ export const apiUrl = () => `${config.publicScheme}://${config.apiHost}${portSuf
 export const adminUrl = (path = "") => `${config.publicScheme}://${config.adminHost}${portSuffix()}${path}`;
 export const studioUrl = (path = "") => `${config.publicScheme}://${config.studio.host}${portSuffix()}${path}`;
 export const internalAppUrl = (slug: string) => `${config.internalGateway}/${slug}`;
+
+/**
+ * Local installs (plain HTTP on *.localhost): Claude Code only sends OAuth token requests over HTTPS or to a loopback
+ * host, and api.localhost does not count as one. The token endpoint is then announced on http://localhost:<port>,
+ * which Caddy routes to the control plane for that path only (router.ensureEdge). Never in production (HTTPS).
+ */
+export const loopbackTokenHost = () =>
+  config.publicScheme === "http" && config.apiHost.endsWith(".localhost") ? "localhost" : null;
+export const oauthTokenEndpoint = () =>
+  loopbackTokenHost() ? `http://localhost${portSuffix()}/oauth/token` : `${apiUrl()}/oauth/token`;
