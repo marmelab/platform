@@ -25,8 +25,8 @@ export const TokenList = () => (
   <List
     filters={[
       <SearchInput key="q" source="q" alwaysOn placeholder="Search name or email" />,
-      <ReferenceInput key="user" source="user_id" reference="users">
-        <AutocompleteInput label="User" />
+      <ReferenceInput key="user" source="user_id" reference="users" alwaysOn>
+        <AutocompleteInput label="User" className="w-64" />
       </ReferenceInput>,
     ]}
     sort={{ field: "created_at", order: "DESC" }}

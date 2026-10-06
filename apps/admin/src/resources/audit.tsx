@@ -26,10 +26,10 @@ const AuditColumns = () => (
 
 const auditFilters = [
   <SearchInput key="q" source="q" alwaysOn placeholder="Search action, email, details" />,
-  <TextInput key="app" source="app" label="App slug" />,
-  <TextInput key="action" source="action" label="Action" />,
-  <ReferenceInput key="user" source="user_id" reference="users">
-    <AutocompleteInput label="User" />
+  <TextInput key="app" source="app" label="App slug" alwaysOn />,
+  <TextInput key="action" source="action" label="Action" alwaysOn />,
+  <ReferenceInput key="user" source="user_id" reference="users" alwaysOn>
+    <AutocompleteInput label="User" className="w-64" />
   </ReferenceInput>,
 ];
 

@@ -492,10 +492,14 @@ function Members({ app }: { app: AppRecord }) {
   const [remove] = useDelete();
   const notify = useNotify();
   const refresh = useRefresh();
-  const options = {
-    onSuccess: () => refresh(),
+  const options = (message: string) => ({
+    mutationMode: "pessimistic" as const,
+    onSuccess: () => {
+      notify(message, { type: "success" });
+      refresh();
+    },
     onError: (error: unknown) => notify((error as Error).message, { type: "error" }),
-  };
+  });
   return (
     <div className="flex flex-col gap-4">
       <ReferenceManyField reference="app_members" target="app" perPage={100}>
@@ -511,12 +515,10 @@ function Members({ app }: { app: AppRecord }) {
                 <Button
                   size="sm"
                   variant="outline"
-                  onClick={() =>
-                    update("app_members", {
-                      id: m.id,
-                      data: { role: m.role === "owner" ? "collaborator" : "owner" },
-                      previousData: m,
-                    }, { ...options, mutationMode: "pessimistic" })}
+                  onClick={() => {
+                    const role = m.role === "owner" ? "collaborator" : "owner";
+                    update("app_members", { id: m.id, data: { role }, previousData: m }, options(`${m.email} is now ${role}`));
+                  }}
                 >
                   Make {m.role === "owner" ? "collaborator" : "owner"}
                 </Button>
@@ -524,7 +526,7 @@ function Members({ app }: { app: AppRecord }) {
                   size="sm"
                   variant="outline"
                   className="text-destructive"
-                  onClick={() => remove("app_members", { id: m.id, previousData: m }, { ...options, mutationMode: "pessimistic" })}
+                  onClick={() => remove("app_members", { id: m.id, previousData: m }, options(`${m.email} removed from ${app.slug}`))}
                 >
                   Remove
                 </Button>
@@ -537,11 +539,12 @@ function Members({ app }: { app: AppRecord }) {
         className="flex flex-wrap items-end gap-2"
         onSubmit={(e) => {
           e.preventDefault();
+          const added = options(`${email} added to ${app.slug} as ${role}`);
           create("app_members", { data: { app: app.slug, email, role } }, {
-            ...options,
+            ...added,
             onSuccess: () => {
               setEmail("");
-              refresh();
+              added.onSuccess();
             },
           });
         }}
