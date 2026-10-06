@@ -12,8 +12,10 @@ PLATFORM="${PLATFORM:-linux/$(docker version -f '{{.Server.Arch}}')}"
 pnpm -C ../.. install --frozen-lockfile
 [ -d .next ] && find .next -mindepth 1 -maxdepth 1 ! -name cache -exec rm -rf {} +
 # No NEXT_PUBLIC_STUDIO_AUTH: Studio has no login of its own, the platform's forward auth is the only one.
+# Disabled features: apps (and their single organization) are created by the platform, not from Studio.
 env -u NEXT_PUBLIC_STUDIO_AUTH -u NEXT_PUBLIC_IS_PLATFORM \
   SKIP_ASSET_UPLOAD=1 NEXT_TELEMETRY_DISABLED=1 NEXT_PUBLIC_ENABLE_LOGS=false \
+  NEXT_PUBLIC_DISABLED_FEATURES=organizations:create \
   NODE_OPTIONS=--max_old_space_size=8192 \
   pnpm exec next build
 

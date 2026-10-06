@@ -6,6 +6,7 @@ import { assertSelfHosted } from './util'
 import { getStoredProjectByRef } from './projectsStore'
 import { PG_META_URL } from '@/lib/constants/index'
 import { externalConnectionHeaders, getPgMetaProxyConfig } from './pgMetaProxy'
+import { isStopped, READ_ONLY_SQLSTATE, stoppedWriteMessage } from '@/platform/stopped'
 
 export type QueryOptions = {
   query: string
@@ -135,6 +136,11 @@ export async function executeQuery<T = unknown>({
       const parsed = databaseErrorSchema.safeParse(result)
       if (parsed.success) {
         const { message, code, formattedError } = parsed.data
+        const project = ref ? getStoredProjectByRef(ref) : undefined
+        if (code === READ_ONLY_SQLSTATE && project && isStopped(project)) {
+          const friendly = stoppedWriteMessage(project.name, message)
+          return { data: undefined, error: new PgMetaDatabaseError(friendly, code, response.status, friendly) }
+        }
         return { data: undefined, error: new PgMetaDatabaseError(message, code, response.status, formattedError) }
       }
 

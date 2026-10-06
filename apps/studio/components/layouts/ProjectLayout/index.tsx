@@ -29,6 +29,7 @@ import ConnectingState from './ConnectingState'
 import { getSectionKeyFromPathname, MobileMenuContent } from './LayoutHeader/MobileMenuContent'
 import { LoadingState } from './LoadingState'
 import { ProjectPausedState } from './PausedState/ProjectPausedState'
+import { StoppedBanner } from '@/platform/StoppedBanner'
 import { PauseFailedState } from './PauseFailedState'
 import { PausingState } from './PausingState'
 import { ResizingState } from './ResizingState'
@@ -274,6 +275,7 @@ export const ProjectLayout = forwardRef<HTMLDivElement, PropsWithChildren<Projec
                   </div>
                 ) : (
                   <ContentWrapper isLoading={isLoading} isBlocking={isBlocking}>
+                    <StoppedBanner />
                     <ResourceExhaustionWarningBanner />
                     {children}
                   </ContentWrapper>

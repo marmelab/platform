@@ -1,5 +1,4 @@
 import { BlobReader, BlobWriter, ZipWriter } from '@zip.js/zip.js'
-import { IS_PLATFORM } from 'common'
 import { capitalize, chunk, compact, find, findIndex, has, isObject, uniq, uniqBy } from 'lodash'
 import { createContext, PropsWithChildren, useContext, useEffect, useState } from 'react'
 import { useLatest } from 'react-use'
@@ -33,7 +32,6 @@ import { fetchFileUrl } from '@/components/interfaces/Storage/StorageExplorer/us
 import { getStoragePreference } from '@/components/interfaces/Storage/StorageExplorer/useStoragePreference'
 import { convertFromBytes } from '@/components/interfaces/Storage/StorageSettings/StorageSettings.utils'
 import { InlineLink } from '@/components/ui/InlineLink'
-import { getOrRefreshTemporaryApiKey } from '@/data/api-keys/temp-api-keys-utils'
 import { configKeys } from '@/data/config/keys'
 import { useProjectApiUrl } from '@/data/config/project-endpoint-query'
 import type { ProjectStorageConfigResponse } from '@/data/config/project-storage-config-query'
@@ -1160,7 +1158,8 @@ function createStorageExplorerState({
             const uploadDataDuringCreation = file.size <= chunkSize
 
             const upload = new tus.Upload(file, {
-              endpoint: state.resumableUploadUrl,
+              // platform: same-origin endpoint, Studio's server adds the key (no key of the app in the browser)
+              endpoint: `/api/platform/storage/${state.projectRef}/upload/resumable`,
               retryDelays: [0, 200, 500, 1500, 3000, 5000],
               headers: {
                 'x-source': 'supabase-dashboard',
@@ -1173,19 +1172,6 @@ function createStorageExplorerState({
                 ...fileOptions,
               },
               chunkSize,
-              onBeforeRequest: async (req) => {
-                try {
-                  // Use the shared temporary key for batch uploads
-                  // This checks if the key is still valid and refreshes if needed
-                  const { apiKey } = await getOrRefreshTemporaryApiKey(state.projectRef)
-                  req.setHeader('apikey', apiKey)
-                  if (!IS_PLATFORM) {
-                    req.setHeader('Authorization', `Bearer ${apiKey}`)
-                  }
-                } catch (error) {
-                  throw error
-                }
-              },
               onShouldRetry(error) {
                 const status = error.originalResponse ? error.originalResponse.getStatus() : 0
                 const doNotRetryStatuses = [400, 403, 404, 409, 413, 415, 429]

@@ -4,7 +4,7 @@ import { appUrl, config, internalAppUrl, studioUrl } from "../config.ts";
 import { many, runAll, withAdmin } from "../db.ts";
 import type { Router } from "../router.ts";
 
-/** Project record served to Studio: the fork's StoredProject (external mode) plus internal_url. */
+/** Project record served to Studio: the fork's StoredProject (external mode) plus internal_url and platform_status. */
 export interface StudioProject {
   id: number;
   ref: string;
@@ -17,6 +17,8 @@ export interface StudioProject {
   inserted_at: string;
   public_url: string;
   internal_url: string;
+  /** The app's status on the platform: "stopped" shows Studio's read-only banner (apps/studio/platform/stopped.ts). */
+  platform_status: string;
   db_host: string;
   db_port: number;
   db_user: string;
@@ -41,7 +43,9 @@ const STATUS: Record<string, string> = {
   running: "ACTIVE_HEALTHY",
   provisioning: "COMING_UP",
   error: "INACTIVE",
-  stopped: "INACTIVE",
+  // not INACTIVE: Studio skips its queries (policies, publications...) unless ACTIVE_HEALTHY, and a stopped app's
+  // database stays readable; platform_status tells Studio it is read-only
+  stopped: "ACTIVE_HEALTHY",
 };
 
 /**
@@ -100,6 +104,7 @@ export class MultiHeadStudio implements StudioRegistry {
         inserted_at: app.created_at.toISOString(),
         public_url: appUrl(app.slug),
         internal_url: internalAppUrl(app.slug),
+        platform_status: app.status,
         db_host: config.pg.host,
         db_port: config.pg.port,
         db_user: roles.owner,

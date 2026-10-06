@@ -4,8 +4,11 @@ import type { NextApiRequest, NextApiResponse } from 'next'
 import { canAccess, type PlatformIdentity, verifyIdentity } from './identity'
 import type { StoredProject } from '@/lib/api/self-hosted/projectsStore'
 
-/** StoredProject served by the control plane, plus the URL Studio's server uses to reach the app's API. */
-export type PlatformProject = StoredProject & { internal_url?: string }
+/**
+ * StoredProject served by the control plane, plus the URL Studio's server uses to reach the app's API and the app's
+ * status on the platform ("stopped": read-only, see ./stopped.ts).
+ */
+export type PlatformProject = StoredProject & { internal_url?: string; platform_status?: string }
 
 const TTL_MS = 2_000
 const STALE_MS = 30_000

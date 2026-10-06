@@ -23,6 +23,7 @@ import { useFeaturePreviewModal } from './App/FeaturePreview/FeaturePreviewConte
 import { ProfileImage } from '@/components/ui/ProfileImage'
 import { useAuth } from 'common'
 import { useSignOut } from '@/lib/auth'
+import { platformSignOut } from '@/platform/signOut'
 import { useAppStateSnapshot } from '@/state/app-state'
 
 export const LocalDropdown = ({
@@ -79,7 +80,7 @@ export const LocalDropdown = ({
               className="flex gap-2 cursor-pointer"
               onClick={async () => {
                 await signOut()
-                router.push('/sign-in')
+                if (!(await platformSignOut())) router.push('/sign-in')
               }}
             >
               <LogOut size={14} strokeWidth={1.5} className="text-foreground-lighter" />

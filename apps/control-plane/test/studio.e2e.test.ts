@@ -59,7 +59,7 @@ function raw(method: string, path: string, headers: Record<string, string> = {},
     Object.entries({ ...(safe ? {} : { origin: STUDIO }), ...headers }).filter(([, value]) => value !== ""),
   );
   return new Promise((resolve, reject) => {
-    const payload = body === undefined ? undefined : JSON.stringify(body);
+    const payload = body === undefined ? undefined : Buffer.isBuffer(body) ? body : JSON.stringify(body);
     const req = request({
       host: "127.0.0.1",
       port: 8100,
@@ -67,7 +67,8 @@ function raw(method: string, path: string, headers: Record<string, string> = {},
       path,
       headers: {
         host: "studio.localhost:8100",
-        ...(payload ? { "content-type": "application/json", "content-length": Buffer.byteLength(payload) } : {}),
+        ...(payload && !Buffer.isBuffer(body) ? { "content-type": "application/json" } : {}),
+        ...(payload ? { "content-length": Buffer.byteLength(payload) } : {}),
         ...headers,
       },
     }, (res) => {
@@ -372,6 +373,24 @@ describe("Studio for app builders", () => {
       { path: "", options: { limit: 10 } });
     assert.equal(listed.status, 200, listed.body);
     assert.deepEqual(JSON.parse(listed.body), []);
+    // upload through Studio's same-origin TUS proxy: no key of the app in the browser
+    const b64 = (value: string) => Buffer.from(value).toString("base64");
+    const upload = await raw("POST", `/api/platform/storage/${A}/upload/resumable`, {
+      cookie: alice, "tus-resumable": "1.0.0", "upload-length": "5",
+      "upload-metadata": `bucketName ${b64(bucket)},objectName ${b64("hello.txt")},contentType ${b64("text/plain")}`,
+    });
+    assert.equal(upload.status, 201, upload.body);
+    const location = String(upload.headers.location);
+    assert.ok(location.startsWith(`/api/platform/storage/${A}/upload/resumable/`), location);
+    const patched = await raw("PATCH", location, {
+      cookie: alice, "tus-resumable": "1.0.0", "upload-offset": "0", "content-type": "application/offset+octet-stream",
+    }, Buffer.from("hello"));
+    assert.equal(patched.status, 204, patched.body);
+    assert.equal(patched.headers["upload-offset"], "5");
+    assert.equal(psql(`select count(*) from storage.objects where bucket_id = '${bucket}' and name = 'hello.txt'`, `app_${dbId(A)}`), "1");
+    assert.equal((await raw("POST", `/api/platform/storage/${B}/upload/resumable`, {
+      cookie: alice, "tus-resumable": "1.0.0", "upload-length": "5",
+    })).status, 403);
     // the bucket is in A's database only
     assert.equal(psql(`select count(*) from storage.buckets where id = '${bucket}'`, `app_${dbId(A)}`), "1");
     assert.equal(psql(`select count(*) from storage.buckets where id = '${bucket}'`, `app_${dbId(B)}`), "0");
@@ -443,11 +462,15 @@ describe("Studio for app builders", () => {
     try {
       // alice's pg-meta connections (opened by the tests above) are terminated by stop_app
       await tool(client, "stop_app", { app: A });
+      await new Promise((resolve) => setTimeout(resolve, 2_100)); // Studio caches the project configs for 2 s
       const read = await sql(alice, A, "select count(*)::int as n from public.todos");
       assert.equal(read.status, 200, read.body);
       const write = await sql(alice, A, `create table ${probe} (x int)`);
       assert.notEqual(write.status, 200, write.body);
       assert.match(write.body, /read-only transaction/);
+      assert.match(write.body, /is stopped, so Studio is read-only/);
+      const project = await raw("GET", `/api/platform/projects/${A}`, { cookie: alice });
+      assert.equal(JSON.parse(project.body).platform_status, "stopped", project.body);
       const insert = await sql(alice, A, "insert into public.todos (title, user_id) select 'x', id from auth.users limit 1");
       assert.match(insert.body, /read-only transaction/);
       await tool(client, "start_app", { app: A });
