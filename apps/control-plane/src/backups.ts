@@ -409,14 +409,17 @@ export interface RunResult {
 /**
  * The daily run: a scheduled backup of every running, stopped or failed app, one at a time (each holds the lock, so a
  * restore or a manual backup can run in between), then the retention. Failures are audited per app and emailed to the
- * admins in one message.
+ * admins in one message. Limited to some apps (`only`, CLI `run-backups <slug>`), it leaves the daily run's state and
+ * summary (backup_state, shown in the admin console) untouched.
  */
 export async function runScheduledBackups({ apps: only }: { apps?: string[] } = {}): Promise<RunResult> {
   const startedAt = new Date();
-  await platform.query(
-    `insert into backup_state (id, run_started_at) values (1, now())
-     on conflict (id) do update set run_started_at = now()`,
-  );
+  if (!only) {
+    await platform.query(
+      `insert into backup_state (id, run_started_at) values (1, now())
+       on conflict (id) do update set run_started_at = now()`,
+    );
+  }
   const apps = await many<AppRow>(
     `select * from apps where status in ('running', 'stopped', 'error') and ($1::text[] is null or slug = any($1))
       order by slug`,
@@ -456,9 +459,11 @@ export async function runScheduledBackups({ apps: only }: { apps?: string[] } = 
     prune_errors: prune.errors.length,
     admins_notified: notified,
   };
-  await platform.query("update backup_state set run_finished_at = now(), run_summary = $1 where id = 1", [
-    JSON.stringify({ ...result, succeeded: succeeded.length }),
-  ]);
+  if (!only) {
+    await platform.query("update backup_state set run_finished_at = now(), run_summary = $1 where id = 1", [
+      JSON.stringify({ ...result, succeeded: succeeded.length }),
+    ]);
+  }
   return result;
 }
 

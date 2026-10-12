@@ -393,7 +393,7 @@ Restoring into **another** app (cloning an environment, PLAN_1 §3.9) is not ava
 docker exec plat-control-plane node src/cli.ts list-backups [<slug>]                    # newest first, deleted apps included
 docker exec plat-control-plane node src/cli.ts backup-app demo                          # manual backup now (JSON: id, location)
 docker exec plat-control-plane node src/cli.ts restore-app <backup-id> --confirm demo   # pre_restore backup, then the restore
-docker exec plat-control-plane node src/cli.ts run-backups [<slug>...]                  # the daily run now (exit code 1 on a failure)
+docker exec plat-control-plane node src/cli.ts run-backups [<slug>...]                  # the daily run now (exit code 1 on a failure); with slugs, those apps only, not recorded as the daily run
 docker exec plat-control-plane node src/cli.ts prune-backups [--now 2026-11-01T03:00:00Z]   # the retention alone (--now: simulated date)
 docker exec plat-control-plane node src/cli.ts set-setting backup_s3_endpoint https://s3.eu-west-3.amazonaws.com
 docker exec plat-control-plane node src/cli.ts set-setting backup_s3_bucket acme-platform-backups

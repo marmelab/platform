@@ -380,6 +380,8 @@ describe("M7: backups and restore", () => {
     // the run's retention uses the real clock: test 5 dated the pre_restore backup (on the volume) 2026-09-05
     cli(["set-setting", "backup_manual_retention_days", "3650"]);
     const before = onVolume();
+    const dailyRun = () => psql("select concat_ws('|', run_started_at, run_finished_at, run_summary) from backup_state where id = 1");
+    const dailyRunBefore = dailyRun();
     setS3("http://s3-unreachable.invalid:8333");
     let failedRun: any;
     try {
@@ -397,6 +399,7 @@ describe("M7: backups and restore", () => {
     const row = psql(`select concat_ws('|', status, location is null, error) from backups where id = '${failedRun.failed[0].backup_id}'`);
     assert.match(row, /^failed\|t\|upload to S3 failed/);
     assert.equal(onVolume(), before, "nothing left on the volume");
+    assert.equal(dailyRun(), dailyRunBefore, "a run limited to one app is not the daily run (admin console)");
     assert.equal(psql(`select count(*) from audit_log l join apps a on a.id = l.app_id where a.slug = '${APP}' and l.action = 'backup_failed'`), "1");
 
     const mail = await waitForMail(`to:"${env.PLATFORM_ADMIN_EMAIL}" subject:"Backups failed"`);

@@ -25,7 +25,8 @@
 //   node src/cli.ts restore-app <backup-id> --confirm <slug> [--no-safety-backup]
 //                                                  (replaces the app's database, files and secrets with the backup's,
 //                                                  after a pre_restore backup; a deleted app is recreated; audited)
-//   node src/cli.ts run-backups [<slug>...]        (the daily run now: scheduled backups, retention, failure email)
+//   node src/cli.ts run-backups [<slug>...]        (the daily run now: scheduled backups, retention, failure email;
+//                                                  with slugs, those apps only, not recorded as the daily run)
 //   node src/cli.ts prune-backups [--now <iso date>]   (the retention alone; --now simulates another date)
 //   node src/cli.ts lint-apps [--source manual|upgrade] [<slug>...]  (security linter now, results recorded)
 //   node src/cli.ts recycle-apps [--force] [<slug>...]  (A8: recreates the GoTrue and PostgREST containers whose spec or
