@@ -7,7 +7,7 @@ import { readFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { cleanup, psql, runId, waitForControlPlane } from "./disposable.ts";
+import { cleanup, cli, psql, runId, waitForControlPlane } from "./disposable.ts";
 import { waitForMail } from "./mailpit.ts";
 
 const ROOT = new URL("../../../", import.meta.url);
@@ -437,6 +437,31 @@ describe("admin API e2e", () => {
     assert.ok(stats.host.memory_total > 0);
     assert.ok(stats.host.disk.total > 0);
     assert.ok(Array.isArray(stats.recent_failures));
+  });
+
+  test("10b. settings: read-only view of the values in effect and the overrides; CLI changes are audited", async () => {
+    const key = "abandoned_after_days";
+    const before = ok(await request("GET", "/settings"));
+    const previous = before.overrides.find((o: { key: string }) => o.key === key)?.value as string | undefined;
+    assert.equal(typeof before.effective.abandonedAfterDays, "number");
+    assert.equal(before.effective.sso.client_secret, undefined, "no secret in the view");
+    try {
+      cli(["set-setting", key, "45"]);
+      const set = ok(await request("GET", "/settings"));
+      assert.equal(set.effective.abandonedAfterDays, 45);
+      assert.deepEqual(
+        (({ key, value, env }) => ({ key, value, env }))(set.overrides.find((o: { key: string }) => o.key === key)),
+        { key, value: "45", env: "ABANDONED_AFTER_DAYS" },
+      );
+      const [audited] = await auditEntries({ action: "set_setting" });
+      assert.deepEqual(audited.details, { key, value: "45", source: "cli" });
+      cli(["unset-setting", key]);
+      assert.ok(!ok(await request("GET", "/settings")).overrides.some((o: { key: string }) => o.key === key));
+      assert.deepEqual((await auditEntries({ action: "unset_setting" }))[0].details, { key, source: "cli" });
+    } finally {
+      if (previous !== undefined) cli(["set-setting", key, previous]);
+      else cli(["unset-setting", key]);
+    }
   });
 
   test("11. delete the app through the API, then its owner", async () => {

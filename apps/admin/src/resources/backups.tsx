@@ -139,7 +139,7 @@ export function RestoreButton({ backup }: { backup: BackupRecord }) {
 
 const Location = ({ backup }: { backup: BackupRecord }) =>
   backup.location ? (
-    <code className="block max-w-xs truncate text-xs" title={backup.location}>
+    <code className="block max-w-56 truncate text-xs" title={backup.location}>
       {backup.location}
     </code>
   ) : null;
@@ -174,14 +174,15 @@ const BackupColumns = ({ showApp }: { showApp: boolean }) => (
         b.versions ? `front v${b.versions.frontend ?? "—"} · functions v${b.versions.functions ?? "—"}` : "—"
       }
     />
+    {/* before the location: a long path must not push the button out of a narrow window */}
+    <DataTable.Col label="" disableSort render={(b: BackupRecord) => <RestoreButton backup={b} />} />
     <DataTable.Col
       label="Location / error"
       disableSort
       render={(b: BackupRecord) =>
-        b.error ? <span className="block max-w-xs truncate text-destructive" title={b.error}>{b.error}</span> : <Location backup={b} />
+        b.error ? <span className="block max-w-56 truncate text-destructive" title={b.error}>{b.error}</span> : <Location backup={b} />
       }
     />
-    <DataTable.Col label="" disableSort render={(b: BackupRecord) => <RestoreButton backup={b} />} />
   </DataTable>
 );
 

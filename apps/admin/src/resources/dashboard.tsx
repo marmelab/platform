@@ -49,6 +49,26 @@ const Stat = ({ title, children }: { title: string; children: React.ReactNode })
 
 const Big = ({ children }: { children: React.ReactNode }) => <div className="text-2xl font-semibold">{children}</div>;
 
+/** Share of the volumes disk in use above which backups, restores and deployments may run out of space. */
+const DISK_ALERT_RATIO = 0.9;
+
+const DiskUsage = ({ total, free }: { total: number; free: number }) => {
+  const used = total - free;
+  const ratio = total ? used / total : 0;
+  const alert = ratio >= DISK_ALERT_RATIO;
+  return (
+    <div data-testid="dashboard-disk" className={alert ? "text-destructive" : undefined}>
+      <Big>
+        {bytes(used)} / {bytes(total)}
+      </Big>
+      <div className={alert ? undefined : "text-muted-foreground"}>
+        {Math.round(ratio * 100)}% used · {bytes(free)} free
+      </div>
+      {alert && <div className="font-medium">Low disk space: backups, restores and deployments may fail.</div>}
+    </div>
+  );
+};
+
 export const Dashboard = () => {
   const [stats, setStats] = useState<Stats | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -182,13 +202,7 @@ export const Dashboard = () => {
           </details>
         </Stat>
         <Stat title="Volumes disk">
-          {host.disk ? (
-            <Big>
-              {bytes(host.disk.total - host.disk.free)} / {bytes(host.disk.total)}
-            </Big>
-          ) : (
-            "—"
-          )}
+          {host.disk ? <DiskUsage {...host.disk} /> : "—"}
         </Stat>
       </div>
       <Card>

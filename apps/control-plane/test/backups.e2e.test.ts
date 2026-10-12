@@ -377,6 +377,8 @@ describe("M7: backups and restore", () => {
     await deleteMails('subject:"Backups failed"');
     const onVolume = () => execFileSync("docker", ["exec", "plat-control-plane", "sh", "-c", `ls -d /data/backups/${APP}-* 2>/dev/null || true`],
       { encoding: "utf8" }).trim();
+    // the run's retention uses the real clock: test 5 dated the pre_restore backup (on the volume) 2026-09-05
+    cli(["set-setting", "backup_manual_retention_days", "3650"]);
     const before = onVolume();
     setS3("http://s3-unreachable.invalid:8333");
     let failedRun: any;
@@ -385,6 +387,8 @@ describe("M7: backups and restore", () => {
       assert.fail("run-backups should exit with an error");
     } catch (error) {
       failedRun = JSON.parse(String((error as { stdout?: string }).stdout));
+    } finally {
+      cli(["unset-setting", "backup_manual_retention_days"]);
     }
     assert.equal(failedRun.failed.length, 1);
     assert.equal(failedRun.failed[0].app, APP);
@@ -407,6 +411,7 @@ describe("M7: backups and restore", () => {
 
   test("7. delete with a final backup on S3, then the deleted app recreated from it", async () => {
     setS3();
+    const created = (await adminApi("GET", `/apps/${APP}`)).body.created_at;
     const deleted = await call(owner, "delete_app", { app: APP, confirm: APP });
     assert.match(deleted.backup, new RegExp(`^s3://${BUCKET}/${PREFIX}/${APP}-`));
     await refused(admin, "get_app", { app: APP }, /not found/);
@@ -417,6 +422,9 @@ describe("M7: backups and restore", () => {
     const restored = await adminApi("POST", `/backups/${deleted.backup_id}/restore`, { confirm: APP });
     assert.equal(restored.status, 200, JSON.stringify(restored.body));
     assert.equal(restored.body.mode, "deleted_app");
+    const record = (await adminApi("GET", `/apps/${APP}`)).body;
+    assert.equal(record.created_at, created, "the original creation date");
+    assert.ok(record.restored_at > created, "and the restore");
     const app = await call(owner, "get_app", { app: APP });
     assert.equal(app.status, "running");
     assert.equal(app.anon_key, anonKey, "the same keys: the deployed frontend keeps working");

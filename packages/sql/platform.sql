@@ -173,6 +173,8 @@ create table if not exists app_metrics (
 create index if not exists app_metrics_hour on app_metrics (hour);
 -- last request seen in the access log (kept beyond the metrics retention, for the "abandoned" flag)
 alter table apps add column if not exists last_request_at timestamptz;
+-- last restore from a backup (A4): counts as activity for the "abandoned" flag; created_at keeps the original creation
+alter table apps add column if not exists restored_at timestamptz;
 
 -- Sampler state (one row): position in Caddy's access log, first sample (the abandoned flag waits for N days of data)
 create table if not exists metrics_state (

@@ -1,5 +1,5 @@
 import { Resource } from "ra-core";
-import { AppWindow, DatabaseBackup, KeyRound, ScrollText, ShieldCheck, Users } from "lucide-react";
+import { AppWindow, DatabaseBackup, KeyRound, ScrollText, Settings, ShieldCheck, Users } from "lucide-react";
 import { Admin } from "@/components/admin";
 import { authProvider, dataProvider } from "./providers";
 import { Dashboard } from "./resources/dashboard";
@@ -10,6 +10,7 @@ import { TokenCreate, TokenList } from "./resources/tokens";
 import { AuditList } from "./resources/audit";
 import { SsoSettings } from "./resources/sso";
 import { BackupList } from "./resources/backups";
+import { SettingsPage } from "./resources/settings";
 
 const App = () => (
   <Admin
@@ -27,6 +28,7 @@ const App = () => (
     <Resource name="backups" list={BackupList} icon={DatabaseBackup} />
     <Resource name="audit_log" list={AuditList} icon={ScrollText} options={{ label: "Audit log" }} />
     <Resource name="sso" list={SsoSettings} icon={ShieldCheck} options={{ label: "SSO" }} />
+    <Resource name="settings" list={SettingsPage} icon={Settings} options={{ label: "Settings" }} />
     <Resource name="app_members" />
     <Resource name="releases" />
     <Resource name="deployments" />

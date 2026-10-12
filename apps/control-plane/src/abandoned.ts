@@ -28,12 +28,12 @@ export function abandonedMail(app: { slug: string; name: string }, lastActivity:
     text: [
       "Hello,",
       "",
-      `The app "${app.name}" (${appUrl(app.slug)}) has received no request and no deployment since ${date} ` +
-      `(more than ${days} days). It is now flagged as abandoned in the platform's admin console: an admin may put it ` +
-      "to sleep (stop it) or delete it after a final backup.",
+      `Nobody has used or updated the app "${app.name}" (${appUrl(app.slug)}) since ${date} (more than ${days} days). ` +
+      "The platform administrators now see it as abandoned: they may pause it, or delete it after keeping a copy " +
+      "of its data.",
       "",
-      "If the app is still needed, use it or deploy it again: the flag goes away with the next request or release. " +
-      "Otherwise, you can stop or delete it yourself (ask Claude: stop_app, delete_app), or tell your platform admin.",
+      "If the app is still needed, just open it or publish a new version: it will no longer be considered abandoned. " +
+      "If it is not needed any more, you can ask Claude to pause or delete it, or tell your platform administrator.",
       "",
       "You receive this email because you are an owner of the app.",
     ].join("\n"),
@@ -52,7 +52,7 @@ export async function notifyAbandonedApps(): Promise<{ notified: string[]; faile
   const apps = await many<AppActivity>(
     `select a.id, a.slug, a.name, a.status, a.abandoned_notified_at,
         greatest(a.last_request_at, (select max(r.started_at) from releases r where r.app_id = a.id), a.created_at,
-          $1::timestamptz) as last_activity_at
+          a.restored_at, $1::timestamptz) as last_activity_at
        from apps a where a.status <> 'deleted'`,
     [state?.started_at ?? new Date()],
   );

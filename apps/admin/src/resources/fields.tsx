@@ -124,9 +124,28 @@ export const Commit = ({ release }: { release: Release }) =>
     <span className="text-muted-foreground">no commit</span>
   );
 
-/** Last release of an app in one cell: date, commit, author, source, result, run link. */
-export const ReleaseSummary = ({ release }: { release: Release | null | undefined }) => {
-  if (!release) return <span className="text-muted-foreground">never deployed</span>;
+/**
+ * Last release of an app in one cell: date, commit, author, source, result, run link. Without a release, the live
+ * versions tell an app deployed outside releases (e.g. by the install seed) from one never deployed.
+ */
+export const ReleaseSummary = ({
+  release,
+  live,
+}: {
+  release: Release | null | undefined;
+  live?: { frontend_version: number | null; functions_version: number | null };
+}) => {
+  if (!release) {
+    const versions = [
+      live?.frontend_version ? `frontend v${live.frontend_version}` : null,
+      live?.functions_version ? `functions v${live.functions_version}` : null,
+    ].filter(Boolean);
+    return (
+      <span className="text-muted-foreground">
+        {versions.length ? `no release · ${versions.join(", ")} live` : "never deployed"}
+      </span>
+    );
+  }
   return (
     <div className="flex flex-col gap-1 text-sm">
       <div className="flex flex-wrap items-center gap-2">

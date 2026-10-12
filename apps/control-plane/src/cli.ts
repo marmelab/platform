@@ -45,16 +45,15 @@ import { addMember, removeMember } from "./members.ts";
 import { deleteShadowUser } from "./platform-auth.ts";
 import { setPassword } from "./sessions.ts";
 import {
-  backupSummary,
   ENCRYPTED_KEYS,
   getSettings,
   setSetting,
+  settingsSummary,
   SMTP_KEYS,
-  smtpSummary,
   SSO_PROVIDER_KEYS,
-  ssoSummary,
   unsetSetting,
 } from "./settings.ts";
+import { audit } from "./audit.ts";
 import { syncCompanySso } from "./app-sso.ts";
 import { backupView, type BackupRow, createManualBackup, pruneBackups, runScheduledBackups } from "./backups.ts";
 import { restoreBackup } from "./restore.ts";
@@ -126,23 +125,19 @@ if (command === "init") {
     : `app ${args[0]} deleted (nothing to back up)`,
   );
 } else if (command === "settings") {
-  const settings = await getSettings();
-  console.log(JSON.stringify({
-    ...settings,
-    oidcJwks: settings.oidcJwks ? "(inline JWKS set: test only)" : null,
-    smtp: smtpSummary(settings.smtp),
-    sso: ssoSummary(settings.sso),
-    backup: backupSummary(settings.backup),
-  }, null, 2));
+  console.log(JSON.stringify(settingsSummary(await getSettings()), null, 2));
 } else if (command === "set-setting" && args[0] && args[1] !== undefined) {
   const secret = ENCRYPTED_KEYS.includes(args[0]);
   const value = secret && args[1] === "-" ? (await text(process.stdin)).trim() : args[1];
   await setSetting(args[0], value);
+  // no actor: the CLI runs in the control plane container (TECH_DEBT CP-8)
+  await audit(null, null, "set_setting", { key: args[0], value: secret ? "(secret)" : value, source: "cli" });
   console.log(`${args[0]} set`);
   if (SMTP_KEYS.includes(args[0])) await syncAuth();
   if (SSO_PROVIDER_KEYS.includes(args[0])) console.log(JSON.stringify(await syncCompanySso()));
 } else if (command === "unset-setting" && args[0]) {
   await unsetSetting(args[0]);
+  await audit(null, null, "unset_setting", { key: args[0], source: "cli" });
   console.log(`${args[0]} unset`);
   if (SMTP_KEYS.includes(args[0])) await syncAuth();
   if (SSO_PROVIDER_KEYS.includes(args[0])) console.log(JSON.stringify(await syncCompanySso()));

@@ -77,6 +77,7 @@ export interface AppRecord extends RaRecord {
   frontend_version: number | null;
   functions_version: number | null;
   created_at: string;
+  restored_at: string | null;
   services?: { name: string; service: string; state: string }[];
   /** App page only (M6): the auth policy set by the builder with configure_auth. */
   auth?: AuthPolicy;
@@ -155,7 +156,7 @@ export const AppList = () => (
         source="last_release_at"
         label="Last release"
         sortByOrder="DESC"
-        render={(app) => <ReleaseSummary release={app.last_release} />}
+        render={(app) => <ReleaseSummary release={app.last_release} live={app as AppRecord} />}
       />
       <DataTable.Col label="Flags" disableSort render={(app) => <FlagBadges flags={app.flags} />} />
       <DataTable.Col
@@ -381,7 +382,10 @@ const Overview = ({ app }: { app: AppRecord }) => (
       <Field label="Owners">
         <Owners owners={app.owners} />
       </Field>
-      <Field label="Created">{dateTime(app.created_at)}</Field>
+      <Field label="Created">
+        {dateTime(app.created_at)}
+        {app.restored_at && <div className="text-muted-foreground">restored from a backup {dateTime(app.restored_at)}</div>}
+      </Field>
       <Field label="Live versions">
         frontend v{app.frontend_version ?? "—"}, functions v{app.functions_version ?? "—"}
       </Field>
@@ -404,7 +408,7 @@ const Overview = ({ app }: { app: AppRecord }) => (
       )}
     </Field>
     <Field label="Last release">
-      <ReleaseSummary release={app.last_release} />
+      <ReleaseSummary release={app.last_release} live={app} />
     </Field>
     <Load app={app} />
     {app.auth && <AuthPolicyCard auth={app.auth} />}

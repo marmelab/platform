@@ -281,10 +281,13 @@ async function recreateApp(actor: User | null, row: BackupRow, manifest: BackupM
   if (!owner) throw new UserError("no account can own the restored app: create an admin first");
   const appSecretsJson = JSON.stringify(secrets?.app ?? generateSecrets(row.slug));
   const app = await one<AppRow>(
-    `insert into apps (slug, name, owner_id, db_name, secrets_enc, github_repo, github_repo_id, default_branch)
-     values ($1, $2, $3, $4, $5, $6, $7, $8) on conflict (slug) do nothing returning *`,
+    `insert into apps (slug, name, owner_id, db_name, secrets_enc, github_repo, github_repo_id, default_branch,
+       created_at, restored_at)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, coalesce($9::timestamptz, now()), now()) on conflict (slug) do nothing
+     returning *`,
     [row.slug, manifest.name ?? row.slug, owner.id, appRoles(dbId(row.slug)).database, encrypt(appSecretsJson),
-      manifest.github_repo ?? null, manifest.github_repo_id ?? null, manifest.default_branch ?? null],
+      manifest.github_repo ?? null, manifest.github_repo_id ?? null, manifest.default_branch ?? null,
+      manifest.created_at ?? null],
   );
   if (!app) throw new UserError(`slug "${row.slug}" is already taken`);
   for (const member of members) {
@@ -367,7 +370,9 @@ export async function restoreBackup(
       const files = await restoreFiles(actor, app, dir, manifest, row.id);
       replaced = true;
       await setDatabaseReadOnly(app.slug, false);
-      await platform.query("update apps set status = 'provisioning', updated_at = now() where id = $1", [app.id]);
+      await platform.query("update apps set status = 'provisioning', restored_at = now(), updated_at = now() where id = $1", [
+        app.id,
+      ]);
       const fresh = (await one<AppRow>("select * from apps where id = $1", [app.id]))!;
       await provision(fresh);
       const result = {

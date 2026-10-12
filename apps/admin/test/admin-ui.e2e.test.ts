@@ -113,6 +113,7 @@ describe("admin SPA smoke test", () => {
     await page.getByRole("heading", { name: "Dashboard" }).waitFor();
     await page.getByText("Postgres cluster").waitFor();
     await page.getByText("Requests, 24 h (all apps)").waitFor();
+    await page.getByTestId("dashboard-disk").getByText("% used").waitFor();
     await shot(page, "02-dashboard");
   });
 
@@ -230,6 +231,9 @@ describe("admin SPA smoke test", () => {
     await page.getByTestId("backup-settings").waitFor();
     await page.getByRole("row").filter({ hasText: APP }).first().waitFor();
     await shot(page, "11b-backups");
+    await page.goto(`${ADMIN}/#/settings`);
+    await page.getByTestId("settings-effective").getByText("abandonedAfterDays").waitFor();
+    await shot(page, "11c-settings");
   });
 
   test("6. company SSO: settings screen, then signing in with the mock IdP", async () => {

@@ -157,6 +157,33 @@ export function smtpSummary(smtp: SmtpSettings | null) {
     : { configured: false };
 }
 
+/** The effective settings without any secret (CLI `settings`, admin API). */
+export function settingsSummary(settings: Settings) {
+  return {
+    ...settings,
+    oidcJwks: settings.oidcJwks ? "(inline JWKS set: test only)" : null,
+    smtp: smtpSummary(settings.smtp),
+    sso: ssoSummary(settings.sso),
+    backup: backupSummary(settings.backup),
+  };
+}
+
+/**
+ * The values set with set-setting, which override the environment (or the default when the variable is unset):
+ * secrets and the inline JWKS are never returned.
+ */
+export async function settingOverrides() {
+  const rows = await many<{ key: string; value: string; updated_at: Date }>(
+    "select key, value, updated_at from settings order by key",
+  );
+  return rows.map(({ key, value, updated_at }) => ({
+    key,
+    value: ENCRYPTED_KEYS.includes(key) ? "(secret)" : key === "oidc_jwks" ? "(inline JWKS)" : value,
+    env: (SETTING_KEYS as Record<string, string>)[key] ?? null,
+    updated_at,
+  }));
+}
+
 /** Keys accepted by set-setting, with their environment variable. */
 export const SETTING_KEYS = {
   direct_deploy: "DIRECT_DEPLOY",

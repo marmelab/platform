@@ -32,6 +32,8 @@ import {
   backupSummary,
   getSettings,
   setSetting,
+  settingOverrides,
+  settingsSummary,
   SSO_PROVIDER_KEYS,
   ssoActive,
   ssoSummary,
@@ -371,6 +373,7 @@ interface AppListRow extends Record<string, unknown> {
   lint: { ran_at: string; errors: number; warnings: number; failed: boolean; unaccepted_errors: number } | null;
   last_request_at: Date | null;
   created_at: Date;
+  restored_at: Date | null;
   requests_24h: string;
   errors_24h: string;
   memory: string | null;
@@ -394,7 +397,7 @@ async function activityContext(): Promise<Activity> {
 
 const APPS_SQL = `
   select a.id as uuid, a.slug as id, a.slug, a.name, a.status, a.error, a.github_repo, a.github_repo_id::text,
-    a.default_branch, a.created_at, a.updated_at, a.abandoned_notified_at,
+    a.default_branch, a.created_at, a.restored_at, a.updated_at, a.abandoned_notified_at,
     coalesce((select json_agg(json_build_object('id', u.id, 'email', u.email, 'name', u.name) order by u.email)
       from app_members m join users u on u.id = m.user_id where m.app_id = a.id and m.role = 'owner'), '[]'::json) as owners,
     (select count(*)::int from app_members m where m.app_id = a.id) as member_count,
@@ -440,9 +443,9 @@ async function githubBase() {
 function decorateApp(row: AppListRow, github: string, activity: Activity) {
   const release = row.last_release;
   const repoUrl = row.github_repo ? `${github}/${row.github_repo}` : null;
-  // A6: the last request, the last release, the app's creation, or the start of the metrics, whichever is latest
+  // A6: the last request, the last release, the app's creation or restore, or the start of the metrics, whichever is latest
   const lastActivity = new Date(Math.max(
-    ...[row.last_request_at, release?.started_at, row.created_at, activity.metricsSince]
+    ...[row.last_request_at, release?.started_at, row.created_at, row.restored_at, activity.metricsSince]
       .filter((d) => d !== null && d !== undefined).map((d) => new Date(d as string | Date).getTime()),
   ));
   const abandoned = isAbandoned(lastActivity, activity.abandonedAfterDays);
@@ -672,11 +675,12 @@ async function backupStatus() {
   const state = await one<{ scheduled_on: string | null; run_started_at: Date | null; run_finished_at: Date | null; run_summary: unknown }>(
     "select scheduled_on::text, run_started_at, run_finished_at, run_summary from backup_state where id = 1",
   );
-  // apps whose last succeeded backup is older than 36 h (or that have none, once older than 36 h)
+  // apps whose last succeeded backup is older than 36 h (or that have none, once created or restored 36 h ago)
   const stale = await many<{ slug: string; last_backup_at: Date | null }>(
     `select a.slug, max(b.started_at) as last_backup_at from apps a
        left join backups b on b.app_id = a.id and b.status = 'succeeded'
-      where a.status in ('running', 'stopped', 'error') and a.created_at < now() - interval '36 hours'
+      where a.status in ('running', 'stopped', 'error')
+        and greatest(a.created_at, a.restored_at) < now() - interval '36 hours'
       group by a.slug having coalesce(max(b.started_at), '-infinity') < now() - interval '36 hours'
       order by a.slug`,
   );
@@ -920,6 +924,11 @@ async function ssoRecord() {
     apps_using_sso: apps?.n ?? 0,
   };
 }
+
+// Platform settings, read-only: what is in effect (secrets left out) and which values set-setting put over the
+// environment. They are changed with the CLI (audited set_setting / unset_setting), the SSO ones on the SSO screen.
+adminApi.get("/settings", async (c) =>
+  c.json({ effective: settingsSummary(await getSettings()), overrides: await settingOverrides() }));
 
 adminApi.get("/sso", async (c) => c.json(await ssoRecord()));
 

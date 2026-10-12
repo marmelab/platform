@@ -73,6 +73,8 @@ export interface AppRow {
   github_repo_id: string | null;
   default_branch: string | null;
   created_at: Date;
+  /** Last restore from a backup (A4); null if never restored. */
+  restored_at: Date | null;
 }
 
 export interface AppSecrets {
