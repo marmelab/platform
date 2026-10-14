@@ -264,3 +264,8 @@ organization, SMTP, backups and the master key, first login, hardening checklist
 Not yet done: centralized logs (Loki), and a CI run against a real GitHub organization (the CI path has only run
 against a simulated GitHub). Production blockers are tracked as P1 in
 [docs/TECH_DEBT.md](docs/TECH_DEBT.md).
+
+## License
+
+[MIT](LICENSE), except the vendored Studio in `apps/studio/`, which stays under its
+[Sustainable Use License](apps/studio/LICENSE).
