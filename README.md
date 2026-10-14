@@ -2,7 +2,7 @@
 
 Self-hosted hosting for the apps your team builds with Claude Code. Each app gets its own Supabase backend (Postgres database, Auth, REST API, Edge Functions) and its static frontend, all served from a single VM. Developers ("app builders") don't use a UI to deploy: they ask Claude Code to "deploy the app to the platform", through an MCP server and a Claude Code plugin. They inspect their apps in a multi-project Supabase Studio. Admins see every app, in Studio and in an admin console.
 
-> **Status: alpha.** Milestones M0 to M3 are done, plus Studio access for app builders, most of the admin console (M4), Storage and Realtime (M5), app emails and company SSO (M6), and operations (M7: backups, production installer with HTTPS, upgrades, security linter). It runs locally, and installs on a VM with a real domain ([docs/INSTALL.md](docs/INSTALL.md)). Known limitations and remaining work: [docs/TECH_DEBT.md](docs/TECH_DEBT.md) and [Deploying](#deploying).
+> **Status: alpha.** Done: app provisioning, deployment through MCP and GitHub Actions, Studio access for app builders, the admin console, Storage and Realtime, app emails and company SSO, backups and restore, the production installer with HTTPS, upgrades and the security linter. It runs locally, and installs on a VM with a real domain ([docs/INSTALL.md](docs/INSTALL.md)). Known limitations and remaining work: [docs/TECH_DEBT.md](docs/TECH_DEBT.md) and [Deploying](#deploying).
 
 More docs:
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): architecture and design decisions (tenancy, routing, Studio, MCP tools, CI deployment, security safeguards);
@@ -151,7 +151,7 @@ docker compose -p plat -f deploy/docker-compose.yml start
 | http://api.localhost:8100/mcp | MCP server: browser sign-in from Claude Code (OAuth), or a PAT (`Authorization: Bearer <PAT>` or `X-Platform-Token: <PAT>`). Its OAuth token endpoint is announced on http://localhost:8100/oauth/token: Claude Code only sends token requests to HTTPS or loopback hosts |
 | http://studio.localhost:8100 | Studio (platform login) |
 | http://admin.localhost:8100 | Admin console, admins only (`PLATFORM_ADMIN_EMAIL` / `PLATFORM_ADMIN_PASSWORD` from `deploy/.env.local`); its REST API is under `/api` |
-| http://`<slug>`.localhost:8100 | Each app: frontend at `/`, Supabase APIs at `/auth/v1`, `/rest/v1`, `/functions/v1` |
+| http://`<slug>`.localhost:8100 | Each app: frontend at `/`, Supabase APIs at `/auth/v1`, `/rest/v1`, `/storage/v1`, `/realtime/v1`, `/functions/v1` |
 | http://localhost:8025 | Mailpit (local installs): every email sent by the platform and its apps (sign-up confirmations, password resets, invitations, notices) |
 | http://localhost:8090 | Mock OpenID Connect provider (local installs): the "company IdP" for trying the company SSO; it signs in any email (see [Company SSO](#company-sso)) |
 | `127.0.0.1:54350` | Postgres (`supabase_admin`, password `POSTGRES_PASSWORD` in `deploy/.env`) |
@@ -169,6 +169,16 @@ docker compose -p plat -f deploy/docker-compose.yml start
 
 Seed accounts exist only after `deploy/install.sh --seed`. Their passwords are fixed development credentials for the local stack only.
 
+To create other app builders for manual testing, use the admin console (Users, with a password: that is all a builder needs), or the CLI inside the control plane container:
+
+```bash
+docker exec plat-control-plane node src/cli.ts create-user carol@example.com developer   # prints a PAT
+docker exec plat-control-plane node src/cli.ts set-password carol@example.com --generate  # prints a password
+docker exec plat-control-plane node src/cli.ts add-member <slug> carol@example.com collaborator
+```
+
+An app builder only sees, in Studio and through MCP, the apps they are a member of.
+
 ### Trying the seeded apps
 
 `todo-app` ([examples/todo-app](examples/todo-app)) and `notes-app` ([examples/notes-app](examples/notes-app)) are two different example apps. Each is a separate instance with its own database and its own user accounts.
@@ -184,23 +194,13 @@ Open http://admin.localhost:8100 and sign in with `PLATFORM_ADMIN_EMAIL` / `PLAT
 
 ### Company SSO
 
-The platform can delegate its logins (Studio, admin console) to the company's OpenID Connect provider, and apps can let their users sign in with it (M6 part 2). Local installs run a mock provider that signs in any email. To try it:
+The platform can delegate its logins (Studio, admin console) to the company's OpenID Connect provider, and apps can let their users sign in with it. Local installs run a mock provider that signs in any email. To try it:
 
 1. In the admin console, open **SSO** and set: issuer `https://idp.sso.test:8443`, discovery URL `http://idp:8090/.well-known/openid-configuration`, client ID `platform`, client secret `platform-secret`, then check **Enabled** and save.
 2. Open http://studio.localhost:8100, click **Sign in with company SSO**, type `alice@example.com` (seed) or your admin email in the mock provider's form: you are signed in to Studio as alice (an unknown email is refused, unless "Unknown users" creates developers). The admin console's login page has the same button, for admins.
 3. For an app's users, ask Claude (or call `configure_auth`) to enable company SSO on the app (`sso: {provider: "company"}`); the app then signs in with `supabase.auth.signInWithOAuth({ provider: "custom:company" })`.
 
-Details, security checks and limits: [apps/control-plane/README.md](apps/control-plane/README.md#company-sso-m6-part-2).
-
-To create other app builders for manual testing, use the admin console (Users, with a password: that is all a builder needs), or the CLI inside the control plane container:
-
-```bash
-docker exec plat-control-plane node src/cli.ts create-user carol@example.com developer   # prints a PAT
-docker exec plat-control-plane node src/cli.ts set-password carol@example.com --generate  # prints a password
-docker exec plat-control-plane node src/cli.ts add-member <slug> carol@example.com collaborator
-```
-
-An app builder only sees, in Studio and through MCP, the apps they are a member of.
+Details, security checks and limits: [apps/control-plane/README.md](apps/control-plane/README.md#company-sso).
 
 ## Deploy an app with Claude Code
 
@@ -222,7 +222,7 @@ An app builder only sees, in Studio and through MCP, the apps they are a member 
 
 On a local install (`DIRECT_DEPLOY=everyone`, no CI configured), the `deploy` skill takes the direct path: it creates the app, writes and commits `.platform.json`, checks the secrets the functions read, runs `platform-deploy check` (migrations dry run with the security linter, build), then `platform-deploy deploy` (migrations, Edge Functions, frontend, smoke test), and prints the app URL (for instance http://todo-app.localhost:8100) and its Studio link.
 
-> In production (`DIRECT_DEPLOY=admins`, `CI_ALLOWED_WORKFLOWS` set), the same request takes the CI path: the skill creates or links the GitHub repository, installs the workflow that calls the platform's reusable workflow, opens a PR and watches the GitHub Actions run; direct deployment is reserved to admins (`admin-deploy` skill, with a reason). See [docs/USER_JOURNEYS.md](docs/USER_JOURNEYS.md) B2 and A10, and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) §6. The CI path has not run against GitHub yet.
+> In production (`DIRECT_DEPLOY=admins`, `CI_ALLOWED_WORKFLOWS` set), the same request takes the CI path: the skill creates or links the GitHub repository, installs the workflow that calls the platform's reusable workflow, opens a PR and watches the GitHub Actions run; direct deployment is reserved to admins (`admin-deploy` skill, with a reason). See [docs/USER_JOURNEYS.md](docs/USER_JOURNEYS.md) B2 and A10, and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) §6.
 
 Without Claude, the same deployment runs from a terminal with the deploy CLI (it reads `.platform.json`, which the skill writes):
 
@@ -230,7 +230,7 @@ Without Claude, the same deployment runs from a terminal with the deploy CLI (it
 PLATFORM_URL=http://api.localhost:8100 PLATFORM_TOKEN=... node packages/deploy-cli/src/main.ts deploy --dir /tmp/todo-app
 ```
 
-In GitHub Actions, the app repo calls the reusable workflow `ci/.github/workflows/deploy.yml` (example caller: `ci/examples/platform.yml`), which runs the same CLI with a GitHub OIDC token; see [packages/deploy-cli/README.md](packages/deploy-cli/README.md). It has not run on GitHub yet: the e2e suite simulates the runner's token endpoint.
+In GitHub Actions, the app repo calls the reusable workflow `ci/.github/workflows/deploy.yml` (example caller: `ci/examples/platform.yml`), which runs the same CLI with a GitHub OIDC token; see [packages/deploy-cli/README.md](packages/deploy-cli/README.md).
 
 ## Tests
 
@@ -238,8 +238,8 @@ The stack must be running, and `deploy/.env.local` must exist.
 
 ```bash
 pnpm typecheck                                     # all workspace packages (Studio's upstream typecheck excluded)
-pnpm --filter @platform/control-plane test         # unit: Studio access policy and CSRF guard, login throttling, access log reader
-pnpm --filter @platform/control-plane e2e          # MCP end to end: provisioning, migrations, deployments, isolation; CI API; platform-deploy
+pnpm --filter @platform/control-plane test         # unit tests (access policies, login throttling, backup retention, admin API…) and the plugin's script tests
+pnpm --filter @platform/control-plane e2e          # every end-to-end suite except Studio: MCP, CI API, platform-deploy, plugin, admin API, Storage and Realtime, pooler, emails, SSO, OAuth, backups, linter, TLS
 pnpm --filter @platform/control-plane e2e:studio   # Studio: login and throttling, CSRF, per-app filtering, bypass attempts
 pnpm e2e:admin                                     # admin REST API, load metrics, then the admin console in Chromium (Playwright)
 pnpm --filter @platform/control-plane e2e:sso      # company SSO with the mock IdP (also part of e2e)
@@ -262,7 +262,7 @@ organization, SMTP, backups and the master key, first login, hardening checklist
 [docs/INSTALL.md](docs/INSTALL.md).
 
 Not yet done: centralized logs (Loki), and a CI run against a real GitHub organization (the CI path has only run
-against a simulated GitHub). Production blockers are tracked as P1 in
+against a simulated GitHub: the e2e suite simulates the runner's OIDC token endpoint). Production blockers are tracked as P1 in
 [docs/TECH_DEBT.md](docs/TECH_DEBT.md).
 
 ## License

@@ -1,7 +1,6 @@
 # Supabase app hosting platform for Claude Code teams — Architecture
 
-> Reference document for the platform's design. It started as the development plan; the milestones (M0 to M7) it mentions are done.
-> Points marked **[SPIKE]** were hypotheses to validate first.
+> The platform's design: decisions, how each part works, and the known risks. Milestone tags (M0 to M7) name the development step that delivered a feature. Limitations and remaining work: [TECH_DEBT.md](TECH_DEBT.md).
 
 ## 1. Vision
 
@@ -61,7 +60,7 @@ Sizing target: **40 to 60 apps** per install (several apps per employee), on a s
 ### 3.1 Shared Postgres
 
 - A **template database** `template_supabase`, prepared once: extensions, schemas (`auth`, `storage`, `extensions`, `supabase_migrations`…), standard grants. Creating an app comes down to `CREATE DATABASE app_<id> TEMPLATE template_supabase`, in a few seconds.
-- **Postgres roles are global to the cluster.** The NOLOGIN roles `anon`, `authenticated` and `service_role` are shared, which is not a problem since grants are per object, hence per database. **LOGIN roles are per app** (`app_<id>_authenticator`, `app_<id>_auth_admin`, `app_<id>_storage_admin`), with `REVOKE CONNECT ... FROM PUBLIC` on each database. **[SPIKE]** Check that GoTrue, Storage and the template's migrations do not assume fixed role names (`supabase_auth_admin`, `authenticator`).
+- **Postgres roles are global to the cluster.** The NOLOGIN roles `anon`, `authenticated` and `service_role` are shared, which is not a problem since grants are per object, hence per database. **LOGIN roles are per app** (`app_<id>_authenticator`, `app_<id>_auth_admin`, `app_<id>_storage_admin`), with `REVOKE CONNECT ... FROM PUBLIC` on each database. GoTrue, Storage and the template's migrations run with these per-app role names instead of the fixed ones (`supabase_auth_admin`, `authenticator`).
 - Application migrations are tracked in `supabase_migrations.schema_migrations`, **the same table as the Supabase CLI**, to stay compatible with the local `supabase start` / `supabase migration new` workflow.
 - **Connections**: about 50 apps × (PostgREST pool + GoTrue + Storage + Realtime) risks saturating `max_connections`. **Done** (`apps/control-plane/README.md`, section "Connection pooler"): a single PgBouncer in transaction mode (preferred over Supavisor: a process of a few MB, with no metadata database nor tenant API; authentication through `auth_query` with the per-app roles) carries PostgREST and Storage; GoTrue, Realtime (replication slots tied to the session) and the owner role stay direct. An app without traffic no longer holds a PostgREST or Storage server connection; PostgREST's schema cache is reloaded by a `LISTEN pgrst` relay in the control plane (one connection per started app).
 - `log_line_prefix` with `%d` to attribute Postgres logs to an app.
@@ -78,9 +77,9 @@ Sizing target: **40 to 60 apps** per install (several apps per employee), on a s
 | Studio | 1 shared instance (multi-head fork) | See 3.6 |
 | postgres-meta | 1 shared instance | Target connection passed by Studio in an encrypted header |
 
-Memory estimate: 50 apps × (GoTrue + PostgREST) ≈ 2.5 to 3 GB, plus the shared services and Postgres. A 16 GB VM should hold. **[SPIKE]** Measure.
+Memory estimate: 50 apps × (GoTrue + PostgREST) ≈ 2.5 to 3 GB, plus the shared services and Postgres. A 16 GB VM is recommended; the measurements were made on Docker Desktop, not yet on a VM with 50 apps (TECH_DEBT DEP-2).
 
-Each app has its own **JWT secret**, and the `anon` and `service_role` keys are generated at creation. Use the "legacy" JWT key format, the best supported in self-hosted. **[SPIKE]** Status of the new publishable/secret keys in self-hosted.
+Each app has its own **JWT secret**, and the `anon` and `service_role` keys are generated at creation. They use the "legacy" JWT key format, the best supported in self-hosted; the new publishable/secret keys are not supported (TECH_DEBT EDGE-5).
 
 ### 3.3 Multi-tenant Edge Functions (MVP)
 
@@ -90,8 +89,8 @@ Each app has its own **JWT secret**, and the `anon` and `service_role` keys are 
   3. creates a **user worker** with the app's env variables (`SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_DB_URL`, plus the secrets defined through `set_secrets`), memory and CPU limits, and a timeout.
 - Per-app envs are read from a read-only mounted JSON file that the control plane regenerates, or through an internal call to the control plane with a cache.
 - Deployments are versioned like the frontend (`/functions/<app>/<version>/`, `current` symlink).
-- `npm:` / `jsr:` dependencies are downloaded on first call, hence a persistent Deno cache. **[SPIKE]** Behavior behind a corporate proxy.
-- Isolation by V8 isolate, not by container. It is acceptable for code written by trusted employees, but must be documented.
+- `npm:` / `jsr:` dependencies are downloaded on first call, hence a persistent Deno cache. Behavior behind a corporate proxy is untested (TECH_DEBT DEP-3).
+- Isolation by V8 isolate, not by container. It is acceptable for code written by trusted employees (§11).
 - JWT verification (`verify_jwt`) is configured per function through `supabase/config.toml` or `deno.json`, as on Supabase Cloud.
 
 ### 3.4 Static frontend
@@ -108,47 +107,27 @@ Each app has its own **JWT secret**, and the `anon` and `service_role` keys are 
 
 ### 3.6 Supabase Studio: multi-head fork
 
-The official Studio is open source (Apache 2.0) but **single-project in self-hosted**. Rather than starting one Studio per app on demand, with no guarantee on the number of simultaneous instances, we start from the **[supabase-studio-multi-head](https://github.com/flamingrubberduck/supabase-studio-multi-head)** fork: **a single instance** that handles several projects.
+The official Studio is open source (Apache 2.0) but **single-project in self-hosted**, and one Studio per app costs too much RAM per open instance. The platform therefore vendors the **[supabase-studio-multi-head](https://github.com/flamingrubberduck/supabase-studio-multi-head)** fork in `apps/studio/`: **a single instance** that handles every app. The vendored commit is in `apps/studio/UPSTREAM.md`, and the platform's changes, one commit each, in `apps/studio/PLATFORM_PATCHES.md`.
 
-**What a first reading of the code established:**
-
-- **The fork can register existing projects without creating containers**: `POST /api/platform/projects/import`, in "remote/external" mode (`db_host`, `db_port`, `db_user`, `db_name`, `db_password`, `public_url`, `anon_key`, `service_key`, `jwt_secret`). This is the integration point: **our control plane provisions the app (option B), then registers it in Studio.** Apps are stored in a `projects.json` under `STUDIO_DATA_DIR`.
-- **postgres-meta can be shared**: Studio passes the target connection string in the `x-connection-encrypted` header (key `PG_META_CRYPTO_KEY`). The SPIKE of the previous version is therefore lifted in principle.
-- **We do not use the fork's provisioning modes:**
-  - the `stack` mode creates a full Docker Compose stack per project, which is the rejected option A;
-  - the `embedded` mode only creates a database with three extensions. It **shares the GoTrue, PostgREST, Kong and keys of the default stack**, which point to another database. It is not a usable app backend. Our provisioning (§4.2) remains essential.
-- **Fork features we ignore**: backups (they `docker exec` into the project's Postgres container, which does not fit external projects), replicas and failover (paid), PocketBase, Authelia. Our backups stay in the control plane (§3.9).
-
-**License: potential blocker.** The multi-head additions are not Apache 2.0 but under a **"Sustainable Use License"** (only the upstream code remains Apache):
-- free as long as the ARR directly attributable to the product that embeds it stays under $2M;
-- forbidden to offer it as a hosted or managed service that competes with the author;
-- allowed: internal use, consulting, customization or support services, and hosting for one's direct customers **as long as the multi-head features are not the core of the resold paid offering**.
-
-For an install at the customer's for internal use, it seems fine. For Marmelab distributing a product that embeds it, **legal validation is required** before going beyond the spike. It is not free software in the OSI sense: to point out to customers who care.
-
-**Maturity:** about 70 commits between April and June 2026, one main maintainer, last commit on June 9, 2026. Upstream security fixes are backported by hand. A license server exists for the paid tiers (not used here).
-
-**Design consequences:**
-- Studio remains an **optional and replaceable component** behind a `StudioRegistry` interface (`register(app)`, `unregister(app)`, `deepLink(app)`). Possible implementations:
-  1. **multi-head** (V1 target);
-  2. **fallback**: official Studio started on demand, one instance per app (the former plan), if the license or maturity block;
-  3. official multi-project Studio if the upstream proposal (`SUPABASE_PROJECTS` / `SUPABASE_PROJECTS_FILE`) is merged.
-- **Image pinned** to a precise tag and rebuilt by us if needed (beware: `NEXT_PUBLIC_GOTRUE_URL` is frozen at build time).
-- **Access**: Studio on `studio.<domain>` behind the control plane's forward auth (admin SSO). The fork has its own notion of organizations, members and roles. **[SPIKE]** Choose between reserving Studio to platform admins or syncing app rights → Studio organization.
-- **[SPIKE]** Check that Studio works without the "default" Supabase stack (Kong, Studio's GoTrue) the fork assumes, or provide a minimal one (Studio auth in basic auth behind the forward auth).
-- **[SPIKE]** Check, on a project imported in external mode, what actually works: table editor, SQL editor, RLS policies, roles, auth user management (GoTrue admin through `public_url` + service key), Storage browser, edge functions, logs (Logs tab probably unusable without Logflare).
-- Studio features of little use in self-hosted (Logflare logs, etc.): to hide or ignore.
+- **Projects come from the control plane**: Studio fetches the project configs (external mode: database connection, `public_url`, keys) from the control plane's internal API instead of the fork's `projects.json`, scoped to the identity of the request. Project ref = app slug. Registering an app (`StudioRegistry.register`) only prepares the database grants of its owner role.
+- **postgres-meta is shared**: Studio passes the target connection string in the `x-connection-encrypted` header (key `PG_META_CRYPTO_KEY`).
+- **Access**: Studio on `studio.<domain>` behind the control plane's forward auth (platform login, local account or company SSO). Caddy passes the identity to Studio in signed headers. A builder only sees the apps they are a member of; an admin sees every app.
+- **The fork's provisioning modes are not used**: the `stack` mode creates a full Docker Compose stack per project, and the `embedded` mode only creates a database that shares the default stack's GoTrue and PostgREST. The platform's provisioning (§4.2) does that job. The fork's backups, replicas, failover, PocketBase and Authelia features are not used either; backups are in the control plane (§3.9).
+- **No app key in the browser**: the features that would call the app's API from the browser with a "temporary" key (which the fork serves as the permanent `service_role` key) go through Studio's server instead.
+- **What does not work**: the Functions tab (the fork's functions folder is global) and the Logs tab (no Logflare). Builders use the MCP tool `get_logs` and their repository instead.
+- **License**: the multi-head additions are under a **Sustainable Use License** (the upstream code stays Apache 2.0). It allows internal use, and hosting for one's direct customers as long as the multi-head features are not the core of a resold offering. It is not an OSI open source license.
+- Studio stays **replaceable** behind the `StudioRegistry` interface (`register(app)`, `unregister(app)`, `deepLink(app)`): the official Studio started on demand, one instance per app, or an official multi-project Studio if upstream adds one.
 
 ### 3.7 App auth, SSO and emails
 
 - **Shared SMTP** (customer relay or Brevo, Scaleway TEM…) injected by default into each GoTrue, with a sender and templates per app.
 - **SSO**:
   - OAuth / OIDC through GoTrue providers (Azure/Entra ID, Google, Keycloak, WorkOS…), configured per app;
-  - SAML 2.0 through GoTrue (enabled by env, providers added through the GoTrue admin API). **[SPIKE]** Validate SAML in self-hosted and support for generic OIDC providers.
+  - SAML 2.0 through GoTrue (enabled by env, providers added through the GoTrue admin API): not wired yet (TECH_DEBT SSO-1).
   - On the admin side: a **"company SSO" defined once at the platform level** and enabled in one click on an app. This is the typical case of an internal app.
 - For internal apps, a complementary option: restrict signup to an email domain or disable signup.
 - **Done (M6, part 1)**: platform SMTP (env + `settings` table, encrypted password, never returned) injected into each GoTrue (`GOTRUE_SMTP_*`, confirmation mandatory as soon as an SMTP is configured, links on the app's `/auth/v1/verify`); sender = app name and platform address, overridable per app; default GoTrue templates (custom templates: debt CP-17). MCP tool `configure_auth` (owner or admin, audited): signup on/off, confirmation, allowed email domains (GoTrue `before-user-created` hook, Postgres function in the app's database), redirect URLs, sender. Mailpit locally and in e2e tests. See `apps/control-plane/README.md`, section "Email". Remaining: simple OAuth providers, platform SSO.
-- **Done (M6, part 2)**: company **OIDC** SSO, one provider for the platform, configured by the admin (SSO screen of the admin console or `sso_*` settings: issuer, client, encrypted secret, allowed domains, `email_verified` required, on-the-fly creation of unknown users as developers disabled by default, password login reserved to admins as an option). Login to Studio and to the admin console: authorization code with PKCE, state and nonce in an encrypted cookie, ID token verified with the issuer's JWKS (`jose`), accounts linked by verified email on first login then by the IdP's `sub`, logins audited. For apps: `configure_auth({ sso: { provider: "company" } })` adds the provider to the app's GoTrue as the custom provider `custom:company` (GoTrue v2.196 `/admin/custom-providers` admin API: the **[SPIKE]** on generic OIDC providers is lifted), platform client, app callback to register at the IdP; supabase-js `signInWithOAuth({ provider: "custom:company" })`. Simulated OIDC provider in the local stack and e2e tests (`plat-idp`). Remaining: SAML (platform and apps), per-app clients, revocation from the IdP (debt SSO-1 to SSO-4). See `apps/control-plane/README.md`, section "Company SSO".
+- **Done (M6, part 2)**: company **OIDC** SSO, one provider for the platform, configured by the admin (SSO screen of the admin console or `sso_*` settings: issuer, client, encrypted secret, allowed domains, `email_verified` required, on-the-fly creation of unknown users as developers disabled by default, password login reserved to admins as an option). Login to Studio and to the admin console: authorization code with PKCE, state and nonce in an encrypted cookie, ID token verified with the issuer's JWKS (`jose`), accounts linked by verified email on first login then by the IdP's `sub`, logins audited. For apps: `configure_auth({ sso: { provider: "company" } })` adds the provider to the app's GoTrue as the custom provider `custom:company` (GoTrue v2.196 `/admin/custom-providers` admin API), platform client, app callback to register at the IdP; supabase-js `signInWithOAuth({ provider: "custom:company" })`. Simulated OIDC provider in the local stack and e2e tests (`plat-idp`). Remaining: SAML (platform and apps), per-app clients, revocation from the IdP (debt SSO-1 to SSO-4). See `apps/control-plane/README.md`, section "Company SSO".
 
 ### 3.8 Logs
 
@@ -194,7 +173,7 @@ For an install at the customer's for internal use, it seems fine. For Marmelab d
 4. Register the tenant in Storage and Realtime (M5: roles `app_<id>_storage_admin` and `app_<id>_realtime`; Storage migrates `storage.*` at registration; the Realtime tenant is created with an ephemeral superuser then switched to the app's role).
 5. Create `/sites/<app>/` and `/functions/<app>/` with a placeholder page.
 6. Add the Caddy routes.
-7. Register the app in Studio (`StudioRegistry.register`, i.e. `POST /api/platform/projects/import` on the multi-head side) and store the `studio_ref`.
+7. Register the app in Studio (`StudioRegistry.register`: database grants of the owner role; Studio then fetches the app's config from the control plane).
 8. Status `running`, then return the URL and anon key.
 
 Each step must be idempotent, with resume on error and a symmetric `delete` operation.
@@ -338,7 +317,6 @@ Screens:
 - GitHub configuration at install: publication of the internal repo (marketplace + reusable workflow), addition of the company's checks to the workflow, list of allowed `job_workflow_ref` (`CI_ALLOWED_WORKFLOWS`), `DIRECT_DEPLOY=admins`, `PLATFORM_URL` organization variable.
 - **Supabase component versions pinned**, aligned with a release of the official Supabase `docker-compose`. Platform upgrades go through a control plane migration script, then a progressive recycling of the GoTrue and PostgREST containers, app by app.
 - **Done (M7, part 2)**: `install.sh --production --domain <domain>` (prerequisites, wildcard DNS checked, secrets, `DIRECT_DEPLOY=admins`, no test service nor flag, SMTP, GitHub OIDC, backup S3, first admin), on-demand TLS by Caddy with the control plane's `ask` endpoint (platform hosts and existing app hosts only), `deploy/upgrade.sh` (backups, images, migrations at startup, app-by-app recycling without downtime, `realtime-migrate`, linter, verification, rollback instructions), version recorded in `platform_versions` and shown in the admin. Guide: [INSTALL.md](INSTALL.md).
-- **[SPIKE]** Check the licenses of the redistributed components (GoTrue, PostgREST, Storage, Realtime, Edge Runtime, postgres-meta), and get the **Sustainable Use License** of multi-head Studio legally validated (§3.6).
 
 ## 10. Monorepo structure
 
@@ -347,6 +325,7 @@ apps/
   control-plane/      # Hono + MCP + orchestrator + jobs
   admin/              # shadcn-admin-kit
   edge-main-worker/   # Deno main worker for the edge runtime
+  studio/             # vendored multi-head Studio, patched for per-app access (§3.6)
 packages/
   shared/             # types, zod schemas shared by API/MCP/admin
   sql/                # template_supabase, roles, linter
@@ -354,19 +333,18 @@ packages/
 plugin/               # Claude Code plugin (build, deploy and admin-deploy skills + .mcp.json)
 ci/                   # reusable deployment workflow, published with the plugin
 deploy/               # docker-compose, Caddy bootstrap, install.sh
-examples/todo-app/    # end-to-end test app (Vite + supabase-js + 1 edge function)
+examples/todo-app/    # example app: personal todo list (Vite + supabase-js + 1 edge function)
+examples/notes-app/   # example app: notes shared between users
 ```
 
 ## 11. Risks and open questions
 
-- **Global Postgres roles** and role-name assumptions in the Supabase components (M0).
+- **Global Postgres roles**: the NOLOGIN roles are shared by all apps, and an app's owner role can read cluster-wide catalogs (names, settings, activity; no data). Inherent to a shared cluster (§3.1, TECH_DEBT).
 - **Number of Postgres connections** at 50+ apps: lifted by the PgBouncer pooler (`apps/control-plane/README.md`, section "Connection pooler"); Realtime, connected directly, remains the main consumer (4 connections and one walsender per recently used app, TECH_DEBT PG-5).
 - **Maturity of multi-tenant** Storage and Realtime in self-hosted (M5): lifted for Storage; for Realtime, tenant migrations require a superuser (worked around, accepted trade-off) and the "Broadcast from Database" slot was shared by the whole instance (fixed by a patched image, upstream fix to propose). Plan B rejected (memory).
 - **Noisy neighbour**: an app that loads the cluster impacts all the others. Mitigation through per-role `statement_timeout`, per-database connection limits and monitoring.
 - **Supabase upgrades**: compatibility of GoTrue and Storage migrations across 50 databases. Tooled procedure (`deploy/upgrade.sh`, M7 part 2); never tested on an actual GoTrue or Storage version upgrade.
-- **Edge function isolation** (isolates, not containers): to document for customers.
-- **Multi-head Studio**: non-free license (Sustainable Use License) to validate legally, young project with a single maintainer, drift from upstream Studio. Mitigation: optional component behind `StudioRegistry`, pinned image, fallback to the official Studio on demand.
+- **Edge function isolation** (isolates, not containers): accepted for code written by trusted employees; a V8 or edge-runtime flaw would break isolation between apps.
+- **Multi-head Studio**: non-OSI license (Sustainable Use License, §3.6), young project with a single maintainer, drift from upstream Studio. Mitigation: vendored code with its patches listed, replaceable behind `StudioRegistry`.
 - **GitHub dependency**: a GitHub Actions incident blocks deployments (fallback: admin deployment, §6.3). Customers on another forge are not covered in V1.
 - **Reachability from CI**: an internal platform is not reachable by GitHub-hosted runners. To check before each install.
-- **Competition**: look at **Nubase** (open source, Supabase-like multi-project self-hosted with MCP for coding agents) before starting, to differentiate or take inspiration.
-- **Product name**: to be defined.
