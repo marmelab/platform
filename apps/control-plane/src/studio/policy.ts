@@ -33,7 +33,7 @@ const API_RULES: Rule[] = [
   rule(/^\/api\/platform\/license(?:\/|$)/, null),
   rule(/^\/api\/platform\/integrations(?:\/|$)/, null),
   rule(/^\/api\/(?:mcp|ai|edge-functions|connect|integrations|generate-attachment-url|content|check-cname)(?:\/|$)/, null),
-  rule(new RegExp(`^/api/platform/projects/${SEG}/(?:failover|cluster-failover|replica|standby|migrate|pocketbase-migrate|db-password|analytics|billing)(?:/|$)`), null),
+  rule(new RegExp(`^/api/platform/projects/${SEG}/(?:failover|cluster-failover|replica|standby|migrate|pocketbase-migrate|db-password|api-keys|analytics|billing)(?:/|$)`), null),
   rule(new RegExp(`^/api/v1/projects/${SEG}/functions(?:/|$)`), null),
   // project-scoped routes
   rule(new RegExp(`^/api/platform/(?:pg-meta|auth|storage|database)/${SEG}(?:/|$)`), "ANY"),

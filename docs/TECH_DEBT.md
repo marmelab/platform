@@ -99,7 +99,7 @@ reuse a removed ID. Effort is in days when known.
 | ID | Issue | Impact | Suggested fix | Effort | Priority | Source |
 |---|---|---|---|---|---|---|
 | SR-2 | A Realtime upgrade with new tenant migrations needs `realtime-migrate --all` (recreates each tenant with the migrator: clients reconnect); otherwise the migrations run at the tenant's next start as the app role and may fail. `deploy/upgrade.sh` runs it when the Realtime image changed (M7 part 2); a plain `docker compose up` with a new Realtime image does not. (Creating tenants with a temporary superuser is an accepted trade-off, see below.) | An upgrade done by hand forgets it. | Check `realtime.schema_migrations` against the image at startup and migrate automatically. | 0.5 | P3 | [M5](../spikes/m5-storage-realtime/REPORT.md) |
-| SR-3 | Storage files live on the local `storage-data` volume (file backend), backed up daily with their app (M7, `storage.tar.gz`, off-site when the S3 target is set); no quota per app (only the 50 MB per-file limit); image transformation (imgproxy) and the S3 protocol are off; TUS resumable uploads are only used by Studio's storage explorer, through a same-origin Studio proxy (apps' own frontends calling `/storage/v1/upload/resumable` directly are untested). Other Studio features that ask for a "temporary" API key in the browser (`lib/project-supabase-client.ts`) are refused by the platform's policy. | Up to a day of uploads lost with the host; one app can fill the disk. | S3 backend (`STORAGE_BACKEND=s3`, client bucket); a quota per tenant; enable imgproxy if apps need it. | 1–2 | P2 | [M5](../spikes/m5-storage-realtime/REPORT.md) |
+| SR-3 | Storage files live on the local `storage-data` volume (file backend), backed up daily with their app (M7, `storage.tar.gz`, off-site when the S3 target is set); no quota per app (only the 50 MB per-file limit); image transformation (imgproxy) and the S3 protocol are off; TUS resumable uploads are only used by Studio's storage explorer, through a same-origin Studio proxy (apps' own frontends calling `/storage/v1/upload/resumable` directly are untested). Other Studio features that ask for a "temporary" API key in the browser (`lib/project-supabase-client.ts`, `POST /api/platform/projects/<ref>/api-keys/temporary`) are denied explicitly by the platform's policy, admins included. | Up to a day of uploads lost with the host; one app can fill the disk. | S3 backend (`STORAGE_BACKEND=s3`, client bucket); a quota per tenant; enable imgproxy if apps need it. | 1–2 | P2 | [M5](../spikes/m5-storage-realtime/REPORT.md) |
 | SR-4 | The admin APIs of Storage (`storage:5001`, `apikey`) and Realtime (`realtime:4000/api/tenants`, JWT) are reachable from the `plat` network, including edge functions (SEC-1). | A compromised function that also stole the admin key or JWT secret could reconfigure tenants; without them it gets 401. | Same fix as SEC-1 (edge on its own network). | — | P2 | [M5](../spikes/m5-storage-realtime/REPORT.md) |
 | SR-5 | The shared Storage and Realtime containers are not attributed to apps in `app_metrics` (memory), and their requests are counted with the app's other requests only through Caddy's log. | Per-app load of Storage/Realtime is not visible. | Realtime's per-tenant metrics (`/metrics`) and Storage's request logs per tenant. | 0.5 | P3 | [M5](../spikes/m5-storage-realtime/REPORT.md) |
 | SR-6 | Realtime runs a patched image (`patches/realtime`: Broadcast from Database slot named per tenant, `SLOT_NAME_PER_TENANT`), built by `install.sh` over the pinned upstream image; the upstream pull request is drafted (`patches/realtime/UPSTREAM_PR.md`) but not opened. | Each Realtime upgrade must re-apply the patch (procedure in `patches/realtime/README.md`); the build fetches the patched files from GitHub. | Open the upstream PR; drop the patch once released. | 0.25 | P3 | [patches/realtime](../patches/realtime/README.md) |
@@ -191,9 +191,19 @@ Deliberate choices, not debt. Revisit only if the context changes.
   (unless `FORCE ROW LEVEL SECURITY`), like Supabase's `postgres`. This applies to `execute_sql`, Studio and
   `SUPABASE_DB_URL`. An owner view or `SECURITY DEFINER` function that reads `auth.users` exposes all its rows; the
   linter flags `security_definer_view` ([M0ter](../spikes/m0ter-studio-builders/REPORT.md)).
-- **Cluster metadata is visible across apps**: `pg_database` and `pg_roles` list the other apps' database and role
-  names, now also in builders' Studio. Names only, no access to data; inherent to a shared cluster
-  ([M0bis](../spikes/m0bis-studio/REPORT.md), [M0ter](../spikes/m0ter-studio-builders/REPORT.md)).
+- **Cluster metadata is visible across apps**: an app's owner role (`execute_sql`, builders' Studio) can read
+  `pg_database` (every database with its `datacl`, hence the roles granted on it), `pg_roles`, `pg_db_role_setting`
+  (the other apps' per-role `statement_timeout`, `search_path`), `pg_stat_database` (activity counters),
+  `pg_stat_activity` (the other databases' sessions with their database and user; query text shown as
+  `<insufficient privilege>`) and `pg_replication_slots` (the other apps' Realtime slots). It cannot read
+  `pg_authid` nor `pg_database_size` of another database (42501), has no `CONNECT`, `CREATE` or `TEMP` on other
+  databases, and `SET ROLE` to another app's role is refused. It can `create extension dblink` (supautils privileged
+  extension), but `dblink_connect` to another app database fails ("password or GSSAPI delegated credentials
+  required"); `postgres_fdw` can be created, but `create server` is refused. Impact: names, settings and activity
+  metadata only, no data and no credentials; inherent to a shared cluster (checked by hand on 2026-10-14,
+  [M0bis](../spikes/m0bis-studio/REPORT.md), [M0ter](../spikes/m0ter-studio-builders/REPORT.md)). Mitigations if
+  needed: revoke `SELECT` on these catalogs and views from the app roles where Postgres allows it (not on
+  `pg_database` or `pg_roles`, which clients and pg-meta need), or one cluster per tenant group.
 - **`anon`, `authenticated` and `service_role` are global NOLOGIN roles** shared by all apps; grants are per database
   and `SET ROLE` across apps is refused ([M0](../spikes/m0-tenancy/REPORT.md)).
 - **A stopped app is read-only by guardrail, not by a hard guarantee** (formerly CP-9, accepted on 2026-10-02): the
@@ -203,8 +213,9 @@ Deliberate choices, not debt. Revisit only if the context changes.
   `ALTER DATABASE ... RESET` and write deliberately. If a hard guarantee becomes necessary: revoke `CONNECT` from the
   owner role and give Studio a read-only role while stopped, or transfer the database ownership to an admin role
   (`apps/control-plane/src/apps.ts`, B8).
-- **Login lockout per email** (former SEC-3, paid off on 2026-10-02 with Studio's CSRF guard): after 5 failures, an account's logins are locked with an exponential backoff
-  capped at 15 minutes, from any IP. Anyone who knows an address can therefore delay that account's sign-in by at most
+- **Login lockout per email** (former SEC-3, paid off on 2026-10-02 with Studio's CSRF guard): the first 5 failures are free, then the 6th locks the
+  address for 30 s, and each further failure doubles the lock up to 15 minutes, from any IP; while locked, even the
+  right password is refused (429 with `Retry-After`). Anyone who knows an address can therefore delay that account's sign-in by at most
   15 minutes at a time; open sessions and PATs keep working. The alternative (per email and IP only) would let a
   distributed attacker guess without limit.
 - **Realtime tenants are created with a temporary superuser** (accepted on 2026-10-03, formerly part of SR-2): Realtime's

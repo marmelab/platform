@@ -189,8 +189,8 @@ Refusals are 403 (JSON on the API, text on `/_platform/*`). Unlike the admin con
 
 Both logins (`/_platform/login` and the admin console's `POST /api/auth/login`) go through `src/login-limit.ts`, checked **before** the password: while locked, the right password is refused too (HTTP 429 with `Retry-After`; Studio shows the wait on its login page).
 
-- **Per email**: 5 failures are free, then each further failure locks the address for 30 s, 1 min, 2 min... up to 15 min, from any IP. A successful login clears the email's failures.
-- **Per client IP**: same backoff after 30 failures (people behind one company NAT share an IP), against password spraying over many accounts. A success does not clear it.
+- **Per email**: the first 5 failures are free; the 6th locks the address for 30 s, and each further failure doubles the lock (1 min, 2 min...) up to 15 min, from any IP. A successful login clears the email's failures.
+- **Per client IP**: same backoff from the 31st failure (people behind one company NAT share an IP), against password spraying over many accounts. A success does not clear it.
 - Failures are forgotten after 15 minutes without a new failure. Counters are in memory (one control plane; a restart clears them, TECH_DEBT SEC-11).
 - **Client IP**: the TCP peer, or the last `X-Forwarded-For` entry when the peer is Caddy (`TRUSTED_PROXIES`, default `caddy`, resolved on the Docker network). Caddy replaces any `X-Forwarded-For` sent by the client, and another container that calls the control plane directly cannot choose its IP with the header.
 

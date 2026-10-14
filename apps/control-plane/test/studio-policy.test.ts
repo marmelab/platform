@@ -18,6 +18,7 @@ test("project-scoped routes follow membership", () => {
   assert.ok(allowed("GET", "/api/platform/storage/demo/buckets"));
   assert.ok(allowed("GET", "/project/demo/editor"));
   assert.ok(allowed("GET", "/project/demo"));
+  assert.ok(allowed("GET", "/api/v1/projects/demo/api-keys"));
   assert.equal(status("POST", "/api/platform/pg-meta/todo-app/query"), 403);
   assert.equal(status("GET", "/project/todo-app/editor"), 403);
   assert.equal(status("GET", "/_next/data/build/project/todo-app/editor.json"), 403);
@@ -45,6 +46,8 @@ test("fork features outside the platform are denied to everyone", () => {
     assert.equal(status("DELETE", "/api/platform/projects/demo", user), 403);
     assert.equal(status("POST", "/api/platform/projects/demo/failover", user), 403);
     assert.equal(status("POST", "/api/platform/projects/demo/replica", user), 403);
+    assert.equal(status("GET", "/api/platform/projects/demo/api-keys/temporary", user), 403);
+    assert.equal(status("POST", "/api/platform/projects/demo/api-keys/temporary", user), 403);
     assert.equal(status("GET", "/api/platform/license", user), 403);
     assert.equal(status("POST", "/api/v1/projects/demo/functions/deploy", user), 403);
     assert.equal(status("POST", "/api/platform/organizations", user), 403);
