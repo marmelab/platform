@@ -2,7 +2,7 @@
 
 Self-hosted hosting for the apps your team builds with Claude Code. Each app gets its own Supabase backend (Postgres database, Auth, REST API, Edge Functions) and its static frontend, all served from a single VM. Developers ("app builders") don't use a UI to deploy: they ask Claude Code to "deploy the app to the platform", through an MCP server and a Claude Code plugin. They inspect their apps in a multi-project Supabase Studio. Admins see every app, in Studio and in an admin console.
 
-> **Status: prototype.** Milestones M0 to M3 of [PLAN_1.md](PLAN_1.md) are validated (see `spikes/*/REPORT.md`), plus Studio access for app builders, most of the admin console (M4), Storage and Realtime (M5), app emails and company SSO (M6), and operations (M7: backups, production installer with HTTPS, upgrades, security linter). It runs locally, and installs on a VM with a real domain ([docs/INSTALL.md](docs/INSTALL.md)); it has not run in production yet (see [Deploying](#deploying)).
+> **Status: alpha.** Milestones M0 to M3 of [PLAN_1.md](PLAN_1.md) are validated (see `spikes/*/REPORT.md`), plus Studio access for app builders, most of the admin console (M4), Storage and Realtime (M5), app emails and company SSO (M6), and operations (M7: backups, production installer with HTTPS, upgrades, security linter). It runs locally, and installs on a VM with a real domain ([docs/INSTALL.md](docs/INSTALL.md)). Known limitations and remaining work: [docs/TECH_DEBT.md](docs/TECH_DEBT.md) and [Deploying](#deploying).
 
 More docs:
 - [docs/INSTALL.md](docs/INSTALL.md): production installation (domain, TLS, GitHub, SMTP, backups), hardening, upgrades;
@@ -11,6 +11,24 @@ More docs:
 - [apps/control-plane/README.md](apps/control-plane/README.md): control plane, MCP tools, admin REST API, admin CLI;
 - [apps/admin/README.md](apps/admin/README.md): admin console (shadcn-admin-kit);
 - [plugin/README.md](plugin/README.md): Claude Code plugin.
+
+## Screenshots
+
+**Studio, for app builders** (one Studio for all apps; each builder only sees the apps they are a member of):
+
+| Projects: alice only sees `todo-app` | Table editor |
+|---|---|
+| ![Studio projects list](docs/screenshots/studio-projects.png) | ![Studio table editor](docs/screenshots/studio-table-editor.png) |
+| **App users (the app's own GoTrue)** | **A deployed app: `todo-app`** |
+| ![Studio auth users](docs/screenshots/studio-auth-users.png) | ![todo-app](docs/screenshots/todo-app.png) |
+
+**Admin console, for admins** (every app, its releases, members and audit trail; all screens in [apps/admin/screenshots](apps/admin/screenshots)):
+
+| Apps | App overview |
+|---|---|
+| ![Admin apps list](apps/admin/screenshots/03-apps-list.png) | ![Admin app overview](apps/admin/screenshots/04-app-overview.png) |
+| **Releases** | **Audit log** |
+| ![Admin app releases](apps/admin/screenshots/05-app-releases.png) | ![Admin audit log](apps/admin/screenshots/11-audit-log.png) |
 
 ## Architecture
 
@@ -243,6 +261,6 @@ downtime, verification, rollback instructions). The whole procedure (prerequisit
 organization, SMTP, backups and the master key, first login, hardening checklist, upgrades and measured downtime) is in
 [docs/INSTALL.md](docs/INSTALL.md).
 
-Not yet done: centralized logs (Loki), a run on a public VM with Let's Encrypt and a real GitHub organization (the CI
-path has only run against a simulated GitHub). Production blockers are tracked as P1 in
+Not yet done: centralized logs (Loki), and a CI run against a real GitHub organization (the CI path has only run
+against a simulated GitHub). Production blockers are tracked as P1 in
 [docs/TECH_DEBT.md](docs/TECH_DEBT.md).
