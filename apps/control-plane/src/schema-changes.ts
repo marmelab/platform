@@ -1,4 +1,4 @@
-// Schema changes outside releases (PLAN_1 §7). The DDL event trigger of each app database (packages/sql/
+// Schema changes outside releases (ARCHITECTURE §7). The DDL event trigger of each app database (packages/sql/
 // schema_changes.sql) records every DDL command except the platform's and GoTrue's in `_platform.schema_changes`,
 // with its transaction id. applyMigrations stores the txid of each committed migrations batch in the deployment's
 // manifest: a recorded change whose txid is not one of those was made outside a release (Studio, execute_sql with

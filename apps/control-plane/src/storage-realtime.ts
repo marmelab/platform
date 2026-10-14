@@ -1,5 +1,5 @@
 // Storage and Realtime (M5): one shared multi-tenant instance of each, one tenant per app (tenant id = app slug).
-// See spikes/m5-storage-realtime/REPORT.md for the choices made here.
+// See docs/ARCHITECTURE.md §3.2 for the choices made here.
 //
 // Storage API (supabase/storage-api, IS_MULTITENANT=true): tenants are registered through its admin API
 // (`PUT /tenants/<slug>`, internal network only, `apikey` header) with the app's database URL (role

@@ -145,7 +145,7 @@ README, "Settings"): a database setting overrides the environment.
 
 ## 7. GitHub organization
 
-Deployments go through the company's GitHub Actions (PLAN_1 §5.1 and §6.2). In the organization:
+Deployments go through the company's GitHub Actions (ARCHITECTURE §5.1 and §6.2). In the organization:
 
 1. **Create the internal platform repository** (for example `example/platform`, internal or private). It is both the
    Claude Code plugin marketplace and the home of the reusable deploy workflow. Copy into it, from this repository:

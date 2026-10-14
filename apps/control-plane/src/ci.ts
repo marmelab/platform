@@ -1,4 +1,4 @@
-// CI deployment API (PLAN_1 §5.1) on api.<domain>/ci/*: the MCP deployment operations for GitHub Actions,
+// CI deployment API (ARCHITECTURE §5.1) on api.<domain>/ci/*: the MCP deployment operations for GitHub Actions,
 // authenticated by a GitHub OIDC token instead of a PAT.
 //
 // Every request: valid signature (issuer JWKS), issuer, audience, expiry; `job_workflow_ref` in the allow-list;

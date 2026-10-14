@@ -1,4 +1,4 @@
-// GitHub Actions OIDC tokens (PLAN_1 §5.1): signature checked against the issuer's JWKS (cached by jose),
+// GitHub Actions OIDC tokens (ARCHITECTURE §5.1): signature checked against the issuer's JWKS (cached by jose),
 // then issuer, audience, expiry and the GitHub claims the CI API relies on.
 import { createLocalJWKSet, createRemoteJWKSet, errors, type JWTPayload, jwtVerify } from "jose";
 import type { Settings } from "./settings.ts";

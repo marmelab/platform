@@ -9,7 +9,7 @@ export const platformSql = () => sqlFile("platform.sql");
 export const lintsSql = () => sqlFile("lints.sql");
 /** Storage rules of the linter: run only when storage.buckets exists. */
 export const storageLintsSql = () => sqlFile("lints_storage.sql");
-/** DDL event trigger and `_platform.schema_changes` (PLAN_1 §7). Idempotent, run as supabase_admin. */
+/** DDL event trigger and `_platform.schema_changes` (ARCHITECTURE §7). Idempotent, run as supabase_admin. */
 export const schemaChangesSql = () => sqlFile("schema_changes.sql");
 
 export const TEMPLATE_DB = "template_supabase";

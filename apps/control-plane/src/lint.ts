@@ -1,4 +1,4 @@
-// Security linter results (M7 part 2, PLAN_1 §7 and §8). The rules are in packages/sql/lints.sql (rewritten from
+// Security linter results (M7 part 2, ARCHITECTURE §7 and §8). The rules are in packages/sql/lints.sql (rewritten from
 // Supabase's splinter); this module runs them on an app and records each run in `lint_runs`: after a committed
 // migrations batch (with its release, sql.ts), on demand (admin console, CLI `lint-apps`), after a platform upgrade,
 // and in a periodic sweep that catches schema changes made outside releases (Studio, execute_sql).

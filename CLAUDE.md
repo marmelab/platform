@@ -1,6 +1,6 @@
 # Supabase app hosting platform
 
-Reference plan: [PLAN_1.md](PLAN_1.md). Milestone reports: `spikes/*/REPORT.md`.
+Architecture and design decisions: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 Main user journeys and the related product decisions: [docs/USER_JOURNEYS.md](docs/USER_JOURNEYS.md).
 Tech debt and known limitations: [docs/TECH_DEBT.md](docs/TECH_DEBT.md).
@@ -19,4 +19,4 @@ Tech debt and known limitations: [docs/TECH_DEBT.md](docs/TECH_DEBT.md).
 ## Decisions
 
 - **Studio**: the supabase-studio-multi-head code is vendored in `apps/studio/` and modified so that app builders only access their own apps. One official Studio per app is ruled out (too much RAM per open instance). The license (Sustainable Use License) is not a blocker as long as we don't aim to resell the product.
-- **Deployment**: always through GitHub Actions, from the default branch of the app's linked repo in the company GitHub organization, via a reusable workflow maintained by the admin (company security checks first). CI authenticates with GitHub OIDC. The `deploy` skill sets up the repo, the workflow and the function secrets, then pushes. Direct deployment from a local machine (`platform-deploy` with a PAT) stays available, governed by the `DIRECT_DEPLOY` platform setting: `admins` (production target: builders go through CI, admins deploy directly as an audited exception with the `admin-deploy` skill) or `everyone` (local installs and e2e tests, which must run without GitHub). The platform never hosts or displays source code: the admin reads it on GitHub. Details: [docs/USER_JOURNEYS.md](docs/USER_JOURNEYS.md), [PLAN_1.md](PLAN_1.md) §5.1 and §6.
+- **Deployment**: always through GitHub Actions, from the default branch of the app's linked repo in the company GitHub organization, via a reusable workflow maintained by the admin (company security checks first). CI authenticates with GitHub OIDC. The `deploy` skill sets up the repo, the workflow and the function secrets, then pushes. Direct deployment from a local machine (`platform-deploy` with a PAT) stays available, governed by the `DIRECT_DEPLOY` platform setting: `admins` (production target: builders go through CI, admins deploy directly as an audited exception with the `admin-deploy` skill) or `everyone` (local installs and e2e tests, which must run without GitHub). The platform never hosts or displays source code: the admin reads it on GitHub. Details: [docs/USER_JOURNEYS.md](docs/USER_JOURNEYS.md), [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) §5.1 and §6.

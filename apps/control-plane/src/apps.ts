@@ -220,7 +220,7 @@ async function provisionDatabase(slug: string, secrets: AppSecrets) {
   });
 }
 
-/** DDL event trigger (PLAN_1 §7) for apps created before it was in the template. Idempotent. */
+/** DDL event trigger (ARCHITECTURE §7) for apps created before it was in the template. Idempotent. */
 async function ensureSchemaChanges(slug: string) {
   const roles = appRoles(dbId(slug));
   const exists = await withAdmin("postgres", async (c) => (await c.query(databaseExistsSql, [roles.database])).rowCount === 1);

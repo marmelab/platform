@@ -1,4 +1,4 @@
-// Security linter results (PLAN_1 §8): the latest run of an app (rules of packages/sql/lints.sql, from Supabase's
+// Security linter results (ARCHITECTURE §8): the latest run of an app (rules of packages/sql/lints.sql, from Supabase's
 // splinter), the counts of the previous runs, and "Run linter".
 import { useCallback, useEffect, useState } from "react";
 import { useNotify } from "ra-core";

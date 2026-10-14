@@ -1,6 +1,6 @@
 # Admin console
 
-Single-page app for platform admins (PLAN_1 §8, milestone M4), built with [shadcn-admin-kit](https://github.com/marmelab/shadcn-admin-kit) (react-admin's headless core `ra-core` with shadcn/ui components, Vite, React 19, Tailwind 4). It talks to the control plane's admin REST API with the stock `ra-data-simple-rest` data provider.
+Single-page app for platform admins (ARCHITECTURE §8, milestone M4), built with [shadcn-admin-kit](https://github.com/marmelab/shadcn-admin-kit) (react-admin's headless core `ra-core` with shadcn/ui components, Vite, React 19, Tailwind 4). It talks to the control plane's admin REST API with the stock `ra-data-simple-rest` data provider.
 
 - URL: http://admin.localhost:8100 (`admin.<domain>`), same origin as its API (`/api`).
 - Sign in with a platform account that has the `admin` role: `PLATFORM_ADMIN_EMAIL` / `PLATFORM_ADMIN_PASSWORD` from `deploy/.env.local` on a local install. App builders are refused.

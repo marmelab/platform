@@ -1,4 +1,4 @@
-# Reusable deployment workflow of the platform (PLAN_1 §6.2), maintained by the platform admin.
+# Reusable deployment workflow of the platform (ARCHITECTURE §6.2), maintained by the platform admin.
 #
 # App repositories call it (see ci/examples/platform.yml); they cannot change what it runs. The platform only
 # accepts CI tokens whose `job_workflow_ref` is in CI_ALLOWED_WORKFLOWS, so the company checks below cannot be

@@ -1,4 +1,4 @@
-// Admin REST API (M4, PLAN_1 §8), served same-origin with the admin SPA at admin.<domain>/api/* (site.ts).
+// Admin REST API (M4, ARCHITECTURE §8), served same-origin with the admin SPA at admin.<domain>/api/* (site.ts).
 // Resources follow the ra-data-simple-rest conventions (rest.ts). Every handler reuses the domain functions of the
 // MCP tools and the CLI (same guards), with the signed-in admin as the audited actor.
 import { statfs } from "node:fs/promises";
@@ -474,7 +474,7 @@ function decorateApp(row: AppListRow, github: string, activity: Activity) {
       stopped: row.status === "stopped",
       error: row.status === "error",
       accepted_lints: row.accepted_lints,
-      /** ERROR lints of the latest linter run not accepted by a migration (PLAN_1 §8). */
+      /** ERROR lints of the latest linter run not accepted by a migration (ARCHITECTURE §8). */
       lint_errors: row.lint?.unaccepted_errors ?? 0,
       no_repo: !row.github_repo,
       /** Filled for the returned page only (it reads every app database). */
@@ -602,7 +602,7 @@ adminApi.get("/apps/:slug/logs", async (c) => {
   return c.json(await getLogs(app, { service, sinceMinutes, limit, query: c.req.query("q") || undefined }));
 });
 
-/** Security linter (PLAN_1 §8): the latest run with its lints (`accepted` marked), and the previous runs' counts. */
+/** Security linter (ARCHITECTURE §8): the latest run with its lints (`accepted` marked), and the previous runs' counts. */
 adminApi.get("/apps/:slug/lints", async (c) => {
   const app = await appRow(c.req.param("slug"));
   const history = await lintHistory(app.id, 20);
@@ -1111,7 +1111,7 @@ adminApi.get("/dashboard", async (c) => {
   return c.json({
     version: await platformVersion(),
     apps: { total: apps.reduce((n, a) => n + a.count, 0), by_status: Object.fromEntries(apps.map((a) => [a.status, a.count])) },
-    // security linter (PLAN_1 §8): apps whose latest run has ERROR lints not accepted by a migration, or warnings
+    // security linter (ARCHITECTURE §8): apps whose latest run has ERROR lints not accepted by a migration, or warnings
     lints: {
       apps_with_errors: records.filter((a) => a.flags.lint_errors > 0)
         .map((a) => ({ app: a.slug, errors: a.flags.lint_errors, ran_at: a.lint?.ran_at ?? null })),

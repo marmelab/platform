@@ -1,4 +1,4 @@
--- Schema change tracking (PLAN_1 §7): an event trigger records every DDL command run in an app database, so that the
+-- Schema change tracking (ARCHITECTURE §7): an event trigger records every DDL command run in an app database, so that the
 -- control plane can flag schema changes made outside a release (Studio SQL editor, execute_sql with write, a
 -- function using SUPABASE_DB_URL...). Applied to template_supabase and, idempotently, to every app database at
 -- control plane startup and at provisioning. Run as supabase_admin (event triggers need a superuser).

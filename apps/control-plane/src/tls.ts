@@ -1,4 +1,4 @@
-// On-demand TLS (PLAN_1 §3.5, A1): with TLS_MODE=acme (or internal), Caddy obtains a certificate the first time a
+// On-demand TLS (ARCHITECTURE §3.5, A1): with TLS_MODE=acme (or internal), Caddy obtains a certificate the first time a
 // client asks for a host (SNI), after asking the control plane whether that host is one of the platform's. Approved:
 // the platform hosts (API, admin console, Studio) and <slug>.<apps domain> of an existing app (stopped ones included:
 // they serve a maintenance page). Anything else is refused, so that a client sending random names through the

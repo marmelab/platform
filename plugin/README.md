@@ -1,6 +1,6 @@
 # "platform" Claude Code plugin
 
-Builds apps in the platform's target architecture ("build me a notes app for my team") and deploys a Vite + Supabase app (migrations, edge functions, static frontend) to the platform from Claude Code: "deploy the app to the platform". In production the deployment goes through the app's GitHub Actions CI (PLAN_1 §6); a direct deployment from the machine stays available when the platform allows it (`DIRECT_DEPLOY`).
+Builds apps in the platform's target architecture ("build me a notes app for my team") and deploys a Vite + Supabase app (migrations, edge functions, static frontend) to the platform from Claude Code: "deploy the app to the platform". In production the deployment goes through the app's GitHub Actions CI (ARCHITECTURE §6); a direct deployment from the machine stays available when the platform allows it (`DIRECT_DEPLOY`).
 
 Contents:
 
@@ -76,7 +76,7 @@ The `platform:deploy` skill:
 
 The `platform:build` skill is used before the first deployment, from an empty folder or an existing app ("build me a notes app for my team", "add file attachments to the notes"). It holds the target architecture: Vite + React + TypeScript single-page app with supabase-js, migrations in `supabase/migrations` with row level security on every table, edge functions only for what needs a secret or extra privileges, email and password auth that handles invitation and password reset links (app users are usually invited by the builder). It is written for builders who are not developers: it keeps every technical decision on Claude's side and talks about what the app does and who sees what, without jargon, commands to run or files to edit. It builds the app, checks `npm run build`, commits, then runs a local preview (`supabase start` on free ports, two demo accounts and sample data, the dev server declared in `.claude/launch.json` so that Claude Desktop shows it in its preview pane) and offers to deploy it with `platform:deploy`.
 
-The `platform:admin-deploy` skill (admins only) is the audited exception of PLAN_1 §6.3: it asks for a reason, runs `preflight.sh` (clean tree, commit on the remote, checkout of the linked repository), then `platform-deploy deploy --reason "..."`.
+The `platform:admin-deploy` skill (admins only) is the audited exception of ARCHITECTURE §6.3: it asks for a reason, runs `preflight.sh` (clean tree, commit on the remote, checkout of the linked repository), then `platform-deploy deploy --reason "..."`.
 
 Expected repo conventions:
 

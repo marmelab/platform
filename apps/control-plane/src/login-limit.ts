@@ -9,7 +9,7 @@
 // Failures are forgotten after IDLE without a new failure; a successful login clears its email's failures (not the
 // IP's: a sprayer who knows one password must not reset its own counter).
 //
-// In memory, in the control plane process: one control plane serves every login (single VM, PLAN_1 §9), checks cost no
+// In memory, in the control plane process: one control plane serves every login (single VM, ARCHITECTURE §9), checks cost no
 // database write, and a restart (which an attacker cannot trigger) only resets the counters. A multi-instance control
 // plane would need a shared store (a table, or Postgres advisory state).
 //

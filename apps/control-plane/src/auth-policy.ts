@@ -49,7 +49,7 @@ export const DOMAIN_RE = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\
 /** http(s) URL, globs allowed, no comma (GOTRUE_URI_ALLOW_LIST is comma-separated) nor whitespace. */
 export const REDIRECT_URL_RE = /^https?:\/\/[^\s,/?#]+(?:[/?#][^\s,]*)?$/;
 export const SENDER_EMAIL_RE = /^[^\s@<>,"]+@[^\s@<>,"]+\.[^\s@<>,"]+$/;
-/** GoTrue's link paths: the app's API is served under /auth/v1 on the app host (PLAN_1 §3). */
+/** GoTrue's link paths: the app's API is served under /auth/v1 on the app host (ARCHITECTURE §3). */
 export const VERIFY_PATH = "/auth/v1/verify";
 /** The before-user-created hook (allowed email domains): owned by supabase_admin, executed by GoTrue's role. */
 export const HOOK_FUNCTION = "_platform.before_user_created";

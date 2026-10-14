@@ -1,4 +1,4 @@
--- Security linter (PLAN_1 §7, TECH_DEBT CP-4), run inside the app database as the app's owner role, in the migrations
+-- Security linter (ARCHITECTURE §7, TECH_DEBT CP-4), run inside the app database as the app's owner role, in the migrations
 -- transaction (apply_migrations) or on its own (lint runs: admin console, CLI, periodic sweep).
 --
 -- The rules are rewritten from Supabase's splinter (https://github.com/supabase/splinter, lints/00NN_*.sql; checked

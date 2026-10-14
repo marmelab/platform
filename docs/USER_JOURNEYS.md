@@ -1,6 +1,6 @@
 # User journeys
 
-Legend: ✅ done · 🟡 partial · ❌ missing. Milestones refer to [PLAN_1.md](../PLAN_1.md) §11; M0ter is the Studio integration for app builders ([report](../spikes/m0ter-studio-builders/REPORT.md)).
+Legend: ✅ done · 🟡 partial · ❌ missing. Milestones (M0 to M7) refer to the development milestones, all done; M0ter is the Studio integration for app builders.
 
 ## Personas
 

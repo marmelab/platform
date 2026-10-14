@@ -254,7 +254,7 @@ create table if not exists backup_state (
   run_summary jsonb
 );
 
--- M7 part 2, security linter (PLAN_1 §7 and §8, lint.ts): every run of the linter on an app, with its results. Runs
+-- M7 part 2, security linter (ARCHITECTURE §7 and §8, lint.ts): every run of the linter on an app, with its results. Runs
 -- come from a committed migrations batch (source 'migrations', with its release), the admin console or the CLI
 -- ('manual'), the periodic sweep ('scheduled', catches schema changes made outside releases) and the platform upgrade
 -- ('upgrade'). lints: [{name, level, object, detail}]; error: the run itself failed (database unreachable...).

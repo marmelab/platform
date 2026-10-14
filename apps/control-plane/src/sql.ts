@@ -136,7 +136,7 @@ export async function applyMigrations(user: Actor, app: AppRow, migrations: Migr
        values ($1, 'migrations', $2, 'live', $3, now(), $4, $5)`,
       [app.id, next.rows[0].v, user.id, JSON.stringify({ applied: pending, accepted_lints: accepted, txid }), releaseId],
     );
-    // the linter's results on the committed schema, kept with the release (admin console, PLAN_1 §8)
+    // the linter's results on the committed schema, kept with the release (admin console, ARCHITECTURE §8)
     await recordLintRun(app.id, "migrations", lints, { releaseId })
       .catch((error) => console.error(`recording the lints of ${app.slug} failed`, error));
   }

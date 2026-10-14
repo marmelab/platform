@@ -1,4 +1,4 @@
-// Per-app load metrics (M4 phase 2, PLAN_1 §4 `app_metrics`, journeys A3, A6, A9), sampled by the control plane every
+// Per-app load metrics (M4 phase 2, ARCHITECTURE §4 `app_metrics`, journeys A3, A6, A9), sampled by the control plane every
 // METRICS_INTERVAL_SECONDS into the current hour's row:
 // - requests and 5xx responses: Caddy's JSON access log of the public server (router.ensureAccessLog), read
 //   incrementally (access-log.ts). Every app host goes through the generic `apps-by-host` route (TT-4), so the counts

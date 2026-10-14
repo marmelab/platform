@@ -56,7 +56,7 @@ async function ensureTemplate() {
 
 /**
  * Upgrades of template_supabase applied at every start (the template is only built once): the DDL event trigger
- * (PLAN_1 §7). Idempotent. The template refuses connections outside this short window; startup runs before the API
+ * (ARCHITECTURE §7). Idempotent. The template refuses connections outside this short window; startup runs before the API
  * listens, so no create_app clones it meanwhile (the `init` CLI on a running platform could make one fail: retry it).
  */
 async function upgradeTemplate() {

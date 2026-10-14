@@ -1,6 +1,6 @@
 # Patched Realtime image
 
-The platform runs one shared multi-tenant Realtime (spikes/m5-storage-realtime/REPORT.md) built from the upstream
+The platform runs one shared multi-tenant Realtime ([docs/ARCHITECTURE.md](../../docs/ARCHITECTURE.md) §3.2) built from the upstream
 image `supabase/realtime:v2.134.10` (the version pinned by Supabase's self-hosting `docker-compose.yml`) plus the
 patches of this directory. Image tag: `plat/realtime:v<upstream version>-platform<revision>`, used by
 `deploy/docker-compose.yml` and built by `deploy/install.sh` when missing (`REALTIME_BUILD=1` forces a rebuild).

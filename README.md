@@ -2,9 +2,10 @@
 
 Self-hosted hosting for the apps your team builds with Claude Code. Each app gets its own Supabase backend (Postgres database, Auth, REST API, Edge Functions) and its static frontend, all served from a single VM. Developers ("app builders") don't use a UI to deploy: they ask Claude Code to "deploy the app to the platform", through an MCP server and a Claude Code plugin. They inspect their apps in a multi-project Supabase Studio. Admins see every app, in Studio and in an admin console.
 
-> **Status: alpha.** Milestones M0 to M3 of [PLAN_1.md](PLAN_1.md) are validated (see `spikes/*/REPORT.md`), plus Studio access for app builders, most of the admin console (M4), Storage and Realtime (M5), app emails and company SSO (M6), and operations (M7: backups, production installer with HTTPS, upgrades, security linter). It runs locally, and installs on a VM with a real domain ([docs/INSTALL.md](docs/INSTALL.md)). Known limitations and remaining work: [docs/TECH_DEBT.md](docs/TECH_DEBT.md) and [Deploying](#deploying).
+> **Status: alpha.** Milestones M0 to M3 are done, plus Studio access for app builders, most of the admin console (M4), Storage and Realtime (M5), app emails and company SSO (M6), and operations (M7: backups, production installer with HTTPS, upgrades, security linter). It runs locally, and installs on a VM with a real domain ([docs/INSTALL.md](docs/INSTALL.md)). Known limitations and remaining work: [docs/TECH_DEBT.md](docs/TECH_DEBT.md) and [Deploying](#deploying).
 
 More docs:
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): architecture and design decisions (tenancy, routing, Studio, MCP tools, CI deployment, security safeguards);
 - [docs/INSTALL.md](docs/INSTALL.md): production installation (domain, TLS, GitHub, SMTP, backups), hardening, upgrades;
 - [docs/USER_JOURNEYS.md](docs/USER_JOURNEYS.md): personas, main journeys, product decisions;
 - [docs/TECH_DEBT.md](docs/TECH_DEBT.md): known debt and limitations;
@@ -78,7 +79,7 @@ flowchart TB
 - **App users** use the deployed apps on `<app>.<domain>`: the static frontend and its Supabase APIs (`/auth/v1`, `/rest/v1`, `/storage/v1`, `/realtime/v1`, `/functions/v1`) share the same origin.
 - **App builders** ask Claude Code to build and deploy their apps. The plugin talks to the control plane through MCP, and deployments go through GitHub Actions (or directly from Claude Code on local installs). Builders inspect their own apps in Studio.
 - **Admins** see every app, in Studio and in the admin console.
-- The **control plane** provisions each app (a Postgres database, its own GoTrue and PostgREST containers, a tenant in the shared services), deploys it, and configures Caddy's routes. Details: [PLAN_1.md](PLAN_1.md) §3.
+- The **control plane** provisions each app (a Postgres database, its own GoTrue and PostgREST containers, a tenant in the shared services), deploys it, and configures Caddy's routes. Details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) §3.
 
 ## Repository layout
 
@@ -97,7 +98,6 @@ ci/                   reusable GitHub Actions deploy workflow, and an example ca
 deploy/               docker-compose stack ("plat"), Caddy bootstrap, install.sh, upgrade.sh
 examples/todo-app/    example app: personal todo list (Vite + React + supabase-js)
 examples/notes-app/   example app: notes shared between users (Vite + React + supabase-js)
-spikes/               milestone reports and prototypes
 ```
 
 ## Prerequisites
@@ -222,7 +222,7 @@ An app builder only sees, in Studio and through MCP, the apps they are a member 
 
 On a local install (`DIRECT_DEPLOY=everyone`, no CI configured), the `deploy` skill takes the direct path: it creates the app, writes and commits `.platform.json`, checks the secrets the functions read, runs `platform-deploy check` (migrations dry run with the security linter, build), then `platform-deploy deploy` (migrations, Edge Functions, frontend, smoke test), and prints the app URL (for instance http://todo-app.localhost:8100) and its Studio link.
 
-> In production (`DIRECT_DEPLOY=admins`, `CI_ALLOWED_WORKFLOWS` set), the same request takes the CI path: the skill creates or links the GitHub repository, installs the workflow that calls the platform's reusable workflow, opens a PR and watches the GitHub Actions run; direct deployment is reserved to admins (`admin-deploy` skill, with a reason). See [docs/USER_JOURNEYS.md](docs/USER_JOURNEYS.md) B2 and A10, and [PLAN_1.md](PLAN_1.md) §6. The CI path has not run against GitHub yet.
+> In production (`DIRECT_DEPLOY=admins`, `CI_ALLOWED_WORKFLOWS` set), the same request takes the CI path: the skill creates or links the GitHub repository, installs the workflow that calls the platform's reusable workflow, opens a PR and watches the GitHub Actions run; direct deployment is reserved to admins (`admin-deploy` skill, with a reason). See [docs/USER_JOURNEYS.md](docs/USER_JOURNEYS.md) B2 and A10, and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) §6. The CI path has not run against GitHub yet.
 
 Without Claude, the same deployment runs from a terminal with the deploy CLI (it reads `.platform.json`, which the skill writes):
 

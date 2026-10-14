@@ -1,4 +1,4 @@
-// Releases (PLAN_1 §4.1): one per CI run attempt (source "ci"), or per direct deployment with a PAT (source
+// Releases (ARCHITECTURE §4.1): one per CI run attempt (source "ci"), or per direct deployment with a PAT (source
 // "direct"). A release groups the deployments (migrations, functions, frontend) it published.
 import type { ReleaseInfo } from "@platform/shared";
 import { type AppRow, requireWritable, UserError } from "./apps.ts";
@@ -105,7 +105,7 @@ export function requireRunning(release: ReleaseRow | undefined, app: AppRow): Re
 
 /**
  * DIRECT_DEPLOY gate on the MCP publishing tools: with "admins", only admins publish with a PAT (the audited
- * exception, PLAN_1 §6.3); builders go through CI. Returns whether this publication is an admin exception.
+ * exception, ARCHITECTURE §6.3); builders go through CI. Returns whether this publication is an admin exception.
  */
 export async function requireDirectDeploy(user: User): Promise<{ adminException: boolean }> {
   const { directDeploy } = await getSettings();

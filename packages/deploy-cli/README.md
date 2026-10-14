@@ -1,6 +1,6 @@
 # platform-deploy
 
-Checks or deploys an app repository (Vite SPA + `supabase/migrations` + `supabase/functions`) to the platform. It is what the reusable GitHub Actions workflow ([`ci/.github/workflows/deploy.yml`](../../ci/.github/workflows/deploy.yml)) runs, and what an admin runs for a direct deployment (PLAN_1 §5.1, §6.2, §6.3).
+Checks or deploys an app repository (Vite SPA + `supabase/migrations` + `supabase/functions`) to the platform. It is what the reusable GitHub Actions workflow ([`ci/.github/workflows/deploy.yml`](../../ci/.github/workflows/deploy.yml)) runs, and what an admin runs for a direct deployment (ARCHITECTURE §5.1, §6.2, §6.3).
 
 TypeScript with **no runtime dependency**: Node ≥ 22.18 runs `src/main.ts` directly (type stripping), and it only shells out to `npm`, `tar` and `git`. Nothing to install or build.
 
