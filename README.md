@@ -12,6 +12,56 @@ More docs:
 - [apps/admin/README.md](apps/admin/README.md): admin console (shadcn-admin-kit);
 - [plugin/README.md](plugin/README.md): Claude Code plugin.
 
+## Architecture
+
+```mermaid
+flowchart TB
+    user(["👤 App user"])
+    builder(["👤 App builder"])
+    admin(["👤 Admin"])
+
+    claude["Claude Code<br/>+ platform plugin"]
+    gha["GitHub Actions<br/>(app repo)"]
+
+    builder -- "asks to build and deploy" --> claude
+    claude -- "git push" --> gha
+
+    subgraph vm["Platform VM"]
+        caddy["Caddy<br/>HTTPS, routing by host name"]
+        subgraph platform["Platform services"]
+            cp["Control plane<br/>MCP server · deploy API · admin API"]
+            console["Admin console"]
+            studio["Studio<br/>(one instance, all apps)"]
+        end
+        subgraph apps["App backends"]
+            front["Static frontends"]
+            perapp["GoTrue + PostgREST<br/>(one pair per app)"]
+            shared["Storage · Realtime<br/>Edge Functions<br/>(shared by all apps)"]
+        end
+        pg[("Postgres<br/>platform DB + one DB per app")]
+    end
+
+    user -- "&lt;app&gt;.domain" --> caddy
+    builder -- "studio.domain<br/>(own apps only)" --> caddy
+    admin -- "admin.domain<br/>studio.domain (all apps)" --> caddy
+    claude -- "MCP<br/>api.domain" --> caddy
+    gha -- "deploy (GitHub OIDC)<br/>api.domain" --> caddy
+
+    caddy --> platform
+    caddy --> apps
+    cp -. "provisions, deploys,<br/>configures routes" .-> apps
+    apps --> pg
+    platform --> pg
+
+    classDef persona fill:#fde68a,stroke:#b45309,color:#000
+    class user,builder,admin persona
+```
+
+- **App users** use the deployed apps on `<app>.<domain>`: the static frontend and its Supabase APIs (`/auth/v1`, `/rest/v1`, `/storage/v1`, `/realtime/v1`, `/functions/v1`) share the same origin.
+- **App builders** ask Claude Code to build and deploy their apps. The plugin talks to the control plane through MCP, and deployments go through GitHub Actions (or directly from Claude Code on local installs). Builders inspect their own apps in Studio.
+- **Admins** see every app, in Studio and in the admin console.
+- The **control plane** provisions each app (a Postgres database, its own GoTrue and PostgREST containers, a tenant in the shared services), deploys it, and configures Caddy's routes. Details: [PLAN_1.md](PLAN_1.md) §3.
+
 ## Repository layout
 
 ```
