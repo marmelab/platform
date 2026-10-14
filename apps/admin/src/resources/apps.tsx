@@ -117,13 +117,19 @@ const FlagFilters = () => (
   </div>
 );
 
-const Owners = ({ owners }: { owners: Owner[] }) =>
+const Owners = ({ owners, slug }: { owners: Owner[]; slug: string }) =>
   owners.length ? (
     <div className="flex flex-col text-sm">
       {owners.map((o) => (
         <span key={o.id}>
           {o.name ? `${o.name} ` : ""}
-          <span className="text-muted-foreground">{o.email}</span>
+          <a
+            className="text-muted-foreground underline hover:no-underline"
+            href={`mailto:${o.email}?subject=${encodeURIComponent(`Your app ${slug}`)}`}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {o.email}
+          </a>
         </span>
       ))}
     </div>
@@ -146,7 +152,7 @@ export const AppList = () => (
         )}
       />
       <DataTable.Col source="status" render={(app) => <StatusBadge status={app.status} />} />
-      <DataTable.Col source="owner_email" label="Owners" render={(app) => <Owners owners={app.owners} />} />
+      <DataTable.Col source="owner_email" label="Owners" render={(app) => <Owners owners={app.owners} slug={app.slug} />} />
       <DataTable.Col
         source="github_repo"
         label="Repository"
@@ -380,7 +386,7 @@ const Overview = ({ app }: { app: AppRecord }) => (
         )}
       </Field>
       <Field label="Owners">
-        <Owners owners={app.owners} />
+        <Owners owners={app.owners} slug={app.slug} />
       </Field>
       <Field label="Created">
         {dateTime(app.created_at)}
