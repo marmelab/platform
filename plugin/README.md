@@ -1,6 +1,6 @@
 # "platform" Claude Code plugin
 
-Deploys a Vite + Supabase app (migrations, edge functions, static frontend) to the platform from Claude Code: "deploy the app to the platform". In production the deployment goes through the app's GitHub Actions CI (PLAN_1 §6); a direct deployment from the machine stays available when the platform allows it (`DIRECT_DEPLOY`).
+Builds apps in the platform's target architecture ("build me a notes app for my team") and deploys a Vite + Supabase app (migrations, edge functions, static frontend) to the platform from Claude Code: "deploy the app to the platform". In production the deployment goes through the app's GitHub Actions CI (PLAN_1 §6); a direct deployment from the machine stays available when the platform allows it (`DIRECT_DEPLOY`).
 
 Contents:
 
@@ -9,6 +9,7 @@ plugin/
   .claude-plugin/plugin.json
   .mcp.json                        # "platform" MCP server (HTTP): browser sign-in (OAuth), or a PAT from PLATFORM_TOKEN
   deploy-cli -> ../packages/deploy-cli/src   # platform-deploy, the CLI the CI runs (symlink, copied at install)
+  skills/build/SKILL.md            # builder: creates or extends an app in the target architecture (no script)
   skills/deploy/SKILL.md           # builder: sets up the CI and pushes, or deploys directly when allowed
   skills/deploy/assets/platform.yml -> ci/examples/platform.yml   # caller workflow template (symlink)
   skills/deploy/scripts/
@@ -72,6 +73,8 @@ The `platform:deploy` skill:
 5. CI path: `gh repo create` if needed, `link_repo`, checks that the default branch is protected (the platform only deploys from a protected branch) and proposes a minimal protection, sets the `PLATFORM_URL` repository variable if the organization has none, installs `.github/workflows/platform.yml`, commits, opens a PR and watches its check, then watches the deploy run after the merge (`gh run watch`);
 6. direct path: `platform-deploy deploy` (release with the commit, migrations, functions, build, frontend, smoke test). Signed in through the browser, the skill first gets a deploy token (`create_deploy_token`: 15 minutes, this app and the publishing tools only) and passes it in `PLATFORM_DEPLOY_TOKEN`, a new one for each command; with a PAT, the script uses `PLATFORM_TOKEN`;
 7. reports the app URL, the Studio link and the run or release; on errors, reads the run logs and `get_logs`, and diagnoses.
+
+The `platform:build` skill is used before the first deployment, from an empty folder or an existing app ("build me a notes app for my team", "add file attachments to the notes"). It holds the target architecture: Vite + React + TypeScript single-page app with supabase-js, migrations in `supabase/migrations` with row level security on every table, edge functions only for what needs a secret or extra privileges, email and password auth that handles invitation and password reset links (app users are usually invited by the builder). It builds the app, checks `npm run build`, commits, then offers to deploy it with `platform:deploy`.
 
 The `platform:admin-deploy` skill (admins only) is the audited exception of PLAN_1 §6.3: it asks for a reason, runs `preflight.sh` (clean tree, commit on the remote, checkout of the linked repository), then `platform-deploy deploy --reason "..."`.
 

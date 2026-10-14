@@ -24,7 +24,7 @@ packages/
   shared/             zod schemas and types shared by the API and the MCP server
   sql/                template database, per-app roles, linter queries
   deploy-cli/         platform-deploy: checks or deploys an app repo (GitHub OIDC in CI, or a PAT)
-plugin/               Claude Code plugin (deploy and admin-deploy skills + MCP config)
+plugin/               Claude Code plugin (build, deploy and admin-deploy skills + MCP config)
 ci/                   reusable GitHub Actions deploy workflow, and an example caller for app repos
 deploy/               docker-compose stack ("plat"), Caddy bootstrap, install.sh, upgrade.sh
 examples/todo-app/    example app: personal todo list (Vite + React + supabase-js)

@@ -33,7 +33,7 @@ tools="$(tr '\n' ' ' < "$ROOT/apps/control-plane/src/mcp.ts" | grep -oE 'registe
 # backticked snake_case words that are fields or options, not tools
 fields="direct_deploy direct_deploy_setting api_url github_org github_repo default_branch studio_url last_release
   admin_exception schema_drift since_minutes repository_id required_approving_review_count
-  email_confirmation_effective redirect_urls callback_url"
+  email_confirmation_effective redirect_urls callback_url service_role user_metadata"
 for skill in "$plugin"/skills/*/SKILL.md; do
   name="$(basename "$(dirname "$skill")")"
   for word in $(grep -oE '`[a-z]+(_[a-z]+)+`' "$skill" | tr -d '`' | sort -u); do

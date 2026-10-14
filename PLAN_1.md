@@ -247,6 +247,7 @@ plugin/
   .claude-plugin/plugin.json
   .mcp.json                     # url: https://api.<domaine>/mcp, headers: Authorization: Bearer ${PLATFORM_TOKEN}
   deploy-cli -> ../packages/deploy-cli/src   # platform-deploy livré dans le plugin (lien symbolique résolu à l'installation)
+  skills/build/SKILL.md         # architecture cible des apps (Vite + React, supabase-js, migrations avec RLS, functions)
   skills/deploy/SKILL.md        # mise en place de la CI, puis push et suivi du run ; déploiement direct si autorisé
   skills/admin-deploy/SKILL.md  # déploiement direct, admins seulement (§6.3)
 ci/
@@ -350,7 +351,7 @@ packages/
   shared/             # types, schémas zod partagés API/MCP/admin
   sql/                # template_supabase, rôles, linter
   deploy-cli/         # platform-deploy, utilisé par la CI et par les admins
-plugin/               # plugin Claude Code (skills deploy et admin-deploy + .mcp.json)
+plugin/               # plugin Claude Code (skills build, deploy et admin-deploy + .mcp.json)
 ci/                   # workflow réutilisable de déploiement, publié avec le plugin
 deploy/               # docker-compose, Caddy bootstrap, install.sh
 examples/todo-app/    # app de test end-to-end (Vite + supabase-js + 1 edge function)

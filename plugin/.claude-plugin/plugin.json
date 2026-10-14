@@ -1,8 +1,8 @@
 {
   "name": "platform",
   "displayName": "Platform",
-  "version": "0.3.0",
-  "description": "Deploy Vite + Supabase apps (migrations, edge functions, static front) to the internal platform",
+  "version": "0.4.0",
+  "description": "Build Vite + Supabase apps in the target architecture and deploy them (migrations, edge functions, static front) to the internal platform",
   "author": { "name": "Platform team" },
-  "keywords": ["deploy", "supabase", "vite"]
+  "keywords": ["build", "deploy", "supabase", "vite"]
 }
