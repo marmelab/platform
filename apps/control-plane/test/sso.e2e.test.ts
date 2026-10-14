@@ -156,6 +156,20 @@ describe("M6 part 2: company SSO", () => {
     assert.equal(builderView.status, 403, "admins only");
     const audit = psql("select details->'changes'->>'sso_client_secret' from audit_log where action = 'update_sso' order by id desc limit 1");
     assert.equal(audit, "(changed)", "the audit log does not hold the secret");
+
+    // only the values that differ from the environment are stored; saving them again changes and audits nothing
+    assert.equal(psql("select string_agg(key, ',' order by key) from settings where key like 'sso\\_%'"),
+      "sso_allowed_domains,sso_client_id,sso_client_secret,sso_discovery_url,sso_enabled,sso_issuer,sso_name",
+      "the defaults (require_verified_email, auto_create, password_login) are not overrides");
+    const audits = () => psql("select count(*) from audit_log where action = 'update_sso'");
+    const audited = audits();
+    assert.equal((await adminApi("PUT", "/sso", SSO_CONFIG)).status, 200);
+    assert.equal(audits(), audited, "nothing changed: not audited");
+    assert.equal((await adminApi("PUT", "/sso", { auto_create: "developer" })).status, 200);
+    assert.equal((await adminApi("PUT", "/sso", { auto_create: "off" })).status, 200);
+    assert.equal(psql("select count(*) from settings where key = 'sso_auto_create'"), "0", "back to the environment: unset");
+    assert.equal(psql(`select details->'changes'->>'sso_auto_create' || ' ' || (details->'back_to_environment')::text
+      from audit_log where action = 'update_sso' order by id desc limit 1`), `off ["sso_auto_create"]`);
   });
 
   test("2. Studio: the login page offers SSO; a builder signs in with it, linked by email then by subject", async () => {
@@ -345,6 +359,8 @@ describe("M6 part 2: company SSO", () => {
     assert.equal(error, null);
     assert.equal(session.user?.email, `e2e-${RUN}-appuser@${DOMAIN}`);
     assert.equal(session.user?.app_metadata.provider, "custom:company");
+    const listed = await call(builder, "list_auth_users", { app: APP, filter: `e2e-${RUN}-appuser@` });
+    assert.deepEqual(listed.users.map((u: { providers: string[] }) => u.providers), [["custom:company"]]);
 
     // the app's allowed email domains also apply to SSO accounts (before-user-created hook)
     await call(builder, "configure_auth", { app: APP, allowed_email_domains: ["example.net"] });
@@ -361,6 +377,7 @@ describe("M6 part 2: company SSO", () => {
     assert.equal(refusedOn.isError, true);
     assert.match(refusedOn.content[0]!.text, /no company SSO/);
     assert.equal((await call(builder, "configure_auth", { app: APP, sso: null })).auth.sso, null);
+    assert.equal(psql("select count(*) from settings where key = 'sso_enabled'"), "0", "off is the environment's value");
     assert.equal((await adminApi("PUT", "/sso", { enabled: true })).status, 200);
   });
 });

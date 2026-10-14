@@ -312,7 +312,8 @@ export function buildMcpServer(user: User): McpServer {
     "list_auth_users",
     {
       description: "Users of the app itself (its Auth/GoTrue accounts, not platform members), newest first: email, " +
-        "id, created_at, last_sign_in_at, invited_at, confirmed, banned. Any member of the app. Also works on a " +
+        "id, created_at, last_sign_in_at, invited_at, confirmed, banned, providers (how they sign in: email, " +
+        "custom:company for the company SSO...). Any member of the app. Also works on a " +
         "stopped app (read from the database).",
       inputSchema: t.list_auth_users,
     },

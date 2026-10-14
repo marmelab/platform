@@ -613,10 +613,11 @@ export async function deleteApp(actor: User | null, slug: string, { backup: with
     backup_files: backup?.files ?? null,
     backup_skipped: !withBackup,
   });
+  // first: a deletion that fails half-way must not leave the relay retrying a database that may be gone
+  await unwatchSchema(slug);
   await router.removeApp(slug);
   await studio.unregister(slug);
   await orchestrator.removeApp(slug);
-  await unwatchSchema(slug);
   // the Realtime tenant first: its replication slot is dropped through the app database
   await deleteRealtime(slug);
   await deleteStorage(slug);

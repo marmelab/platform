@@ -21,10 +21,17 @@ export interface AuthUser {
   confirmed: boolean;
   banned: boolean;
   banned_until: Date | null;
+  /** How the user signs in, as Studio shows it: "email", "custom:company"... (identities, else app_metadata.providers) */
+  providers: string[];
 }
 
 const USER_COLUMNS = `id, email, created_at, last_sign_in_at, invited_at, email_confirmed_at is not null as confirmed,
-  coalesce(banned_until > now(), false) as banned, banned_until`;
+  coalesce(banned_until > now(), false) as banned, banned_until,
+  coalesce(
+    (select array_agg(distinct i.provider order by i.provider) from auth.identities i where i.user_id = users.id),
+    array(select jsonb_array_elements_text(case when jsonb_typeof(raw_app_meta_data->'providers') = 'array'
+      then raw_app_meta_data->'providers' else '[]' end))
+  ) as providers`;
 
 /** Validity of GoTrue's invite links: GOTRUE_MAILER_OTP_EXP, left at its default (24 h). */
 const INVITE_VALIDITY = "24 hours, single use";

@@ -7,6 +7,7 @@ import { ensurePlatformAuth } from "./platform-auth.ts";
 import { startBackupScheduler } from "./backups.ts";
 import { startMetricsSampler } from "./metrics.ts";
 import { startLintSweeper } from "./lint.ts";
+import { startSchemaRelayReconciler } from "./pgrst-relay.ts";
 import { recordVersion } from "./version.ts";
 import { app } from "./server.ts";
 import { studioInternalRoutes } from "./studio/routes.ts";
@@ -26,6 +27,7 @@ for (const image of [config.docker.gotrueImage, config.docker.postgrestImage]) {
 startMetricsSampler();
 startBackupScheduler();
 startLintSweeper(config.lintSweepIntervalHours);
+startSchemaRelayReconciler();
 serve({ fetch: app.fetch, port: config.port }, (info) => console.log(`control plane listening on :${info.port}`));
 // internal listener (never routed publicly): Studio's forward auth and project configs, Caddy's TLS `ask` endpoint
 const internal = new Hono();

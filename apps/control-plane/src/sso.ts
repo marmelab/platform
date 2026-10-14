@@ -56,6 +56,15 @@ const keySets = new Map<string, ReturnType<typeof createRemoteJWKSet>>();
  * The IdP's discovery document (cached 10 minutes). Its issuer must be the configured one, exactly (OIDC Discovery
  * §4.3). `fresh` skips the cache: the admin console checks a new configuration with it.
  */
+/** "fetch failed" says nothing, a JSON parse error quotes the page: the cause's code, "timeout" or "not JSON". */
+function shortReason(error: unknown) {
+  if (!(error instanceof Error)) return String(error);
+  if (error.name === "TimeoutError") return "timeout";
+  if (error instanceof SyntaxError) return "not JSON";
+  const code = (error.cause as { code?: unknown } | undefined)?.code;
+  return typeof code === "string" ? code : error.message;
+}
+
 export async function discover(sso: Pick<SsoSettings, "issuer" | "discoveryUrl">, { fresh = false } = {}): Promise<Discovery> {
   const cached = discoveries.get(sso.discoveryUrl);
   if (!fresh && cached && cached.doc.issuer === sso.issuer && Date.now() - cached.at < DISCOVERY_TTL_MS) return cached.doc;
@@ -65,7 +74,7 @@ export async function discover(sso: Pick<SsoSettings, "issuer" | "discoveryUrl">
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     doc = await response.json() as Discovery;
   } catch (error) {
-    throw new SsoError("discovery_failed", `The identity provider's discovery document (${sso.discoveryUrl}) could not be read: ${error instanceof Error ? error.message : error}`);
+    throw new SsoError("discovery_failed", `Discovery document unreachable (${shortReason(error)}): ${sso.discoveryUrl}`);
   }
   if (doc.issuer !== sso.issuer) {
     throw new SsoError("discovery_failed", `The discovery document's issuer is "${doc.issuer}", not the configured "${sso.issuer}".`);

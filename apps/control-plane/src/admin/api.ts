@@ -37,6 +37,7 @@ import {
   SSO_PROVIDER_KEYS,
   ssoActive,
   ssoSummary,
+  parseDomains,
   unsetSetting,
   validateSetting,
 } from "../settings.ts";
@@ -950,18 +951,60 @@ const ssoInput = z.object({
 adminApi.put("/sso", async (c) => {
   const admin = c.get("admin");
   const input = await body(c, ssoInput);
-  // new values of the settings rows; null: back to the environment's default
+  const { sso } = await getSettings();
+  const saved = await many<{ key: string; value: string }>("select key, value from settings where key like 'sso\\_%'");
+  const stored = new Set(saved.map((row) => row.key));
+  const d = config.defaults;
+  // the values as setSetting stores them: from the environment (or its default), and in effect now
+  const env: Record<string, string> = {
+    sso_enabled: d.ssoEnabled,
+    sso_name: d.ssoName,
+    sso_issuer: d.ssoIssuer,
+    sso_discovery_url: d.ssoDiscoveryUrl,
+    sso_client_id: d.ssoClientId,
+    sso_client_secret: d.ssoClientSecret,
+    sso_allowed_domains: parseDomains(d.ssoAllowedDomains).join(","),
+    sso_require_verified_email: d.ssoRequireVerifiedEmail,
+    sso_auto_create: d.ssoAutoCreate,
+    sso_password_login: d.ssoPasswordLogin,
+  };
+  const current: Record<string, string> = {
+    sso_enabled: String(sso.enabled),
+    sso_name: sso.name,
+    sso_issuer: sso.issuer,
+    sso_discovery_url: saved.find((row) => row.key === "sso_discovery_url")?.value ?? env.sso_discovery_url,
+    sso_client_id: sso.clientId,
+    sso_client_secret: sso.clientSecret,
+    sso_allowed_domains: sso.allowedDomains.join(","),
+    sso_require_verified_email: String(sso.requireVerifiedEmail),
+    sso_auto_create: sso.autoCreate,
+    sso_password_login: sso.passwordLogin,
+  };
+  const issuer = input.issuer ?? sso.issuer;
+  const derivedDiscovery = issuer ? `${issuer.replace(/\/+$/, "")}/.well-known/openid-configuration` : null;
+  const wanted: Record<string, string> = {};
+  if (input.enabled !== undefined) wanted.sso_enabled = String(input.enabled);
+  if (input.name !== undefined) wanted.sso_name = input.name;
+  if (input.issuer !== undefined) wanted.sso_issuer = input.issuer;
+  // empty: the environment's; the issuer's default URL: "" (derived from the issuer, whatever it becomes)
+  if (input.discovery_url !== undefined) {
+    wanted.sso_discovery_url = !input.discovery_url ? env.sso_discovery_url
+      : input.discovery_url === derivedDiscovery ? "" : input.discovery_url;
+  }
+  if (input.client_id !== undefined) wanted.sso_client_id = input.client_id;
+  if (input.client_secret) wanted.sso_client_secret = input.client_secret;
+  if (input.allowed_domains !== undefined) wanted.sso_allowed_domains = parseDomains(input.allowed_domains.join(",")).join(",");
+  if (input.require_verified_email !== undefined) wanted.sso_require_verified_email = String(input.require_verified_email);
+  if (input.auto_create !== undefined) wanted.sso_auto_create = input.auto_create;
+  if (input.password_login !== undefined) wanted.sso_password_login = input.password_login;
+  // new values of the settings rows (null: back to the environment), for the keys whose value in effect changes; a row
+  // equal to the environment's value is removed as well (nothing changes)
   const rows: Record<string, string | null> = {};
-  if (input.enabled !== undefined) rows.sso_enabled = String(input.enabled);
-  if (input.name !== undefined) rows.sso_name = input.name;
-  if (input.issuer !== undefined) rows.sso_issuer = input.issuer;
-  if (input.discovery_url !== undefined) rows.sso_discovery_url = input.discovery_url || null;
-  if (input.client_id !== undefined) rows.sso_client_id = input.client_id;
-  if (input.client_secret) rows.sso_client_secret = input.client_secret;
-  if (input.allowed_domains !== undefined) rows.sso_allowed_domains = input.allowed_domains.join(",");
-  if (input.require_verified_email !== undefined) rows.sso_require_verified_email = String(input.require_verified_email);
-  if (input.auto_create !== undefined) rows.sso_auto_create = input.auto_create;
-  if (input.password_login !== undefined) rows.sso_password_login = input.password_login;
+  const redundant: string[] = [];
+  for (const [key, value] of Object.entries(wanted)) {
+    if (value !== current[key]) rows[key] = value === env[key] ? null : value;
+    else if (value === env[key] && stored.has(key)) redundant.push(key);
+  }
   for (const [key, value] of Object.entries(rows)) {
     try {
       if (value !== null) validateSetting(key, value);
@@ -971,13 +1014,14 @@ adminApi.put("/sso", async (c) => {
   }
   // write, then check the result: an active configuration must answer with a matching discovery document, otherwise
   // the previous rows are put back
-  const saved = await many<{ key: string; value: string }>("select key, value from settings where key like 'sso\\_%'");
-  const changed: Record<string, unknown> = {};
+  const changes: Record<string, unknown> = {};
+  for (const key of redundant) await unsetSetting(key);
   for (const [key, value] of Object.entries(rows)) {
     if (value === null) await unsetSetting(key);
     else await setSetting(key, value);
-    changed[key] = key === "sso_client_secret" ? "(changed)" : value;
+    changes[key] = key === "sso_client_secret" ? "(changed)" : wanted[key];
   }
+  const reset = Object.keys(rows).filter((key) => rows[key] === null);
   const { sso: next } = await getSettings();
   let refusal: string | null = null;
   if (next.enabled && !next.configured) refusal = "to enable SSO, set the issuer, the client id and the client secret";
@@ -994,7 +1038,9 @@ adminApi.put("/sso", async (c) => {
     });
     throw new HttpError(400, refusal);
   }
-  await audit(admin.id, null, "update_sso", { changes: changed });
+  if (Object.keys(changes).length > 0) {
+    await audit(admin.id, null, "update_sso", { changes, ...(reset.length ? { back_to_environment: reset } : {}) });
+  }
   // the apps' "custom:company" provider follows the provider settings (removed when SSO is turned off)
   const appsSync = Object.keys(rows).some((key) => SSO_PROVIDER_KEYS.includes(key) || key === "sso_discovery_url")
     ? await syncCompanySso()

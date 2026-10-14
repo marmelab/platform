@@ -79,6 +79,13 @@ async function syncAuth() {
   if (failed.length) process.exitCode = 1;
 }
 
+/** Every running app with company SSO gets the provider settings now in effect (custom:company). */
+async function syncSso() {
+  const { apps, failed } = await syncCompanySso();
+  console.log(`company SSO of ${apps - failed.length}/${apps} apps up to date${failed.length ? `, failed: ${failed.map((f) => `${f.app} (${f.error})`).join(", ")}` : ""}`);
+  if (failed.length) process.exitCode = 1;
+}
+
 async function appBySlug(slug: string) {
   const app = await one<AppRow>("select * from apps where slug = $1", [slug]);
   if (!app) throw new Error(`unknown app ${slug}`);
@@ -135,13 +142,13 @@ if (command === "init") {
   await audit(null, null, "set_setting", { key: args[0], value: secret ? "(secret)" : value, source: "cli" });
   console.log(`${args[0]} set`);
   if (SMTP_KEYS.includes(args[0])) await syncAuth();
-  if (SSO_PROVIDER_KEYS.includes(args[0])) console.log(JSON.stringify(await syncCompanySso()));
+  if (SSO_PROVIDER_KEYS.includes(args[0])) await syncSso();
 } else if (command === "unset-setting" && args[0]) {
   await unsetSetting(args[0]);
   await audit(null, null, "unset_setting", { key: args[0], source: "cli" });
   console.log(`${args[0]} unset`);
   if (SMTP_KEYS.includes(args[0])) await syncAuth();
-  if (SSO_PROVIDER_KEYS.includes(args[0])) console.log(JSON.stringify(await syncCompanySso()));
+  if (SSO_PROVIDER_KEYS.includes(args[0])) await syncSso();
 } else if (command === "sync-auth") {
   await syncAuth();
 } else if (command === "sample-metrics") {

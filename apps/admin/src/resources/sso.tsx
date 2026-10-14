@@ -36,6 +36,9 @@ const PASSWORD_LOGIN = [
   { id: "admins", name: "Admins only (break-glass): builders use SSO" },
 ];
 
+const defaultDiscoveryUrl = (issuer: string | null) =>
+  issuer ? `${issuer.replace(/\/+$/, "")}/.well-known/openid-configuration` : null;
+
 export const SsoSettings = () => {
   const [record, setRecord] = useState<SsoRecord | null>(null);
   const [saving, setSaving] = useState(false);
@@ -97,7 +100,8 @@ export const SsoSettings = () => {
             record={{
               ...record,
               issuer: record.issuer ?? "",
-              discovery_url: record.discovery_url ?? "",
+              // the issuer's default is left empty: it follows the issuer instead of becoming an override
+              discovery_url: record.discovery_url === defaultDiscoveryUrl(record.issuer) ? "" : record.discovery_url ?? "",
               client_id: record.client_id ?? "",
               client_secret: "",
               allowed_domains: record.allowed_domains.join(", "),

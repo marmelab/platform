@@ -7,17 +7,23 @@
 // Notifications come from the image's DDL event triggers (pgrst_ddl_watch, pgrst_drop_watch: Studio, execute_sql,
 // edge functions...) and from applyMigrations (NOTIFY pgrst after commit). On each (re)connection the schema is
 // reloaded once, for the notifications missed while the relay was not listening.
+//
+// The CLI runs in another process (start-app, stop-app, delete-app, restore-app): its watchSchema/unwatchSchema do not
+// reach the server's relays, so the server reconciles them with the apps table every RECONCILE_MS, and a relay whose
+// database is gone stops at once.
 import { appRoles, PGRST_RELAY_ROLE } from "@platform/sql";
 import pg from "pg";
 import { containerName, dbId, orchestrator } from "./apps.ts";
 import { config } from "./config.ts";
 import { derivedSecret } from "./crypto.ts";
+import { many } from "./db.ts";
 
 /** Password of PGRST_RELAY_ROLE: derived from the master key, set by init. */
 export const pgrstRelayPassword = () => derivedSecret(PGRST_RELAY_ROLE);
 
 const DEBOUNCE_MS = 150;
 const MAX_BACKOFF_MS = 30_000;
+const RECONCILE_MS = 15_000;
 
 interface Watch {
   client: pg.Client | null;
@@ -75,6 +81,11 @@ async function connect(slug: string, watch: Watch) {
     watch.backoff = 1000;
     relay(slug, watch, "SIGUSR1");
   } catch (error) {
+    if ((error as { code?: string }).code === "3D000") {
+      console.log(`pgrst relay of ${slug} stopped: its database no longer exists`);
+      if (watches.get(slug) === watch) await unwatchSchema(slug);
+      return;
+    }
     if (watch.backoff >= MAX_BACKOFF_MS) console.error(`pgrst relay of ${slug} cannot connect`, error);
     retry();
   }
@@ -100,5 +111,17 @@ export async function unwatchSchema(slug: string) {
   await client?.end().catch(() => {});
 }
 
-/** Apps whose notifications are relayed (tests, diagnostics). */
-export const watchedApps = () => [...watches.keys()].sort();
+/** Relays of the running apps started, those of stopped or deleted apps stopped (changes made by the CLI). */
+export async function reconcileSchemaWatches() {
+  const apps = await many<{ slug: string; status: string }>("select slug, status from apps");
+  const status = new Map(apps.map((app) => [app.slug, app.status]));
+  for (const app of apps) if (app.status === "running") watchSchema(app.slug);
+  for (const slug of [...watches.keys()]) {
+    if (!status.has(slug) || status.get(slug) === "stopped") await unwatchSchema(slug);
+  }
+}
+
+export function startSchemaRelayReconciler() {
+  const tick = () => reconcileSchemaWatches().catch((error) => console.error("pgrst relay reconciliation failed", error));
+  setInterval(tick, RECONCILE_MS).unref();
+}

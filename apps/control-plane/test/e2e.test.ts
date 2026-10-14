@@ -598,6 +598,7 @@ describe("control plane M2 e2e", () => {
     assert.ok(signedUp, `test 6 user listed: ${JSON.stringify(listed)}`);
     assert.equal(signedUp.confirmed, true);
     assert.equal(signedUp.banned, false);
+    assert.deepEqual(signedUp.providers, ["email"]);
     assert.ok(signedUp.last_sign_in_at);
     assert.doesNotMatch(JSON.stringify(listed), /encrypted_password|password|token/);
 
