@@ -11,7 +11,7 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import { createClient } from "@supabase/supabase-js";
 import * as tar from "tar";
 import { cleanup, cli, psql, runId, waitForControlPlane } from "./disposable.ts";
-import { confirmSignup, followLink, fragmentParams, mailLink, waitForMails } from "./mailpit.ts";
+import { confirmSignup, followLink, fragmentParams, mailLink, searchMails, waitForMail, waitForMails } from "./mailpit.ts";
 
 const ROOT = new URL("../../../", import.meta.url);
 const env = Object.fromEntries(
@@ -563,8 +563,10 @@ describe("control plane M2 e2e", () => {
   };
 
   test("10. members: owner, collaborator and admin rights", async () => {
-    owner = await connect(cli(["create-user", OWNER, "developer"]).trim());
-    collab = await connect(cli(["create-user", COLLAB, "developer"]).trim());
+    const ownerToken = cli(["create-user", OWNER, "developer"]).trim();
+    const collabToken = cli(["create-user", COLLAB, "developer"]).trim();
+    owner = await connect(ownerToken);
+    collab = await connect(collabToken);
     await refused(admin, "add_member", { app: APP, email: `${APP}-nobody@example.com` }, /an admin must create it/);
     await call(admin, "add_member", { app: APP, email: OWNER, role: "owner" });
     const members = await call(owner, "add_member", { app: APP, email: COLLAB });
@@ -572,6 +574,16 @@ describe("control plane M2 e2e", () => {
       members.map((m: { email: string; role: string }) => `${m.role}:${m.email}`).sort(),
       [`owner:${ADMIN_EMAIL}`, `owner:${OWNER}`, `collaborator:${COLLAB}`].sort(),
     );
+    // B7: the added member is emailed, once
+    const mail = await waitForMail(`to:"${COLLAB}" subject:"You were added"`);
+    assert.equal(mail.Subject, `You were added to the app "Demo"`);
+    assert.match(mail.Text, new RegExp(`^${OWNER} added you to the app "Demo" .* as a collaborator\\.`, "m"));
+    assert.ok(mail.Text.includes(APP_URL), "app URL");
+    assert.ok(mail.Text.includes(`http://studio.localhost:8100/project/${APP}`), "Studio link");
+    for (const token of [ownerToken, collabToken, env.PLATFORM_TOKEN!]) assert.ok(!mail.Text.includes(token), "no token");
+    await call(owner, "add_member", { app: APP, email: COLLAB, role: "collaborator" });
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    assert.equal((await searchMails(`to:"${COLLAB}"`)).length, 1, "an identical add sends nothing");
     assert.equal((await call(collab, "whoami")).apps.find((a: { slug: string }) => a.slug === APP).role, "collaborator");
     assert.equal((await call(collab, "list_members", { app: APP })).length, 3);
 

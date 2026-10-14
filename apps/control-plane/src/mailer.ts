@@ -1,5 +1,5 @@
-// The platform's own emails (M6), through the platform SMTP (settings.ts): abandoned-app notices to owners (A6) and
-// the welcome email of accounts created in the admin console. App emails (sign-up confirmation, password reset,
+// The platform's own emails (M6), through the platform SMTP (settings.ts): abandoned-app notices to owners (A6), the
+// welcome email of accounts created in the admin console, and membership emails (B7, members.ts). App emails (sign-up confirmation, password reset,
 // invitations) are sent by each app's GoTrue with the same SMTP (app-auth.ts), not from here.
 import nodemailer from "nodemailer";
 import { getSettings, type SmtpSettings } from "./settings.ts";

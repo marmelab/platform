@@ -8,7 +8,7 @@ import { randomBytes } from "node:crypto";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { cleanup, cli, psql, runId, waitForControlPlane } from "./disposable.ts";
-import { waitForMail } from "./mailpit.ts";
+import { searchMails, waitForMail } from "./mailpit.ts";
 
 const ROOT = new URL("../../../", import.meta.url);
 const env = Object.fromEntries(
@@ -343,9 +343,20 @@ describe("admin API e2e", () => {
     const added = ok(await request("POST", "/app_members", { body: { app: APP, email: COLLAB, role: "collaborator" } }), 201);
     assert.equal(added.id, `${APP}:${users.collab!.id}`);
     assert.equal(added.role, "collaborator");
+    // B7: the member is emailed when added, on each role change and when removed, never for an identical add
+    const mail = await waitForMail(`to:"${COLLAB}" subject:"You were added"`);
+    assert.match(mail.Text, /added you to the app ".*" .* as a collaborator\./);
+    assert.ok(mail.Text.includes(ADMIN_EMAIL), "who added them");
+    assert.ok(mail.Text.includes(`http://studio.localhost:8100/project/${APP}`), "Studio link");
+    for (const token of [env.PLATFORM_TOKEN!, users.builder!.token]) assert.ok(!mail.Text.includes(token), "no token");
+    ok(await request("POST", "/app_members", { body: { app: APP, email: COLLAB, role: "collaborator" } }), 201);
     const promoted = ok(await request("PUT", `/app_members/${added.id}`, { body: { role: "owner" } }));
     assert.equal(promoted.role, "owner");
+    const owner = await waitForMail(`to:"${COLLAB}" subject:"You are now an owner"`);
+    assert.match(owner.Text, /also choose who works on it/);
     ok(await request("PUT", `/app_members/${added.id}`, { body: { role: "collaborator" } }));
+    await waitForMail(`to:"${COLLAB}" subject:"You are now a collaborator"`);
+    assert.equal((await searchMails(`to:"${COLLAB}" subject:"You were added"`)).length, 1, "an identical add sends nothing");
 
     const members = ok(await list("app_members", { filter: { app: APP } })) as any[];
     assert.deepEqual(members.map((m) => `${m.email}:${m.role}`).sort(), [`${BUILDER}:owner`, `${COLLAB}:collaborator`].sort());
@@ -362,8 +373,10 @@ describe("admin API e2e", () => {
     assert.match(deletedOwner.body.message, new RegExp(APP));
 
     ok(await request("DELETE", `/app_members/${added.id}`));
+    await waitForMail(`to:"${COLLAB}" subject:"You no longer have access"`);
     const entries = await auditEntries({ app: APP, action: ["add_member", "remove_member"] });
     assert.ok(entries.length >= 4);
+    assert.ok(entries.filter((e) => e.details.email === COLLAB).every((e) => e.details.email_sent === true), JSON.stringify(entries));
     assert.ok(entries.every((e) => e.user_email === ADMIN_EMAIL && e.app === APP));
   });
 
