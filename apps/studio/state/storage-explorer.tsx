@@ -45,7 +45,7 @@ import { moveStorageObject } from '@/data/storage/object-move-mutation'
 import { useSelectedProjectQuery } from '@/hooks/misc/useSelectedProject'
 import { PROJECT_STATUS } from '@/lib/constants'
 import { lookupMime } from '@/lib/mime'
-import { createProjectSupabaseClient } from '@/lib/project-supabase-client'
+import { createFolderPlaceholder } from '@/platform/storageFolders'
 import { ResponseError } from '@/types'
 
 type UploadProgress = {
@@ -231,21 +231,17 @@ function createStorageExplorerState({
 
       state.updateFolderAfterEdit({ folderName: formattedName, columnIndex })
 
-      const emptyPlaceholderFile = `${formattedName}/${EMPTY_FOLDER_PLACEHOLDER_FILE_NAME}`
       const pathToFolder = state.openedFolders
         .slice(0, columnIndex)
         .map((folder) => folder.name)
         .join('/')
-      const formattedPathToEmptyPlaceholderFile =
-        pathToFolder.length > 0 ? `${pathToFolder}/${emptyPlaceholderFile}` : emptyPlaceholderFile
 
-      const client = await createProjectSupabaseClient(state.projectRef, clientEndpoint)
-      await client.storage
-        .from(state.selectedBucket.name)
-        .upload(
-          formattedPathToEmptyPlaceholderFile,
-          new File([], EMPTY_FOLDER_PLACEHOLDER_FILE_NAME)
-        )
+      // platform: created by Studio's server, no key of the app in the browser
+      await createFolderPlaceholder(
+        state.projectRef,
+        state.selectedBucket.id,
+        pathToFolder.length > 0 ? `${pathToFolder}/${formattedName}` : formattedName
+      )
 
       if (pathToFolder.length > 0) {
         await deleteBucketObject({
@@ -496,11 +492,7 @@ function createStorageExplorerState({
         })
 
         if (data.length === 0) {
-          const prefixToPlaceholder = `${parentFolderPrefix}/${EMPTY_FOLDER_PLACEHOLDER_FILE_NAME}`
-          const client = await createProjectSupabaseClient(state.projectRef, clientEndpoint)
-          await client.storage
-            .from(state.selectedBucket.name)
-            .upload(prefixToPlaceholder, new File([], EMPTY_FOLDER_PLACEHOLDER_FILE_NAME))
+          await createFolderPlaceholder(state.projectRef, state.selectedBucket.id, parentFolderPrefix)
         }
       } catch (error) {}
     },

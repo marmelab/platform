@@ -21,7 +21,7 @@ import * as z from 'zod'
 
 import { RealtimeConfig } from './useRealtimeMessages'
 import { DocsButton } from '@/components/ui/DocsButton'
-import { getTemporaryAPIKey } from '@/data/api-keys/temp-api-keys-query'
+import { getRealtimeInspectorToken } from '@/platform/realtimeToken'
 import { useSendEventMutation } from '@/data/telemetry/send-event-mutation'
 import { useSelectedOrganizationQuery } from '@/hooks/misc/useSelectedOrganization'
 import { DOCS_URL } from '@/lib/constants'
@@ -68,7 +68,7 @@ export const ChooseChannelPopover = ({ config, onChangeConfig }: ChooseChannelPo
 
     // [Joshen] Refresh if starting to listen + using temp API key, since it has a low refresh rate
     if (token.startsWith('sb_temp') || !IS_PLATFORM) {
-      const data = await getTemporaryAPIKey({ projectRef: config.projectRef, expiry: 3600 })
+      const data = await getRealtimeInspectorToken(config.projectRef)
       token = data.api_key
     }
     onChangeConfig({

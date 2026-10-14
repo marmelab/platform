@@ -8,7 +8,7 @@ import { RealtimeFilterPopover } from './RealtimeFilterPopover'
 import { RealtimeTokensPopover } from './RealtimeTokensPopover'
 import { RealtimeConfig } from './useRealtimeMessages'
 import { ButtonTooltip } from '@/components/ui/ButtonTooltip'
-import { getTemporaryAPIKey } from '@/data/api-keys/temp-api-keys-query'
+import { getRealtimeInspectorToken } from '@/platform/realtimeToken'
 import { useSendEventMutation } from '@/data/telemetry/send-event-mutation'
 import { useAsyncCheckPermissions } from '@/hooks/misc/useCheckPermissions'
 import { useSelectedOrganizationQuery } from '@/hooks/misc/useSelectedOrganization'
@@ -42,7 +42,7 @@ export const Header = ({ config, onChangeConfig }: HeaderProps) => {
           onClick={async () => {
             // [Joshen] Refresh if starting to listen + using temp API key, since it has a low refresh rate
             if (!config.enabled && (config.token.startsWith('sb_temp') || !IS_PLATFORM)) {
-              const data = await getTemporaryAPIKey({ projectRef: config.projectRef, expiry: 3600 })
+              const data = await getRealtimeInspectorToken(config.projectRef)
               const token = data.api_key
               onChangeConfig({ ...config, token, enabled: !config.enabled })
             } else {

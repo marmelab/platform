@@ -6,7 +6,7 @@ import { toast } from 'sonner'
 import { RealtimeConfig } from './useRealtimeMessages'
 import { RoleImpersonationPopover } from '@/components/interfaces/RoleImpersonationSelector/RoleImpersonationPopover'
 import { getKeys, useAPIKeysQuery } from '@/data/api-keys/api-keys-query'
-import { getTemporaryAPIKey } from '@/data/api-keys/temp-api-keys-query'
+import { getRealtimeInspectorToken } from '@/platform/realtimeToken'
 import { useProjectPostgrestConfigQuery } from '@/data/config/project-postgrest-config-query'
 import { useSendEventMutation } from '@/data/telemetry/send-event-mutation'
 import { useAsyncCheckPermissions } from '@/hooks/misc/useCheckPermissions'
@@ -75,7 +75,7 @@ export const RealtimeTokensPopover = ({ config, onChangeConfig }: RealtimeTokens
           .catch((err) => toast.error(`Failed to get JWT for role: ${err.message}`))
       } else {
         try {
-          const data = await getTemporaryAPIKey({ projectRef: config.projectRef, expiry: 3600 })
+          const data = await getRealtimeInspectorToken(config.projectRef)
           token = data.api_key
         } catch (error) {
           token = publishableKey?.api_key

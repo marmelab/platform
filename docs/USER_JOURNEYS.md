@@ -79,7 +79,7 @@ Trigger: a user reports a bug, or an alert comes in.
 4. Optionally, inspection in Studio (tables, SQL, RLS).
 
 Channel: Claude Code + MCP, and Studio.
-Status: 🟡. `get_logs` reads Docker logs with no history (Loki is not done), and the app's HTTP requests from Caddy's access log (`service: "requests"`: method, path without query string, status, duration). Studio is ✅ (M0ter). A fix made in Studio or with `execute_sql(write=true)` that changes the schema is recorded by the DDL event trigger: `get_app` shows `schema_drift` and `list_schema_changes` lists the changes, so that the builder turns them into a migration ✅. Alerts are ❌.
+Status: 🟡. `get_logs` reads Docker logs with no history (Loki is not done), and the app's HTTP requests from Caddy's access log (`service: "requests"`: method, path without query string, status, duration). Studio is ✅ (M0ter), Realtime Inspector included (a 10-minute token for the app, minted by the control plane: TECH_DEBT "Accepted trade-offs"). A fix made in Studio or with `execute_sql(write=true)` that changes the schema is recorded by the DDL event trigger: `get_app` shows `schema_drift` and `list_schema_changes` lists the changes, so that the builder turns them into a migration ✅. Alerts are ❌.
 
 ### B5. Managing the app's users
 Trigger: invite, delete or unblock an account, count sign-ups.
@@ -100,13 +100,13 @@ Status: 🟡 (M6). `configure_auth` ✅ (owner or admin, audited, refused on a s
 
 ### B7. Sharing an app
 Trigger: a colleague needs to co-maintain the app.
-1. The owner adds the colleague as a collaborator, through an MCP tool or through the admin UI.
+1. The owner adds the colleague as a collaborator, through an MCP tool or through the admin UI. The colleague is notified by email.
 2. The owner gives the colleague write access to the GitHub repo (outside the platform).
 3. The colleague clones the repo (`.platform.json` is committed) and ships through PRs; CI deploys. Their Claude Code, signed in to the platform through the browser (B1), handles logs, SQL reads, secrets and rollback.
 4. The app shows up in their `whoami` and in their Studio.
 
 Channel: Claude Code + MCP (owner), GitHub, and admin.
-Status: 🟡. The MCP tools (`list_members`, `add_member`, `remove_member`; owner or admin only for changes), the `add-member` / `remove-member` admin CLI and the Members tab of the admin console (M4 phase 1: add, owner / collaborator, remove) exist. The colleague's platform account must already exist (created by an admin).
+Status: 🟡. The MCP tools (`list_members`, `add_member`, `remove_member`; owner or admin only for changes), the `add-member` / `remove-member` admin CLI and the Members tab of the admin console (M4 phase 1: add, owner / collaborator, remove) exist. The colleague's platform account must already exist (created by an admin). With the platform SMTP, the colleague is emailed when added (who added them, the app's name and URL, the role and what it allows, the Studio link, and that Claude Code with the platform plugin now sees the app), with a short notice when their role changes or when they are removed (M6) ✅.
 
 ### B8. Stopping and deleting an app
 Trigger: project over, or abandoned-app flag.

@@ -1,7 +1,6 @@
 import type { OAuthClient } from '@supabase/supabase-js'
 import { useParams } from 'common'
 import { Edit, MoreVertical, Plus, RotateCw, Search, Trash, X } from 'lucide-react'
-import Link from 'next/link'
 import { parseAsBoolean, parseAsString, parseAsStringLiteral, useQueryState } from 'nuqs'
 import { useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
@@ -43,6 +42,7 @@ import { useProjectApiUrl } from '@/data/config/project-endpoint-query'
 import { useOAuthServerAppDeleteMutation } from '@/data/oauth-server-apps/oauth-server-app-delete-mutation'
 import { useOAuthServerAppRegenerateSecretMutation } from '@/data/oauth-server-apps/oauth-server-app-regenerate-secret-mutation'
 import { useOAuthServerAppsQuery } from '@/data/oauth-server-apps/oauth-server-apps-query'
+import { OAUTH_SERVER_UNAVAILABLE } from '@/platform/oauthServer'
 
 const OAUTH_APPS_SORT_VALUES = [
   'name:asc',
@@ -220,13 +220,8 @@ export const OAuthAppsList = () => {
             type="default"
             layout="horizontal"
             className="mb-8"
-            title="OAuth Server is disabled"
-            description="Enable OAuth Server to make your project act as an identity provider for third-party applications."
-            actions={
-              <Button asChild type="default">
-                <Link href={`/project/${projectRef}/auth/oauth-server`}>OAuth Server Settings</Link>
-              </Button>
-            }
+            title={OAUTH_SERVER_UNAVAILABLE.title}
+            description={OAUTH_SERVER_UNAVAILABLE.description}
           />
         )}
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-2 flex-wrap">

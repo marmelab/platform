@@ -24,6 +24,12 @@ test("project-scoped routes follow membership", () => {
   assert.equal(status("GET", "/_next/data/build/project/todo-app/editor.json"), 403);
   assert.equal(status("GET", "/api/v1/projects/todo-app/types/typescript"), 403);
   assert.ok(allowed("POST", "/api/platform/pg-meta/todo-app/query", admin));
+  // Studio's server-side replacements of the temporary key
+  assert.ok(allowed("POST", "/api/platform/storage/demo/buckets/files/objects/placeholder"));
+  assert.ok(allowed("DELETE", "/api/platform/auth/demo/gotrue/auth/v1/admin/custom-providers/custom:acme"));
+  assert.ok(allowed("POST", "/api/platform/auth/demo/realtime-token"));
+  assert.equal(status("GET", "/api/platform/auth/todo-app/gotrue/auth/v1/admin/custom-providers"), 403);
+  assert.equal(status("POST", "/api/platform/auth/todo-app/realtime-token"), 403);
 });
 
 test("refs that could be normalised differently are rejected", () => {

@@ -391,6 +391,17 @@ describe("Studio for app builders", () => {
     assert.equal((await raw("POST", `/api/platform/storage/${B}/upload/resumable`, {
       cookie: alice, "tus-resumable": "1.0.0", "upload-length": "5",
     })).status, 403);
+    // empty folder: placeholder object created by Studio's server (no temporary key in the browser)
+    const folder = await raw("POST", `/api/platform/storage/${A}/buckets/${bucket}/objects/placeholder`, { cookie: alice },
+      { folder: "docs/drafts" });
+    assert.equal(folder.status, 200, folder.body);
+    assert.equal(psql(`select count(*) from storage.objects where bucket_id = '${bucket}' and name = 'docs/drafts/.emptyFolderPlaceholder'`, `app_${dbId(A)}`), "1");
+    assert.equal((await raw("POST", `/api/platform/storage/${A}/buckets/${bucket}/objects/placeholder`, { cookie: alice },
+      { folder: "/abs" })).status, 400);
+    assert.equal((await raw("POST", `/api/platform/storage/${B}/buckets/${bucket}/objects/placeholder`, { cookie: alice },
+      { folder: "x" })).status, 403);
+    // the upstream temporary key (the permanent service key) stays refused
+    assert.equal((await raw("POST", `/api/platform/projects/${A}/api-keys/temporary`, { cookie: alice })).status, 403);
     // the bucket is in A's database only
     assert.equal(psql(`select count(*) from storage.buckets where id = '${bucket}'`, `app_${dbId(A)}`), "1");
     assert.equal(psql(`select count(*) from storage.buckets where id = '${bucket}'`, `app_${dbId(B)}`), "0");
@@ -501,6 +512,77 @@ describe("Studio for app builders", () => {
     } finally {
       await client.close();
     }
+  });
+
+  test("9f. GoTrue admin proxy: custom OAuth providers of the own app, company SSO read-only, no OAuth Server", async () => {
+    const admin = (method: string, path: string, cookie = alice, body?: unknown, ref = A) =>
+      raw(method, `/api/platform/auth/${ref}/gotrue/auth/v1/admin/${path}`, { cookie }, body);
+    const provider = {
+      provider_type: "oauth2", identifier: "custom:e2e", name: "E2E", client_id: "e2e", client_secret: "e2e-secret",
+      authorization_url: "https://example.com/authorize", token_url: "https://example.com/token",
+      userinfo_url: "https://example.com/userinfo", scopes: ["email"],
+    };
+    const created = await admin("POST", "custom-providers", alice, provider);
+    assert.equal(created.status, 201, created.body);
+    const listed = await admin("GET", "custom-providers");
+    assert.equal(listed.status, 200, listed.body);
+    assert.deepEqual(JSON.parse(listed.body).providers.map((p: { identifier: string }) => p.identifier), ["custom:e2e"]);
+    assert.ok(!listed.body.includes("e2e-secret"));
+    const updated = await admin("PUT", "custom-providers/custom:e2e", alice, { name: "E2E bis" });
+    assert.equal(updated.status, 200, updated.body);
+    assert.equal(JSON.parse(updated.body).name, "E2E bis");
+    // another builder's app, and the platform's company SSO provider
+    assert.equal((await admin("GET", "custom-providers", alice, undefined, B)).status, 403);
+    assert.equal((await admin("DELETE", "custom-providers/custom:e2e", bob)).status, 403);
+    for (const [method, path, body] of [
+      ["POST", "custom-providers", { ...provider, identifier: "custom:company" }],
+      ["PUT", "custom-providers/custom:company", { name: "x" }],
+      ["DELETE", "custom-providers/custom:company", undefined],
+    ] as const) {
+      const refused = await admin(method, path, alice, body);
+      assert.equal(refused.status, 403, `${method} ${path}`);
+      assert.match(JSON.parse(refused.body).msg, /managed by the platform/);
+    }
+    // only the OAuth Server and custom provider endpoints are proxied
+    assert.equal((await admin("GET", "users")).status, 404);
+    assert.equal((await admin("POST", "generate_link", alice, { type: "magiclink", email: "x@example.com" })).status, 404);
+    // OAuth Server is off on the apps' GoTrue
+    const clients = await admin("GET", "oauth/clients?page=1&per_page=100");
+    assert.equal(clients.status, 404, clients.body);
+    assert.match(JSON.parse(clients.body).msg, /not available on this platform/);
+    const deleted = await admin("DELETE", "custom-providers/custom:e2e");
+    assert.equal(deleted.status, 204, deleted.body);
+    assert.equal(JSON.parse((await admin("GET", "custom-providers")).body).providers.length, 0);
+  });
+
+  test("9g. Realtime Inspector token: short-lived, for the own app only, audited", async () => {
+    const reply = await raw("POST", `/api/platform/auth/${A}/realtime-token`, { cookie: alice });
+    assert.equal(reply.status, 200, reply.body);
+    const { token, expires_in } = JSON.parse(reply.body);
+    assert.equal(expires_in, 600);
+    const claims = JSON.parse(Buffer.from(token.split(".")[1], "base64url").toString());
+    assert.equal(claims.role, "service_role");
+    assert.equal(claims.ref, A);
+    assert.ok(claims.exp - Math.floor(Date.now() / 1000) <= 600, "exp within 10 minutes");
+    // accepted by the app's Realtime (signed with A's secret), not by B's
+    const broadcast = (ref: string) => fetch(`http://${ref}.localhost:8100/realtime/v1/api/broadcast`, {
+      method: "POST",
+      headers: { apikey: token, authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify({ messages: [{ topic: "e2e", event: "ping", payload: {} }] }),
+    });
+    assert.equal((await broadcast(A)).status, 202);
+    assert.ok([401, 403].includes((await broadcast(B)).status));
+    assert.equal((await raw("POST", `/api/platform/auth/${B}/realtime-token`, { cookie: alice })).status, 403);
+    assert.equal((await raw("POST", `/api/platform/auth/${A}/realtime-token`, { cookie: alice, origin: `http://${A}.localhost:8100` })).status, 403);
+    // the control plane checks the account itself, whatever Studio's server asks
+    const internal = (body: unknown, token = secrets.PLATFORM_STUDIO_CONFIG_TOKEN) =>
+      inNetwork("http://localhost:3001/internal/studio/realtime-token", {
+        method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify(body),
+      });
+    assert.equal(internal({ user: users.bob.email, ref: A }).status, 403);
+    assert.equal(internal({ user: users.alice.email, ref: A }, "wrong").status, 401);
+    assert.equal(psql(`select count(*) from audit_log l join apps a on a.id = l.app_id
+      where a.slug = '${A}' and l.action = 'studio_realtime_token'`, "platform"), "1");
   });
 
   test("10. logout ends the session", async () => {

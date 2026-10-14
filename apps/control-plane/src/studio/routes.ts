@@ -1,7 +1,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { type Context, Hono } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
-import { appsForUser, studio } from "../apps.ts";
+import { appsForUser, studio, UserError } from "../apps.ts";
 import type { User } from "../auth.ts";
 import { config, studioUrl } from "../config.ts";
 import { TooManyAttempts } from "../login-limit.ts";
@@ -13,6 +13,7 @@ import { ConsentError, consentRequest, decideConsent } from "../oauth.ts";
 import { CONSENT_PATH } from "../platform-auth.ts";
 import { consentPage, loginPage, oauthMessagePage, refusedPage, type SsoOption } from "./pages.ts";
 import { crossSiteRefusal, studioAccess } from "./policy.ts";
+import { realtimeInspectorToken } from "./realtime-token.ts";
 
 
 const secure = () => config.publicScheme === "https";
@@ -210,11 +211,27 @@ studioInternalRoutes.get("/studio/verify", async (c) => {
   return c.body(null, 200);
 });
 
-studioInternalRoutes.get("/internal/studio/projects", async (c) => {
+/** Studio's server: bearer PLATFORM_STUDIO_CONFIG_TOKEN. */
+function fromStudioServer(c: Context) {
   const expected = Buffer.from(`Bearer ${config.studio.configToken}`);
   const actual = Buffer.from(c.req.header("authorization") ?? "");
-  if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) {
-    return c.json({ error: "unauthorized" }, 401);
-  }
+  return actual.length === expected.length && timingSafeEqual(actual, expected);
+}
+
+studioInternalRoutes.get("/internal/studio/projects", async (c) => {
+  if (!fromStudioServer(c)) return c.json({ error: "unauthorized" }, 401);
   return c.json(await studio.projects());
+});
+
+/** Realtime Inspector token for {user, ref}: Studio's server has checked the request's signed identity. */
+studioInternalRoutes.post("/internal/studio/realtime-token", async (c) => {
+  if (!fromStudioServer(c)) return c.json({ error: "unauthorized" }, 401);
+  const { user, ref } = await c.req.json<{ user?: unknown; ref?: unknown }>().catch(() => ({ user: null, ref: null }));
+  if (typeof user !== "string" || typeof ref !== "string") return c.json({ error: "user and ref are required" }, 400);
+  try {
+    return c.json(await realtimeInspectorToken(user, ref));
+  } catch (error) {
+    if (error instanceof UserError) return c.json({ error: error.message }, 403);
+    throw error;
+  }
 });
