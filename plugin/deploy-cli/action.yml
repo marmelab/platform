@@ -1,6 +1,6 @@
-# Composite action that runs platform-deploy from this repository (no npm install: the CLI has no runtime
+# Composite action that runs platform-deploy from this directory (no npm install: the CLI has no runtime
 # dependencies and Node >= 22.18 runs its TypeScript directly). Used by the reusable workflow
-# ci/.github/workflows/deploy.yml; see packages/deploy-cli/README.md.
+# .github/workflows/deploy.yml as `uses: $/plugin/deploy-cli`; see packages/deploy-cli/README.md.
 name: platform-deploy
 description: Check or deploy an app repository to the platform (GitHub OIDC)
 inputs:
@@ -23,4 +23,4 @@ runs:
       env:
         PLATFORM_URL: ${{ inputs.platform-url }}
         MODE: ${{ inputs.mode }}
-      run: node "$GITHUB_ACTION_PATH/src/main.ts" "$MODE" --auth oidc
+      run: node "$GITHUB_ACTION_PATH/main.ts" "$MODE" --auth oidc

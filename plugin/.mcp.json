@@ -2,7 +2,7 @@
   "mcpServers": {
     "platform": {
       "type": "http",
-      "url": "${PLATFORM_URL:-http://api.localhost:8100/mcp}",
+      "url": "${user_config.platform_url}",
       "headers": {
         "X-Platform-Token": "${PLATFORM_TOKEN:-}"
       }

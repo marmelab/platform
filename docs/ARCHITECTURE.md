@@ -224,17 +224,16 @@ Each step must be idempotent, with resume on error and a symmetric `delete` oper
 ```
 plugin/
   .claude-plugin/plugin.json
-  .mcp.json                     # url: https://api.<domain>/mcp, headers: Authorization: Bearer ${PLATFORM_TOKEN}
-  deploy-cli -> ../packages/deploy-cli/src   # platform-deploy shipped in the plugin (symlink resolved at install)
+  .mcp.json                     # url: ${user_config.platform_url}, asked when the plugin is enabled; browser sign-in (OAuth), or a PAT in X-Platform-Token
+  deploy-cli/                   # platform-deploy shipped in the plugin, with its composite action (action.yml)
   skills/build/SKILL.md         # target architecture of the apps (Vite + React, supabase-js, migrations with RLS, functions)
   skills/deploy/SKILL.md        # CI setup, then push and run follow-up; direct deployment if allowed
   skills/admin-deploy/SKILL.md  # direct deployment, admins only (§6.3)
-ci/
-  .github/workflows/deploy.yml  # reusable workflow maintained by the admin (§6.2)
-packages/deploy-cli/            # platform-deploy: migrations, functions, build, frontend, smoke test
+.github/workflows/deploy.yml    # reusable workflow maintained by the admin (§6.2), `workflow_call` only: never runs here
+packages/deploy-cli/            # package of platform-deploy (typecheck, tests): src -> ../../plugin/deploy-cli
 ```
 
-The plugin and the reusable workflow are published in the **same internal repo** of the company (the plugin marketplace), whose Actions access is open to the organization's other repos.
+The plugin and the reusable workflow live in the **same internal repo** of the company (the plugin marketplace), whose Actions access is open to the organization's other repos: a copy of this repository pushed by the admin, with no change: each builder enters the instance's URL when the plugin is enabled (INSTALL.md §7). The workflow runs the composite action of its own repository at the running commit (`uses: $/plugin/deploy-cli`), so the copy needs no patching and upgrades are a pull and a push.
 
 ### 6.1 `deploy` skill (builder)
 
@@ -248,9 +247,9 @@ The plugin and the reusable workflow are published in the **same internal repo**
 6. Prior review of the new migrations, and `apply_migrations` in `dry_run`: report the lints, **stop if tables are exposed without RLS**. Add a lint to `acceptedLints` only with the user's explicit consent.
 7. Commit and push (or a PR if the default branch is protected), then `gh run watch`. Show the app URL, the Studio link and the run link. On failure: run logs (`gh run view --log-failed`), `get_logs`, diagnosis.
 
-Path choice: CI if `whoami.ci` exists and the project has (or the user wants) a repo in `ci.github_org`; direct if `direct_deploy` and no repo nor CI, or on explicit request; otherwise, explanation and stop. The migration review (step 6) goes in both cases through `platform-deploy check` with the PAT (`dry_run` stays open to builders). The default branch must be protected for CI to publish: the skill checks it and offers a minimal protection (PR required). The calling workflow is written from `ci/examples/platform.yml` (shipped in the plugin) with the `uses:` from `whoami.ci`.
+Path choice: CI if `whoami.ci` exists and the project has (or the user wants) a repo in `ci.github_org`; direct if `direct_deploy` and no repo nor CI, or on explicit request; otherwise, explanation and stop. The migration review (step 6) goes in both cases through `platform-deploy check` with the PAT (`dry_run` stays open to builders). The default branch must be protected for CI to publish: the skill checks it and offers a minimal protection (PR required). The calling workflow is written from `plugin/skills/deploy/assets/platform.yml` (shipped in the plugin) with the `uses:` from `whoami.ci`.
 
-Distribution: a plugin marketplace internal to the customer (Git repo), installed in one command. The admin provides the token and the developer puts it in `PLATFORM_TOKEN`. The developer also needs the `gh` CLI logged in.
+Distribution: a plugin marketplace internal to the customer (Git repo), installed in one command. The developer signs in through the browser at the first use (USER_JOURNEYS B1); PATs in `PLATFORM_TOKEN` stay for admins and scripts. The developer also needs the `gh` CLI logged in.
 
 Local development stays standard (`supabase start` with the official CLI). Migrations are the contract between local and the platform.
 
@@ -331,8 +330,8 @@ packages/
   sql/                # template_supabase, roles, linter
   deploy-cli/         # platform-deploy, used by CI and by admins
 plugin/               # Claude Code plugin (build, deploy and admin-deploy skills + .mcp.json)
-ci/                   # reusable deployment workflow, published with the plugin
-deploy/               # docker-compose, Caddy bootstrap, install.sh
+deploy/               # docker-compose, Caddy bootstrap, install.sh (--env-file: the values infra/ produces)
+infra/                # provisioning modules per provider (aws/: OpenTofu), all producing the same env file
 examples/todo-app/    # example app: personal todo list (Vite + supabase-js + 1 edge function)
 examples/notes-app/   # example app: notes shared between users
 ```

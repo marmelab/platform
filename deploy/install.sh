@@ -20,16 +20,22 @@
 #     --oidc-issuer <url>          GitHub Enterprise Server: https://<host>/_services/token
 #     --backup-s3-endpoint <url> --backup-s3-bucket <name> --backup-s3-region <region>
 #     --backup-s3-access-key <id> --backup-s3-secret-file <file>
+#     --env-file <file>            KEY=value lines with the deploy/.env keys (what infra/<provider> outputs, INSTALL §2b)
 #     --non-interactive            never prompt (unset optional values stay unset)
 #     --skip-checks                skip the prerequisites check (not recommended)
 #   A value given once is kept in deploy/.env: re-run deploy/install.sh (no option needed) to apply a code update
 #   or a change made by hand in deploy/.env, or with options to change them. deploy/upgrade.sh upgrades a platform.
 #   --local switches an install back to the local mode.
+#   Every value can also come from the environment, under its deploy/.env name: PLATFORM_DOMAIN, ACME_EMAIL, ACME_CA,
+#   ADMIN_EMAIL, SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, SMTP_SENDER_EMAIL, CI_ALLOWED_WORKFLOWS, OIDC_ISSUER,
+#   BACKUP_S3_ENDPOINT, BACKUP_S3_BUCKET, BACKUP_S3_REGION, BACKUP_S3_ACCESS_KEY_ID, BACKUP_S3_SECRET_ACCESS_KEY.
+#   Precedence: option, environment (or --env-file), value kept in deploy/.env, prompt. An empty value in the
+#   environment is ignored: to remove a kept value (an SMTP relay no longer used), delete its line from deploy/.env.
 # Environment: STUDIO_BUILD=1 rebuilds the Studio image, REALTIME_BUILD=1 the patched Realtime image (patches/realtime).
 set -euo pipefail
 cd "$(dirname "$0")"
 
-usage() { sed -n '2,32p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 1; }
+usage() { sed -n '2,/^set -euo/p' "$(basename "$0")" | sed '$d' | sed 's/^# \{0,1\}//' >&2; exit 1; }
 
 SEED="${SEED:-0}"
 MODE=""
@@ -44,6 +50,13 @@ while [ $# -gt 0 ]; do
     --local) MODE=local ;;
     --internal-tls) OPT_TLS_MODE=internal ;;
     --non-interactive) INTERACTIVE=0 ;;
+    --env-file)
+      # sourced, not exported: the values are read below like exported ones, and do not leak into the compose project
+      [ $# -ge 2 ] || usage
+      case "$2" in /*) env_file="$2" ;; *) env_file="$OLDPWD/$2" ;; esac
+      [ -f "$env_file" ] || { echo "--env-file: $2 not found" >&2; exit 1; }
+      . "$env_file"
+      shift ;;
     --skip-checks) SKIP_CHECKS=1 ;;
     --domain|--acme-email|--acme-ca|--admin-email|--smtp-host|--smtp-port|--smtp-user|--smtp-password-file|--smtp-sender|\
     --github-org|--platform-repo|--workflow-ref|--ci-allowed-workflows|--oidc-issuer|--backup-s3-endpoint|\
@@ -215,7 +228,7 @@ if [ "$MODE" = local ]; then
 else
   # ---------------------------------------------------------------------------------------------------------------
   # Production mode
-  DOMAIN="${OPT_DOMAIN:-$(get_value PLATFORM_DOMAIN)}"
+  DOMAIN="${OPT_DOMAIN:-${PLATFORM_DOMAIN:-$(get_value PLATFORM_DOMAIN)}}"
   ask DOMAIN "Platform domain (apps on <app>.<domain>, admin console on admin.<domain>)"
   [ -n "$DOMAIN" ] || die "--domain is required in production mode"
   [[ "$DOMAIN" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$ ]] || die "invalid domain: $DOMAIN"
@@ -236,13 +249,13 @@ else
   set_value CADDY_HTTPS_PUBLISH 443
   TLS="${OPT_TLS_MODE:-$(get_value TLS_MODE)}"
   set_value TLS_MODE "${TLS:-acme}"
-  ACME_EMAIL="${OPT_ACME_EMAIL:-$(get_value ACME_EMAIL)}"
+  ACME_EMAIL="${OPT_ACME_EMAIL:-${ACME_EMAIL:-$(get_value ACME_EMAIL)}}"
   if [ "${TLS:-acme}" = acme ]; then
     ask ACME_EMAIL "Email for Let's Encrypt (expiry and incident notices)"
     [ -n "$ACME_EMAIL" ] || warn "no --acme-email: Let's Encrypt cannot warn you about certificate problems"
   fi
   [ -n "$ACME_EMAIL" ] && set_value ACME_EMAIL "$ACME_EMAIL"
-  [ -n "${OPT_ACME_CA:-}" ] && set_value ACME_CA "${OPT_ACME_CA}"
+  [ -n "${OPT_ACME_CA:-${ACME_CA:-}}" ] && set_value ACME_CA "${OPT_ACME_CA:-${ACME_CA:-}}"
   # Production defaults: publishing through CI only, no test service, no test-only flag (SEC-10)
   set_value DIRECT_DEPLOY admins
   for key in "${LOCAL_KEYS[@]}"; do remove_value "$key"; done
@@ -252,23 +265,25 @@ else
   fi
 
   # SMTP (M6): the company relay, for every app's emails and the platform's own
-  SMTP_HOST="${OPT_SMTP_HOST:-$(get_value SMTP_HOST)}"
+  SMTP_HOST="${OPT_SMTP_HOST:-${SMTP_HOST:-$(get_value SMTP_HOST)}}"
   ask SMTP_HOST "SMTP relay host (empty: no email; sign-ups are then confirmed automatically)"
   if [ -n "$SMTP_HOST" ]; then
     set_value SMTP_HOST "$SMTP_HOST"
-    SMTP_PORT="${OPT_SMTP_PORT:-$(get_value SMTP_PORT)}"
+    SMTP_PORT="${OPT_SMTP_PORT:-${SMTP_PORT:-$(get_value SMTP_PORT)}}"
     ask SMTP_PORT "SMTP port (465: implicit TLS, otherwise STARTTLS)" 587
     set_value SMTP_PORT "${SMTP_PORT:-587}"
-    SMTP_USER="${OPT_SMTP_USER:-$(get_value SMTP_USER)}"
+    SMTP_USER="${OPT_SMTP_USER:-${SMTP_USER:-$(get_value SMTP_USER)}}"
     ask SMTP_USER "SMTP user (empty: no authentication)"
     [ -n "$SMTP_USER" ] && set_value SMTP_USER "$SMTP_USER"
     if [ -n "${OPT_SMTP_PASSWORD_FILE:-}" ]; then
       set_value SMTP_PASSWORD "$(tr -d '\r\n' < "${OPT_SMTP_PASSWORD_FILE}")"
+    elif [ -n "${SMTP_PASSWORD:-}" ]; then
+      set_value SMTP_PASSWORD "$SMTP_PASSWORD"
     elif [ -n "$SMTP_USER" ] && [ -z "$(get_value SMTP_PASSWORD)" ] && [ "$INTERACTIVE" = 1 ]; then
       read -r -s -p "SMTP password: " SMTP_PASSWORD; echo
       set_value SMTP_PASSWORD "$SMTP_PASSWORD"
     fi
-    SMTP_SENDER="${OPT_SMTP_SENDER:-$(get_value SMTP_SENDER_EMAIL)}"
+    SMTP_SENDER="${OPT_SMTP_SENDER:-${SMTP_SENDER_EMAIL:-$(get_value SMTP_SENDER_EMAIL)}}"
     ask SMTP_SENDER "Sender address of the emails" "noreply@$DOMAIN"
     set_value SMTP_SENDER_EMAIL "${SMTP_SENDER:-noreply@$DOMAIN}"
     add_value SMTP_SENDER_NAME Platform
@@ -281,7 +296,7 @@ else
   if [ -z "$CI_ALLOWED" ] && [ -n "${OPT_GITHUB_ORG:-}" ]; then
     CI_ALLOWED="${OPT_GITHUB_ORG}/${OPT_PLATFORM_REPO:-platform}/.github/workflows/deploy.yml@${OPT_WORKFLOW_REF:-refs/heads/main}"
   fi
-  CI_ALLOWED="${CI_ALLOWED:-$(get_value CI_ALLOWED_WORKFLOWS)}"
+  CI_ALLOWED="${CI_ALLOWED:-${CI_ALLOWED_WORKFLOWS:-$(get_value CI_ALLOWED_WORKFLOWS)}}"
   if [ -z "$CI_ALLOWED" ] && [ "$INTERACTIVE" = 1 ]; then
     read -r -p "GitHub organization of the company (empty: set CI_ALLOWED_WORKFLOWS later): " ORG
     if [ -n "$ORG" ]; then
@@ -291,24 +306,26 @@ else
   fi
   if [ -n "$CI_ALLOWED" ]; then set_value CI_ALLOWED_WORKFLOWS "$CI_ALLOWED"
   else warn "CI_ALLOWED_WORKFLOWS is empty: no CI deployment is accepted until you set it (docs/INSTALL.md, GitHub)"; fi
-  [ -n "${OPT_OIDC_ISSUER:-}" ] && set_value OIDC_ISSUER "${OPT_OIDC_ISSUER}"
+  [ -n "${OPT_OIDC_ISSUER:-${OIDC_ISSUER:-}}" ] && set_value OIDC_ISSUER "${OPT_OIDC_ISSUER:-${OIDC_ISSUER:-}}"
 
   # Backups (M7): an S3-compatible bucket, or the backups volume only
-  S3_BUCKET="${OPT_BACKUP_S3_BUCKET:-$(get_value BACKUP_S3_BUCKET)}"
+  S3_BUCKET="${OPT_BACKUP_S3_BUCKET:-${BACKUP_S3_BUCKET:-$(get_value BACKUP_S3_BUCKET)}}"
   ask S3_BUCKET "S3 bucket for the backups (empty: backups stay on this host, copy them elsewhere)"
   if [ -n "$S3_BUCKET" ]; then
     set_value BACKUP_S3_BUCKET "$S3_BUCKET"
-    S3_ENDPOINT="${OPT_BACKUP_S3_ENDPOINT:-$(get_value BACKUP_S3_ENDPOINT)}"
+    S3_ENDPOINT="${OPT_BACKUP_S3_ENDPOINT:-${BACKUP_S3_ENDPOINT:-$(get_value BACKUP_S3_ENDPOINT)}}"
     ask S3_ENDPOINT "S3 endpoint (e.g. https://s3.eu-west-3.amazonaws.com)"
     [ -n "$S3_ENDPOINT" ] && set_value BACKUP_S3_ENDPOINT "$S3_ENDPOINT"
-    S3_REGION="${OPT_BACKUP_S3_REGION:-$(get_value BACKUP_S3_REGION)}"
+    S3_REGION="${OPT_BACKUP_S3_REGION:-${BACKUP_S3_REGION:-$(get_value BACKUP_S3_REGION)}}"
     ask S3_REGION "S3 region" us-east-1
     set_value BACKUP_S3_REGION "${S3_REGION:-us-east-1}"
-    S3_KEY="${OPT_BACKUP_S3_ACCESS_KEY:-$(get_value BACKUP_S3_ACCESS_KEY_ID)}"
+    S3_KEY="${OPT_BACKUP_S3_ACCESS_KEY:-${BACKUP_S3_ACCESS_KEY_ID:-$(get_value BACKUP_S3_ACCESS_KEY_ID)}}"
     ask S3_KEY "S3 access key id"
     [ -n "$S3_KEY" ] && set_value BACKUP_S3_ACCESS_KEY_ID "$S3_KEY"
     if [ -n "${OPT_BACKUP_S3_SECRET_FILE:-}" ]; then
       set_value BACKUP_S3_SECRET_ACCESS_KEY "$(tr -d '\r\n' < "${OPT_BACKUP_S3_SECRET_FILE}")"
+    elif [ -n "${BACKUP_S3_SECRET_ACCESS_KEY:-}" ]; then
+      set_value BACKUP_S3_SECRET_ACCESS_KEY "$BACKUP_S3_SECRET_ACCESS_KEY"
     elif [ -z "$(get_value BACKUP_S3_SECRET_ACCESS_KEY)" ] && [ "$INTERACTIVE" = 1 ]; then
       read -r -s -p "S3 secret access key: " S3_SECRET; echo
       set_value BACKUP_S3_SECRET_ACCESS_KEY "$S3_SECRET"
@@ -317,7 +334,7 @@ else
     warn "no S3 bucket: backups stay on this host's backups volume (copy them elsewhere, docs/INSTALL.md)"
   fi
 
-  ADMIN_EMAIL="${OPT_ADMIN_EMAIL:-}"
+  ADMIN_EMAIL="${OPT_ADMIN_EMAIL:-${ADMIN_EMAIL:-}}"
   if ! grep -q '^PLATFORM_ADMIN_EMAIL=' .env.local 2>/dev/null; then
     ask ADMIN_EMAIL "Email of the first admin"
     [ -n "$ADMIN_EMAIL" ] || die "--admin-email is required for the first admin"

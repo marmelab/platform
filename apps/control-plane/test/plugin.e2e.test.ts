@@ -1,6 +1,6 @@
 // End-to-end test of the plugin's skills against the running "plat" stack, without GitHub and without Claude: the
 // commands the `deploy` skill runs on its direct path, and those of `admin-deploy`, run in order on a copy of
-// examples/todo-app, from a copy of the plugin with its symlinks resolved (what an installed plugin sees).
+// examples/todo-app, from a copy of the plugin (what an installed plugin sees).
 // The CI path of the `deploy` skill needs GitHub (gh repo create, a real Actions run): not covered here.
 // Requires DIRECT_DEPLOY=everyone (local install); skipped otherwise.
 import { after, before, describe, test } from "node:test";
@@ -77,8 +77,8 @@ describe("plugin skills: direct path of deploy, and admin-deploy, on examples/to
     admin = await connect(env.PLATFORM_TOKEN!);
     directDeploy = (await call(admin, "whoami")).direct_deploy_setting === "everyone";
     if (!directDeploy) return;
-    // the installed plugin: a copy with the symlinks (deploy-cli, workflow template) resolved
-    cpSync(fileURLToPath(new URL("plugin/", ROOT)), plugin, { recursive: true, dereference: true });
+    // the installed plugin: a copy of plugin/ (real files only, no symlink to resolve)
+    cpSync(fileURLToPath(new URL("plugin/", ROOT)), plugin, { recursive: true });
     cpSync(fileURLToPath(new URL("examples/todo-app/", ROOT)), repo, {
       recursive: true,
       filter: (source) => !/[/\\](node_modules|dist)$/.test(source),
