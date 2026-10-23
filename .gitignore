@@ -7,3 +7,8 @@ deploy/.env.local
 apps/admin/dist/
 deploy/upgrades/
 deploy/caddy-root.crt
+deploy/infra.env
+infra/**/infra.env
+infra/**/.terraform/
+infra/**/terraform.tfstate*
+infra/**/terraform.tfvars

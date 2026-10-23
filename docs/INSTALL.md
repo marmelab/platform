@@ -48,6 +48,22 @@ elsewhere and `docker load` it as `plat/studio:dev`) and the patched Realtime im
   The API must be reachable by the GitHub Actions runners: from the Internet for GitHub-hosted runners, or use
   self-hosted runners inside the company network.
 
+The VM, the DNS record, the relay and the bucket are provisioned however the company likes: by hand, or with a
+module under [`infra/`](../infra/README.md) (section 2b). Either way the installer takes their values from one env
+file (section 5).
+
+### 2b. Provisioning with OpenTofu (AWS module)
+
+[`infra/aws/`](../infra/aws/README.md) creates everything of this section on AWS: the VM (Ubuntu 24.04 with Docker,
+Elastic IP, 80/443 open, SSM Session Manager), the wildcard record in Route 53, a private versioned S3 bucket with a
+user limited to it, and Amazon SES as the relay (domain identity with DKIM, SMTP credentials). `tofu apply`, then
+`infra/aws/remote-install.sh` runs section 5 on the VM through SSM, without a shell: the env file is handed to the VM
+as an SSM parameter. The VM clones the company's platform repository (section 7) without credentials: the script
+needs it public, or a deploy key placed on the VM first (the module's README). Otherwise, or for another provider,
+`tofu output -raw env_file > infra.env` gives the same file for an install by hand. The SES
+sandbox exit (one request to AWS) and the VM snapshots are not covered; see the module's README. For another cloud, write
+`infra/<provider>/` with the same output, or the env file by hand ([`infra/README.md`](../infra/README.md)).
+
 ## 3. DNS
 
 Use a dedicated domain or subdomain, for example `apps.example.com`, and create one wildcard record pointing to the VM's
@@ -85,8 +101,19 @@ deploy/install.sh --production --domain apps.example.com \
 ```
 
 Without the other options, the installer asks for the SMTP relay, the GitHub organization and the S3 bucket (empty
-answers leave them unset; `--non-interactive` never asks). Everything can be given as options for an unattended
-install:
+answers leave them unset; `--non-interactive` never asks). With a provisioned infrastructure (section 2b), give it the
+env file; the GitHub organization and the emails are the only other values:
+
+```bash
+deploy/install.sh --production --env-file /root/infra.env \
+  --acme-email ops@example.com --admin-email alice.admin@example.com \
+  --github-org example --platform-repo platform --workflow-ref refs/heads/main
+```
+
+The file has `KEY=value` lines with the `deploy/.env` names (`PLATFORM_DOMAIN`, `SMTP_*`, `BACKUP_S3_*`, and if
+you like `ACME_EMAIL`, `ADMIN_EMAIL`, `CI_ALLOWED_WORKFLOWS`); exporting the same variables works too. Precedence:
+option, then environment, then the value already in `deploy/.env`, then the prompt. Everything can also be given as
+options for an unattended install:
 
 ```bash
 deploy/install.sh --production --non-interactive --domain apps.example.com \
@@ -147,12 +174,23 @@ README, "Settings"): a database setting overrides the environment.
 
 Deployments go through the company's GitHub Actions (ARCHITECTURE §5.1 and §6.2). In the organization:
 
-1. **Create the internal platform repository** (for example `example/platform`, internal or private). It is both the
-   Claude Code plugin marketplace and the home of the reusable deploy workflow. Copy into it, from this repository:
-   `plugin/` (resolving its symlinks, `cp -RL`), `.claude-plugin/marketplace.json`, `packages/deploy-cli/`, and
-   `ci/.github/workflows/deploy.yml` as `.github/workflows/deploy.yml` (TECH_DEBT CI-2: the publication is manual for
-   now). Replace the `YOUR-ORG/platform` placeholders, and set the default URL of `plugin/.mcp.json` to
-   `https://api.<domain>/mcp`.
+1. **Create the company's platform repository**, a copy of this whole repository inside the organization (for
+   example `example/platform`, internal or private). Builders install the Claude Code plugin from it, and app
+   repositories call its reusable deploy workflow. Do not fork: a fork of a public repository cannot be made
+   internal. Instead, create the repository empty on GitHub, then push your local clone of this repository to it,
+   keeping the original as the `upstream` remote for upgrades:
+
+   ```bash
+   git remote rename origin upstream
+   git remote add origin git@github.com:example/platform.git
+   git push -u origin main
+   ```
+
+   Nothing needs to be changed in the copy. Builders enter the platform's URL when they enable the plugin
+   (step 7). The reusable workflow (`.github/workflows/deploy.yml`) is `workflow_call` only, so it never runs on
+   the repository itself, and it runs the `platform-deploy` action of its own repository at the running commit
+   (`uses: $/plugin/deploy-cli`), whatever the organization is called. At every platform upgrade:
+   `git pull upstream main && git push`.
 2. **Add the company checks** to the workflow's `company-checks` job (dependency audit, secret scanning, SAST: the
    checks the company already runs). This is what every deployment goes through.
 3. **Open the repository's Actions access** to the organization: Settings > Actions > General > Access, "Accessible
@@ -166,19 +204,22 @@ Deployments go through the company's GitHub Actions (ARCHITECTURE §5.1 and §6.
    organization rulesets to require pull requests and reviews on the default branch of every repository, or let the
    `deploy` skill set a minimal protection per repository.
 7. **Builders** install the plugin: `claude plugin marketplace add <org>/platform`, then
-   `claude plugin install platform@platform-local`, and have the GitHub CLI logged in. At the first use, Claude Code
+   `claude plugin install platform@platform-local`; Claude Code asks for the Platform MCP URL,
+   `https://api.<domain>/mcp` (the welcome email gives it). They also have the GitHub CLI logged in. At the first use, Claude Code
    asks them to sign in (`/mcp`, then Authenticate): the browser opens on the platform's login page, then a consent
    page. Admins who prefer a PAT export `PLATFORM_TOKEN` before starting Claude Code.
 
 GitHub Enterprise Server: install with `--oidc-issuer https://<host>/_services/token`; the control plane must reach
-that host.
+that host. The `$/` action reference is not available there: in the copy, replace `uses: $/plugin/deploy-cli` with
+`uses: <org>/platform/plugin/deploy-cli@<ref>`, the ref of step 4.
 
 ## 8. Email (SMTP)
 
 The installer writes `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_SENDER_EMAIL` into `deploy/.env`.
 Every app's GoTrue sends through it (sender: the app's name and the platform's address; a builder can change the
-address within the same domain), and the platform sends its own emails. Use a sender domain with SPF and DKIM set up
-for the relay. To change it later: `deploy/install.sh --smtp-host ...`, or the `smtp_*` settings with the CLI
+address within the same domain), and the platform sends its own emails. Any relay that accepts every address of the
+sender domain does (company relay, Brevo, Scaleway TEM, Amazon SES as set up by `infra/aws`...); set SPF and DKIM for
+it on that domain. To change it later: `deploy/install.sh --smtp-host ...`, or the `smtp_*` settings with the CLI
 (each running app's GoTrue is then recreated, without downtime). Details: control plane README, "Email".
 
 ## 9. Backups, S3 and the master key

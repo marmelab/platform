@@ -74,7 +74,7 @@ The tools stay listed for builders; the refusal happens at call time, so that Cl
 
 ## CI deployment API (GitHub OIDC)
 
-The same operations as the MCP deployment tools, for GitHub Actions (called by `platform-deploy`, see [`packages/deploy-cli`](../../packages/deploy-cli/README.md), from the reusable workflow `ci/.github/workflows/deploy.yml`), on `http://api.localhost:8100/ci/apps/<slug>/...`, authenticated by a GitHub OIDC token in `Authorization: Bearer` (`permissions: id-token: write`, audience = the platform API URL). No PAT and no long-lived secret in GitHub.
+The same operations as the MCP deployment tools, for GitHub Actions (called by `platform-deploy`, see [`packages/deploy-cli`](../../packages/deploy-cli/README.md), from the reusable workflow `.github/workflows/deploy.yml`), on `http://api.localhost:8100/ci/apps/<slug>/...`, authenticated by a GitHub OIDC token in `Authorization: Bearer` (`permissions: id-token: write`, audience = the platform API URL). No PAT and no long-lived secret in GitHub.
 
 | Request | Mode | Body | Does |
 |---|---|---|---|

@@ -1,6 +1,6 @@
 # platform-deploy
 
-Checks or deploys an app repository (Vite SPA + `supabase/migrations` + `supabase/functions`) to the platform. It is what the reusable GitHub Actions workflow ([`ci/.github/workflows/deploy.yml`](../../ci/.github/workflows/deploy.yml)) runs, and what an admin runs for a direct deployment (ARCHITECTURE §5.1, §6.2, §6.3).
+Checks or deploys an app repository (Vite SPA + `supabase/migrations` + `supabase/functions`) to the platform. It is what the reusable GitHub Actions workflow ([`.github/workflows/deploy.yml`](../../.github/workflows/deploy.yml)) runs, and what an admin runs for a direct deployment (ARCHITECTURE §5.1, §6.2, §6.3).
 
 TypeScript with **no runtime dependency**: Node ≥ 22.18 runs `src/main.ts` directly (type stripping), and it only shells out to `npm`, `tar` and `git`. Nothing to install or build.
 
@@ -10,7 +10,7 @@ node packages/deploy-cli/src/main.ts deploy [--dir <app>] [--reason "<why outsid
 pnpm --filter @platform/deploy-cli start -- deploy --dir ../../examples/todo-app   # same, from the workspace
 ```
 
-`--app <slug>` names the app instead of the `app` of `.platform.json`, which may then be absent (the seed deploys the examples this way). The Claude Code plugin ships this CLI (`plugin/deploy-cli`, a symlink to `src/`) and runs it with the builder's PAT through `plugin/skills/deploy/scripts/platform-deploy`: the `deploy` skill for direct deployments and for `check` before a push, the `admin-deploy` skill with `--reason`.
+`--app <slug>` names the app instead of the `app` of `.platform.json`, which may then be absent (the seed deploys the examples this way). The Claude Code plugin ships this CLI (`plugin/deploy-cli/`, its real home; `src/` here is a symlink to it, for the package's typecheck and tests) and runs it with the builder's PAT through `plugin/skills/deploy/scripts/platform-deploy`: the `deploy` skill for direct deployments and for `check` before a push, the `admin-deploy` skill with `--reason`.
 
 ## Authentication: one code path, two transports
 
@@ -57,14 +57,9 @@ Every step is printed, and a markdown report (steps, blocking / accepted / other
 
 ## In GitHub Actions
 
-[`action.yml`](action.yml) is a composite action that runs `node "$GITHUB_ACTION_PATH/src/main.ts" <mode> --auth oidc`. The reusable workflow uses it as `uses: <org>/<platform repo>/packages/deploy-cli@<ref>`: the runner downloads the platform repository like any action (its Actions access must be open to the organization's repositories), so no checkout token, npm registry or build step is needed. The workflow sets up Node and runs `npm ci` in the app first.
+[`plugin/deploy-cli/action.yml`](../../plugin/deploy-cli/action.yml) is a composite action that runs `node "$GITHUB_ACTION_PATH/main.ts" <mode> --auth oidc`. The reusable workflow (`.github/workflows/deploy.yml`) uses it as `uses: $/plugin/deploy-cli`: the action of the workflow's own repository at the running commit, so the company's copy of this repository needs no patching, and the runner downloads it like any action (the repository's Actions access must be open to the organization's repositories): no checkout token, npm registry or build step. On GitHub Enterprise Server, where `$/` is not available, use `<org>/<platform repo>/plugin/deploy-cli@<ref>` with the ref pinned in `CI_ALLOWED_WORKFLOWS`. The workflow sets up Node and runs `npm ci` in the app first.
 
-Publishing (manual for now): the internal platform repository (the plugin marketplace) must contain `.github/workflows/deploy.yml` (copied from `ci/.github/workflows/deploy.yml`, which lives under `ci/` so that it does not run on this repository) and `packages/deploy-cli/`. Then:
-
-1. replace the `YOUR-ORG/platform` placeholders in the workflow and in the app's caller ([`ci/examples/platform.yml`](../../ci/examples/platform.yml));
-2. set `CI_ALLOWED_WORKFLOWS` on the platform to `<org>/<repo>/.github/workflows/deploy.yml@refs/heads/main` (pin the same ref as the composite action);
-3. set the `PLATFORM_URL` variable at the organization level (the platform API URL, which is also the OIDC audience);
-4. replace the company checks placeholder job with the company's checks.
+Publishing: the company's internal platform repository (the plugin marketplace) is a copy of this repository, pushed by the admin ([INSTALL.md](../../docs/INSTALL.md) §7); the platform pins `CI_ALLOWED_WORKFLOWS=<org>/<repo>/.github/workflows/deploy.yml@refs/heads/<branch>` (or `refs/tags/<tag>`). The app's caller (`plugin/skills/deploy/assets/platform.yml`) keeps its placeholder: the `deploy` skill fills it from `whoami.ci`. Then set the `PLATFORM_URL` variable at the organization level (the platform API URL, which is also the OIDC audience), and replace the company checks placeholder job with the company's checks.
 
 ## Tests
 

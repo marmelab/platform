@@ -1,0 +1,15 @@
+# Copy to terraform.tfvars (gitignored: it names your domain and addresses) and fill in.
+domain    = "apps.example.com"
+zone_name = "example.com" # the Route 53 hosted zone that holds the domain (or the domain's own zone)
+# create_zone = true      # instead of zone_name: the parent's DNS is elsewhere, delegate <domain> with the name_servers output
+region    = "eu-west-3"
+# instance_type = "t3.xlarge"
+# volume_gb     = 100
+# admin_cidrs   = ["203.0.113.0/24"] # SSH from the office; empty: SSM Session Manager only
+# backup_bucket = "example-platform-backups"
+# Install values, so that remote-install.sh needs no option (INSTALL.md §5):
+# acme_email   = "ops@example.com"
+# admin_email  = "alice.admin@example.com"
+# github_org   = "example"        # CI_ALLOWED_WORKFLOWS and the platform repository to clone
+# platform_ref = "main"           # branch or tag installed on the VM (CI_ALLOWED_WORKFLOWS stays on main)
+# platform_repo_url = "git@github.com:example/platform.git"   # private repository: SSH clone with a deploy key on the VM (README)

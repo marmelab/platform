@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # Checks the plugin's skills without the platform: every script a SKILL.md references exists and runs from a copy of
-# the plugin with its symlinks resolved (as the plugin cache does), every MCP tool it names exists, and the helper
-# scripts behave. The direct deployment itself runs against the stack in apps/control-plane/test/plugin.e2e.test.ts.
+# the plugin (as the plugin cache does), every MCP tool it names exists, and the helper scripts behave. The direct deployment itself runs against the stack in apps/control-plane/test/plugin.e2e.test.ts.
 # Usage: plugin/test/scripts.test.sh
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -13,10 +12,12 @@ fail() { echo "FAIL $1" >&2; failures=$((failures + 1)); }
 check() { local name="$1"; shift; if "$@" > "$tmp/out" 2>&1; then pass "$name"; else fail "$name"; cat "$tmp/out" >&2; fi; }
 refuses() { local name="$1" pattern="$2"; shift 2; if "$@" > "$tmp/out" 2>&1; then fail "$name (accepted)"; cat "$tmp/out" >&2; elif grep -qE "$pattern" "$tmp/out"; then pass "$name"; else fail "$name"; cat "$tmp/out" >&2; fi; }
 
-# 1. A copy of the plugin with symlinks resolved (deploy-cli, assets/platform.yml): what an installed plugin sees
+# 1. A copy of the plugin: what an installed plugin sees. Real files only: a git marketplace ships no symlink
 plugin="$tmp/plugin"
-cp -RL "$ROOT/plugin" "$plugin"
-check "deploy-cli is shipped in the plugin" test -f "$plugin/deploy-cli/main.ts"
+cp -R "$ROOT/plugin" "$plugin"
+check "plugin has no symlink" test -z "$(find "$ROOT/plugin" -type l)"
+check "deploy-cli and its action are shipped in the plugin" test -f "$plugin/deploy-cli/main.ts" -a -f "$plugin/deploy-cli/action.yml"
+check "plugin version is the platform version" grep -qF "\"version\": \"$(tr -d '[:space:]' < "$ROOT/VERSION")\"" "$plugin/.claude-plugin/plugin.json"
 check "workflow template is shipped in the plugin" grep -q "YOUR-ORG/platform/.github/workflows/deploy.yml@main" "$plugin/skills/deploy/assets/platform.yml"
 
 # 2. Every ${CLAUDE_PLUGIN_ROOT}/... path of the skills exists, and scripts are executable
@@ -139,6 +140,29 @@ mkdir sub
 refuses "preflight must run from the repository root" "repository root" bash -c "cd sub && '$preflight'"
 cd "$tmp"
 refuses "preflight outside a git checkout" "not a git checkout" "$preflight"
+
+# 8. The reusable workflow runs the action shipped in the plugin, from its own repository
+workflow="$ROOT/.github/workflows/deploy.yml"
+check "reusable workflow uses the plugin's action at the running commit" grep -qx '        uses: $/plugin/deploy-cli' "$workflow"
+check "reusable workflow is workflow_call only" bash -c "grep -qx '  workflow_call:' '$workflow' && ! grep -qE '^  (push|pull_request|schedule|workflow_dispatch):' '$workflow'"
+check "no placeholder outside the caller template and install-workflow.sh" bash -c "test \"\$(cd '$ROOT' && git grep -l YOUR-ORG -- . ':!*.test.sh' | sort | tr '\n' ' ')\" = 'plugin/skills/deploy/assets/platform.yml plugin/skills/deploy/scripts/install-workflow.sh '"
+if command -v actionlint > /dev/null; then check "actionlint accepts the reusable workflow" actionlint "$workflow"; fi
+
+# 9. The platform URL: the MCP server takes the plugin option Claude Code asks for when the plugin is enabled; the
+# scripts read the stored value (settings.json pluginConfigs), PLATFORM_URL wins, the local stack is the default
+check ".mcp.json takes its URL from the plugin option" grep -qF '"url": "${user_config.platform_url}"' "$plugin/.mcp.json"
+check "plugin.json declares the option with the local default" grep -q '"default": "http://api.localhost:8100/mcp"' "$plugin/.claude-plugin/plugin.json"
+if command -v claude > /dev/null; then check "claude plugin validate" claude plugin validate "$ROOT/plugin"; fi
+home="$tmp/home"
+mkdir -p "$home/.claude" "$tmp/proj/.claude"
+printf '{ "pluginConfigs": { "platform@platform-local": { "options": { "platform_url": "%s" } } } }\n' "$fake_url" > "$home/.claude/settings.json"
+printf '{ "pluginConfigs": { "platform@platform-local": { "options": { "platform_url": "http://proj.invalid/mcp" } } } }\n' > "$tmp/proj/.claude/settings.json"
+check "check-connection.sh uses the plugin option" bash -c "cd '$tmp' && env -u PLATFORM_URL -u PLATFORM_TOKEN HOME='$home' '$scripts/check-connection.sh' 2> '$tmp/api' | grep -qx NOT_SIGNED_IN && test \"\$(cat '$tmp/api')\" = 'api: $fake_url'"
+echo 'console.log(process.env.PLATFORM_URL)' > "$plugin/deploy-cli/main.ts"
+check "platform-deploy uses the plugin option" bash -c "cd '$tmp' && test \"\$(env -u PLATFORM_URL HOME='$home' PLATFORM_TOKEN=x '$scripts/platform-deploy' check)\" = '$fake_url'"
+check "the project's settings win over the user's" bash -c "cd '$tmp/proj' && test \"\$(env -u PLATFORM_URL HOME='$home' PLATFORM_TOKEN=x '$scripts/platform-deploy' check)\" = 'http://proj.invalid/mcp'"
+check "exported PLATFORM_URL wins over the option" bash -c "cd '$tmp' && test \"\$(HOME='$home' PLATFORM_URL=http://other.invalid/mcp PLATFORM_TOKEN=x '$scripts/platform-deploy' check)\" = 'http://other.invalid/mcp'"
+check "without any setting, the local stack" bash -c "cd '$tmp' && test \"\$(env -u PLATFORM_URL HOME='$tmp/nohome' PLATFORM_TOKEN=x '$scripts/platform-deploy' check)\" = 'http://api.localhost:8100/mcp'"
 
 echo
 if [ "$failures" -gt 0 ]; then echo "$failures check(s) failed" >&2; exit 1; fi

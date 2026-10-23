@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Usage: install-workflow.sh <uses> <default_branch>  (run from the project root)
 # Writes .github/workflows/platform.yml, the caller of the platform's reusable deploy workflow, from the plugin's
-# template (ci/examples/platform.yml). <uses> is whoami's ci.uses. Never overwrites an existing file.
+# template (plugin/skills/deploy/assets/platform.yml). <uses> is whoami's ci.uses. Never overwrites an existing file.
 set -euo pipefail
 uses="${1:?usage: install-workflow.sh <uses> <default_branch>}"
 branch="${2:?missing default_branch}"

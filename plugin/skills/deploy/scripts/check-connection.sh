@@ -7,7 +7,7 @@
 # --after-auth-error: the platform tools were rejected after working (Claude Code then needs to sign in again): with a
 # browser sign-in, only an admin's revocation or a disabled account does that.
 set -uo pipefail
-url="${PLATFORM_URL:-http://api.localhost:8100/mcp}"
+url="$("$(dirname "${BASH_SOURCE[0]}")/platform-url.sh")"
 origin="$(printf '%s' "$url" | sed -E 's#^(https?://[^/]+).*#\1#')"
 after_auth_error=false
 [ "${1:-}" = "--after-auth-error" ] && after_auth_error=true

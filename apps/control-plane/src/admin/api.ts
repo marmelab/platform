@@ -11,7 +11,7 @@ import { isAbandoned } from "../abandoned.ts";
 import { appAuthView } from "../app-auth.ts";
 import { audit } from "../audit.ts";
 import type { User } from "../auth.ts";
-import { adminUrl, appUrl, config, studioUrl } from "../config.ts";
+import { adminUrl, apiUrl, appUrl, config, studioUrl } from "../config.ts";
 import { randomToken, sha256 } from "../crypto.ts";
 import { many, one, platform, transaction } from "../db.ts";
 import { rollback } from "../deployments.ts";
@@ -148,8 +148,9 @@ async function sendWelcome(email: string, role: "admin" | "developer") {
       "",
       `An account was created for you (${email}) on the company's app platform${role === "admin" ? ", as an admin" : ""}.`,
       "",
-      "- Build and deploy apps with Claude Code: install the platform plugin, then ask Claude to deploy your app. " +
-      "The first time, Claude Code opens your browser: sign in with your platform account and allow the access.",
+      "- Build and deploy apps with Claude Code: install the platform plugin and, when it asks for the Platform MCP URL, " +
+      `enter ${apiUrl()}/mcp. Then ask Claude to deploy your app: the first time, Claude Code opens your browser, ` +
+      "sign in with your platform account and allow the access.",
       `- Inspect your apps' data in Studio: ${studioUrl()} (sign in ${ssoLogin ? `with ${sso.name}${passwordToo ? ", or with this email and the password your admin gives you" : ""}` : "with this email and the password your admin gives you"}).`,
       ...(role === "admin" ? [`- Administration console: ${adminUrl()}`] : []),
       "",
