@@ -3,6 +3,13 @@ packages:
   - apps/studio/vendor/*
   - packages/*
 
+# Also install the Linux native binaries (Next SWC, sharp...): Studio's dev mode (deploy/docker-compose.dev.yml) runs
+# next dev in a Linux container on the host's node_modules, macOS included.
+supportedArchitectures:
+  os: [current, linux]
+  cpu: [current]
+  libc: [current, glibc]
+
 # Everything below comes from the vendored Studio (apps/studio, see apps/studio/UPSTREAM.md)
 catalog:
   '@sentry/nextjs': ^10.26.0

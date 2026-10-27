@@ -122,6 +122,8 @@ pnpm install
 deploy/install.sh
 ```
 
+`make help` lists the main local commands (install, start and stop, logs, admin CLI, image rebuilds, dev mode, tests); `make install` runs the two commands above.
+
 `install.sh` is safe to rerun. It:
 1. generates the stack secrets in `deploy/.env`, points the platform SMTP to the local mail catcher (mailpit, `SMTP_HOST=mailpit`), and adds a mock OpenID Connect provider for the company SSO and a test S3 store (`COMPOSE_PROFILES=mail,sso-test,s3-test`);
 2. builds the Studio image on the first run, and the control plane image (which includes the admin console) (`STUDIO_BUILD=1 deploy/install.sh` forces a rebuild);
@@ -143,6 +145,14 @@ To stop or restart the stack:
 docker compose -p plat -f deploy/docker-compose.yml stop
 docker compose -p plat -f deploy/docker-compose.yml start
 ```
+
+### Dev mode
+
+`make dev` runs Studio and the admin console with hot reload, in the foreground, against the running stack (`make dev-studio` or `make dev-admin` for one of them). Ctrl+C stops them.
+
+- Studio runs `next dev` from the checkout in place of the built image ([deploy/docker-compose.dev.yml](deploy/docker-compose.dev.yml)), on the usual http://studio.localhost:8100. Ctrl+C puts the built Studio back. Each page compiles on its first visit (5 to 15 s), and next dev grows by about 0.5 GB per page compiled, up to its 8 GB cap, where it is killed and restarts on its own ([docs/TECH_DEBT.md](docs/TECH_DEBT.md) STU-11). If the machine restarts during a session, Docker restarts the dev container too: `make dev-studio`, then Ctrl+C, puts the built Studio back.
+- On macOS, run `make deps` once, so that pnpm also installs the Linux native binaries the container uses (`supportedArchitectures` in [pnpm-workspace.yaml](pnpm-workspace.yaml)), and give Docker Desktop 12 GB of memory or more.
+- The admin console runs on Vite, on the URL it prints, with `/api` proxied to the stack ([apps/admin/README.md](apps/admin/README.md)). Only password login works there, not the company SSO.
 
 ## URLs
 
