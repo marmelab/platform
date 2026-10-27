@@ -93,7 +93,7 @@ Every request checks, in this order:
 2. `job_workflow_ref` against `CI_ALLOWED_WORKFLOWS`: this is what guarantees that the company checks ran, since editing the app repo's workflow does not change the reusable workflow it calls;
 3. `repository_id` = the app's `github_repo_id` (`link_repo`), stable across renames. An unknown app and an app linked to another repository give the same 403.
 
-Then the mode: **deploy** when `ref` = `refs/heads/<default_branch>` and `ref_protected` = `true`; **check** otherwise (pull requests, other branches, unprotected default branch), which only allows `GET` and migrations `dry_run`. A **stopped** app refuses every publishing request (409 `{"error": "APP_STOPPED: ...", "code": "APP_STOPPED"}`); `GET` and `dry_run` stay available.
+Then the mode: **deploy** when `ref` = `refs/heads/<default_branch>`; **check** otherwise (pull requests, other branches), which only allows `GET` and migrations `dry_run`. A **stopped** app refuses every publishing request (409 `{"error": "APP_STOPPED: ...", "code": "APP_STOPPED"}`); `GET` and `dry_run` stay available.
 
 Audit: CI actions are recorded with no `user_id` and `actor: github:<login>` in the details; `create_release` records the commit, run URL and actor.
 

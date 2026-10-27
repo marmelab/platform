@@ -211,7 +211,7 @@ Each step must be idempotent, with resume on error and a symmetric `delete` oper
 - Same operations as the MCP deployment tools, exposed as REST on `api.<domain>/ci/apps/<app>/…` (`GET` = `get_app`, `migrations`, `release` and `release/finish`, `deployments` and `deployments/<id>/finalize`; details in `apps/control-plane/README.md`) and called by a **deployment CLI** (`platform-deploy`, TypeScript), itself called by the reusable workflow (§6.2). The admin also uses it for a direct deployment, with their PAT (MCP).
 - Auth: **GitHub OIDC token** (`permissions: id-token: write`, audience = platform URL). The control plane verifies the signature (JWKS of the configured issuer: github.com or GHES) and the claims:
   - `repository_id` = `apps.github_repo_id` (stable even if the repo is renamed);
-  - to publish: `ref` = the app's default branch and `ref_protected = true`;
+  - to publish: `ref` = the app's default branch;
   - `job_workflow_ref` in the list of reusable workflows allowed by the admin (`CI_ALLOWED_WORKFLOWS`: an entry `…/deploy.yml@refs/heads/main` requires that exact ref, an entry without `@` accepts every ref of the file; pin a ref in production). This is what guarantees that the company's checks ran: modifying the workflow in the app's repo is not enough to bypass them.
   - signature verified with `jose` (issuer's JWKS cached), `iss`, `aud` (the API URL by default), `exp`.
 - **Check** mode (pull requests, any ref of the linked repo): `get_app` and `apply_migrations` in `dry_run` only.
@@ -262,7 +262,7 @@ Input `mode: deploy | check`. Steps:
    - `check`: `dry_run` of migrations and lints, build; result in the run summary and as a PR comment;
    - `deploy`: migrations (rejection of any new `ERROR` lint absent from `acceptedLints`), functions (warmed up before the switch), build with the variables from `get_app`, frontend, smoke test.
 
-Required reviews and required checks remain configured by the customer on GitHub (branch protection, rulesets). The platform checks `ref_protected` but not the details of the rules.
+Required reviews, required checks and branch protection remain configured by the customer on GitHub (rulesets); the platform does not check them, and the `deploy` skill does not protect the branch it creates (every push to the default branch deploys).
 
 ### 6.3 Direct deployment by an admin (exception)
 
@@ -279,7 +279,7 @@ The **`DIRECT_DEPLOY`** platform setting (control plane env, changeable on the f
 
 ## 7. Security safeguards
 
-- **CI as the only publication path** (with `DIRECT_DEPLOY=admins`, except for the admin exception): the company's security checks and code review before any deployment, guaranteed by the OIDC claims (`repository_id`, `ref_protected`, `job_workflow_ref`, §5.1). The deployed code is always a commit of the linked repo, which the admin can read on GitHub.
+- **CI as the only publication path** (with `DIRECT_DEPLOY=admins`, except for the admin exception): the company's security checks before any deployment, guaranteed by the OIDC claims (`repository_id`, `ref`, `job_workflow_ref`, §5.1); code review is the organization's rulesets. The deployed code is always a commit of the linked repo, which the admin can read on GitHub.
 - **Linter** after each `apply_migrations`: tables in the `public` schema without RLS, `USING (true)` policies on sensitive tables, exposed `SECURITY DEFINER` functions, etc. It relies on **splinter**, Supabase's open source linter. Result visible in the MCP response, on the PR and in the admin. **Done (M7, part 2)**: 16 rules rewritten from splinter (the splinter repository declares no license: no verbatim copy), lint names kept (`packages/sql/lints.sql`, `lints_storage.sql`); each run is recorded in `lint_runs` (after each validated batch of migrations, with its release; on demand from the admin or the CLI; sweep every 6 h for changes outside releases); "Security linter" tab of the app page, "lint errors" flag and dashboard card. See `apps/control-plane/README.md`, section "Security linter".
 - **Schema changes outside CI: accepted and detected.** Studio's SQL editor and `execute_sql(write=true)` act with the owner role and can modify the schema outside CI. We keep them (data fixes, emergencies), but a DDL event trigger (in `template_supabase`) logs any change made outside a release, and the app is flagged in the admin. Implementation: `ddl_command_end` and `sql_drop` event triggers (`SECURITY DEFINER` functions of `supabase_admin`, unexposed `_platform` schema, app roles without any right on it) that record command, object, session role, `application_name` and transaction id; sessions of `supabase_admin` (provisioning) and GoTrue (`app_<id>_auth_admin`) are ignored. The control plane notes the transaction id of each migration batch it validates: a change whose transaction is not among them is "outside release" (cannot be forged by the app, unlike a session GUC). Applied at every control plane startup to the template and the existing apps. `get_app.schema_drift` counts changes outside releases since the last successful release, `list_schema_changes` details them.
 - The `service_role` key is never returned by `get_app` (only injected into edge functions).

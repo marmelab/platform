@@ -3,8 +3,7 @@
 //
 // Every request: valid signature (issuer JWKS), issuer, audience, expiry; `job_workflow_ref` in the allow-list;
 // `repository_id` equal to the app's linked repository. Then the mode:
-//   deploy: `ref` is the app's default branch and `ref_protected` is true -> may publish (release, migrations,
-//           deployments);
+//   deploy: `ref` is the app's default branch -> may publish (release, migrations, deployments);
 //   check:  any other ref of the linked repository (pull requests) -> get_app and migrations dry_run only.
 import { type Context, Hono } from "hono";
 import { z } from "zod";
@@ -60,7 +59,6 @@ async function ciContext(c: Context): Promise<CiContext> {
   const checkReasons: string[] = [];
   const branchRef = `refs/heads/${app.default_branch}`;
   if (claims.ref !== branchRef) checkReasons.push(`ref ${claims.ref} is not the default branch ${branchRef}`);
-  if (claims.ref_protected !== "true") checkReasons.push(`${claims.ref} is not a protected branch`);
   return {
     app,
     claims,
