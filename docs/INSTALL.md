@@ -259,7 +259,8 @@ it on that domain. To change it later: `deploy/install.sh --smtp-host ...`, or t
 
 ## 11. Upgrading (A8)
 
-From the new version's checkout (`git pull` or `git checkout <tag>` in the platform directory):
+From the new version's checkout (`git pull` or `git checkout <tag>` in the platform directory; on a VM provisioned
+by the AWS module, see [infra/aws/README.md](../infra/aws/README.md#updating-the-platform)):
 
 ```bash
 deploy/upgrade.sh            # asks for confirmation; --yes for unattended runs
