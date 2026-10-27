@@ -28,7 +28,7 @@ the installer at `platform_ref`; a code change goes through `deploy/upgrade.sh` 
 ([Updating the platform](#updating-the-platform)). `platform_ref` only pins what the VM runs: the workflow the
 platform accepts from CI (`CI_ALLOWED_WORKFLOWS`) is always `deploy.yml@refs/heads/main` of the company copy, so a VM
 on a branch or tag still deploys through the workflow and CLI of `main`. The admin password stays on the VM
-(`/opt/platform/deploy/.env.local`): read it in a session ([Session on the VM](#session-on-the-vm)).
+(`/opt/platform/deploy/.env.local`): read it in a session (step 1 of [Updating the platform](#updating-the-platform)).
 
 The clone runs without credentials. An internal or private platform repository (INSTALL.md §7, the usual case) needs
 a read-only deploy key on the VM before the first run: generate one, add its public half to the repository
@@ -51,33 +51,33 @@ once. The platform's records, SES verification and Let's Encrypt all wait for th
 The state file holds the IAM keys and the SMTP password in clear: it is gitignored; keep it on the admin's machine or
 move it to a private bucket (the commented `backend "s3"` block).
 
-## Session on the VM
-
-`tofu output ssm_command` only prints the command; run it with:
-
-```bash
-eval "$(tofu output -raw ssm_command)"   # shell as ssm-user; `sudo -i` for root (/opt/platform belongs to root)
-```
-
-It needs the Session Manager plugin of the AWS CLI and the IAM action `ssm:StartSession` on the instance, which
-`remote-install.sh` does not use (it only needs `ssm:SendCommand` and `ssm:GetCommandInvocation`): a user who can run
-`remote-install.sh` may still be refused a session.
-
 ## Updating the platform
 
-Merge the change to the company copy's `main` (or the branch or tag `platform_ref` names). A change to the plugin or to
-`.github/workflows/deploy.yml` needs nothing more: CI runs the workflow of `main`, and builders get the plugin from
-the marketplace. A change to what runs on the VM is applied in a session, as root, with the upgrade script
-(INSTALL.md §11: app backups, rollback image tags, app recycling without downtime, verification):
+Merge the change to the company copy's `main`. A change to the plugin or to `.github/workflows/deploy.yml` needs
+nothing more: CI runs the workflow of `main`, and builders get the plugin from the marketplace. A change to what runs
+on the VM is applied with the upgrade script (INSTALL.md §11: app backups, rollback image tags, app recycling without
+downtime, verification):
 
-```bash
-cd /opt/platform && git fetch -q origin main && git checkout -q --detach FETCH_HEAD
-deploy/upgrade.sh                                 # asks for confirmation; rollback: deploy/upgrades/<timestamp>/ROLLBACK.md
-```
+1. Open a session on the VM (needs the Session Manager plugin of the AWS CLI and the IAM action `ssm:StartSession`,
+   which `remote-install.sh` does not use):
 
-`./remote-install.sh` from the admin's machine also moves the VM to `platform_ref`, without a session, but re-runs the
-installer instead: none of the upgrade script's backups, rollback tags or verification. Keep it for the first install
-and for a change of the installer's values.
+   ```bash
+   aws login
+   cd infra/aws          # tofu reads its outputs from the state file here
+   aws ssm start-session --region "$(tofu output -raw region)" --target "$(tofu output -raw instance_id)"
+   ```
+
+2. In the session, as root (`/opt/platform` belongs to root), move the checkout to the new version and upgrade:
+
+   ```bash
+   sudo -i
+   cd /opt/platform && git fetch -q origin main && git checkout -q --detach FETCH_HEAD   # or platform_ref
+   deploy/upgrade.sh     # asks for confirmation; rollback: deploy/upgrades/<timestamp>/ROLLBACK.md
+   ```
+
+`./remote-install.sh` also moves the VM to `platform_ref`, without a session, but re-runs the installer: none of the
+upgrade script's backups, rollback tags or verification. Keep it for the first install and for a change of the
+installer's values.
 
 ## SES sandbox
 
