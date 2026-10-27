@@ -36,6 +36,7 @@ import { useLocalStorageQuery } from '@/hooks/misc/useLocalStorage'
 import { useSelectedOrganizationQuery } from '@/hooks/misc/useSelectedOrganization'
 import { useSelectedProjectQuery } from '@/hooks/misc/useSelectedProject'
 import { IS_PLATFORM } from '@/lib/constants'
+import { OpenAppButton } from '@/platform/OpenAppButton'
 
 const LayoutHeaderDivider = ({ className, ...props }: React.HTMLProps<HTMLSpanElement>) => (
   <span className={cn('text-border-stronger pr-2', className)} {...props}>
@@ -219,6 +220,7 @@ export const LayoutHeader = ({
                 >
                   {IS_PLATFORM && gitlessBranching && <MergeRequestButton />}
                   <ConnectButton buttonType={connectButtonType} />
+                  <OpenAppButton />
                 </motion.div>
               )}
             </AnimatePresence>
