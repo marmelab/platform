@@ -230,7 +230,7 @@ Without Claude, the same deployment runs from a terminal with the deploy CLI (it
 PLATFORM_URL=http://api.localhost:8100 PLATFORM_TOKEN=... node packages/deploy-cli/src/main.ts deploy --dir /tmp/todo-app
 ```
 
-In GitHub Actions, the app repo calls the reusable workflow `.github/workflows/deploy.yml` (example caller: `plugin/skills/deploy/assets/platform.yml`), which runs the same CLI with a GitHub OIDC token; see [packages/deploy-cli/README.md](packages/deploy-cli/README.md).
+In GitHub Actions, the app repo calls the reusable workflow `.github/workflows/deploy.yml` (example caller: `plugin/template/ci/.github/workflows/platform.yml`), which runs the same CLI with a GitHub OIDC token; see [packages/deploy-cli/README.md](packages/deploy-cli/README.md).
 
 ## Tests
 

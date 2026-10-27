@@ -18,7 +18,7 @@ cp -R "$ROOT/plugin" "$plugin"
 check "plugin has no symlink" test -z "$(find "$ROOT/plugin" -type l)"
 check "deploy-cli and its action are shipped in the plugin" test -f "$plugin/deploy-cli/main.ts" -a -f "$plugin/deploy-cli/action.yml"
 check "plugin version is the platform version" grep -qF "\"version\": \"$(tr -d '[:space:]' < "$ROOT/VERSION")\"" "$plugin/.claude-plugin/plugin.json"
-check "workflow template is shipped in the plugin" grep -q "YOUR-ORG/platform/.github/workflows/deploy.yml@main" "$plugin/skills/deploy/assets/platform.yml"
+check "workflow template is shipped in the plugin" grep -q "uses: __USES__" "$plugin/template/ci/.github/workflows/platform.yml"
 
 # 2. Every ${CLAUDE_PLUGIN_ROOT}/... path of the skills exists, and scripts are executable
 for skill in "$plugin"/skills/*/SKILL.md; do
@@ -99,21 +99,35 @@ echo 'export const x = Deno.env.get("SHARED_TOKEN");' > "$app/supabase/functions
 check "function-secrets.sh lists the secrets to set" bash -c "cd '$app' && test \"\$('$scripts/function-secrets.sh' | tr '\n' ' ')\" = 'GREETING SHARED_TOKEN STRIPE_KEY '"
 check "function-secrets.sh without functions" bash -c "cd '$tmp' && test -z \"\$('$scripts/function-secrets.sh')\""
 
-# 6. install-workflow.sh
+# 6. init-app.sh: the app template, missing files only
+init="$plugin/template/init-app.sh"
+new="$tmp/new"
+mkdir "$new"
+check "init-app.sh writes a new app" bash -c "cd '$new' && '$init' demo-app"
+check "new app is named after its slug" grep -q '"name": "demo-app"' "$new/package.json"
+check "new app has the target architecture" grep -q "# demo-app" "$new/CLAUDE.md"
+check "no CI file without a workflow reference" test ! -e "$new/.github" -a ! -e "$new/.claude/settings.json"
 uses="acme/platform/.github/workflows/deploy.yml@v1"
-check "install-workflow.sh writes the caller" bash -c "cd '$app' && '$scripts/install-workflow.sh' '$uses' trunk"
-check "caller calls the allowed workflow" grep -qx "    uses: $uses" "$app/.github/workflows/platform.yml"
-check "caller deploys from the default branch" grep -q "branches: \[trunk\]" "$app/.github/workflows/platform.yml"
-check "caller asks for an OIDC token" grep -q "id-token: write" "$app/.github/workflows/platform.yml"
-check "caller has no placeholder left" bash -c "! grep -q YOUR-ORG '$app/.github/workflows/platform.yml'"
+check "init-app.sh adds only the CI files to an app" bash -c "cd '$new' && test \"\$('$init' demo-app '$uses' trunk 2> /dev/null | tr '\n' ' ')\" = '.claude/settings.json .github/workflows/platform.yml '"
+check "caller calls the allowed workflow" grep -qx "    uses: $uses" "$new/.github/workflows/platform.yml"
+check "caller deploys from the default branch" grep -q "branches: \[trunk\]" "$new/.github/workflows/platform.yml"
+check "caller asks for an OIDC token" grep -q "id-token: write" "$new/.github/workflows/platform.yml"
+check "repository settings offer the plugin from the workflow's repository" node -e '
+  const s = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
+  if (s.extraKnownMarketplaces["platform-local"].source.repo !== "acme/platform" || s.enabledPlugins["platform@platform-local"] !== true) process.exit(1);
+' "$new/.claude/settings.json"
+check "no placeholder left" bash -c "! grep -rqE '__[A-Z]+__' '$new'"
+check "every template file is written" test "$(cd "$plugin/template" && find app project ci -type f | wc -l)" -eq "$(find "$new" -type f | wc -l)"
 echo "# custom" > "$tmp/custom.yml"
-cp "$tmp/custom.yml" "$app/.github/workflows/platform.yml"
-check "install-workflow.sh never overwrites" bash -c "cd '$app' && '$scripts/install-workflow.sh' '$uses' main && cmp -s '$tmp/custom.yml' .github/workflows/platform.yml"
-refuses "install-workflow.sh rejects an invalid reference" "invalid workflow reference" bash -c "cd '$tmp' && '$scripts/install-workflow.sh' 'acme/platform@main; rm -rf /' main"
+cp "$tmp/custom.yml" "$new/.github/workflows/platform.yml"
+check "init-app.sh never overwrites" bash -c "cd '$new' && '$init' demo-app '$uses' main && cmp -s '$tmp/custom.yml' .github/workflows/platform.yml"
+check "an existing app only gets the project files" bash -c "cd '$app' && echo '{}' > package.json && test \"\$('$init' demo-app)\" = CLAUDE.md && test ! -e src"
+refuses "init-app.sh rejects an invalid slug" "invalid slug" bash -c "cd '$tmp' && '$init' 'Demo App'"
+refuses "init-app.sh rejects an invalid reference" "invalid workflow reference" bash -c "cd '$tmp' && '$init' demo-app 'acme/platform@main; rm -rf /' main"
 if command -v actionlint > /dev/null; then
-  rm "$app/.github/workflows/platform.yml"
-  (cd "$app" && "$scripts/install-workflow.sh" "$uses" main > /dev/null)
-  check "actionlint accepts the caller" actionlint "$app/.github/workflows/platform.yml"
+  rm "$new/.github/workflows/platform.yml"
+  (cd "$new" && "$init" demo-app "$uses" main > /dev/null 2>&1)
+  check "actionlint accepts the caller" actionlint "$new/.github/workflows/platform.yml"
 fi
 
 # 7. admin-deploy preflight.sh: clean tree, pushed commit, linked repository
@@ -145,7 +159,6 @@ refuses "preflight outside a git checkout" "not a git checkout" "$preflight"
 workflow="$ROOT/.github/workflows/deploy.yml"
 check "reusable workflow uses the plugin's action at the running commit" grep -qx '        uses: $/plugin/deploy-cli' "$workflow"
 check "reusable workflow is workflow_call only" bash -c "grep -qx '  workflow_call:' '$workflow' && ! grep -qE '^  (push|pull_request|schedule|workflow_dispatch):' '$workflow'"
-check "no placeholder outside the caller template and install-workflow.sh" bash -c "test \"\$(cd '$ROOT' && git grep -l YOUR-ORG -- . ':!*.test.sh' | sort | tr '\n' ' ')\" = 'plugin/skills/deploy/assets/platform.yml plugin/skills/deploy/scripts/install-workflow.sh '"
 if command -v actionlint > /dev/null; then check "actionlint accepts the reusable workflow" actionlint "$workflow"; fi
 
 # 9. The platform URL: the MCP server takes the plugin option Claude Code asks for when the plugin is enabled; the

@@ -417,7 +417,7 @@ export async function unsetSetting(key: string) {
 }
 
 /**
- * The `uses:` of an app repository's caller workflow (plugin/skills/deploy/assets/platform.yml), from the first allowed reusable
+ * The `uses:` of an app repository's caller workflow (plugin/template/ci/.github/workflows/platform.yml), from the first allowed reusable
  * workflow: `org/platform/.github/workflows/deploy.yml@refs/heads/main` gives `...deploy.yml@main`. An entry without a
  * ref gives `@main`. Null when the CI API accepts no workflow (CI deployment not set up on this platform).
  */
