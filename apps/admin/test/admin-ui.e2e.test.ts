@@ -141,7 +141,7 @@ describe("admin SPA smoke test", () => {
     await page.getByRole("row").filter({ hasText: APP }).getByText("Admin UI demo").click();
     await page.waitForURL(new RegExp(`#/apps/${APP}/show`));
     const studio = page.getByRole("link", { name: "Open in Studio" });
-    assert.equal(await studio.getAttribute("href"), `http://studio.localhost:8100/project/${APP}`);
+    assert.equal(await studio.getAttribute("href"), `http://localhost:8100/project/${APP}`);
     await page.getByText("gotrue: running").waitFor();
     const load = page.getByTestId("app-load");
     await load.getByRole("img", { name: /Requests per hour/ }).waitFor();

@@ -158,7 +158,7 @@ describe("admin API e2e", () => {
     assert.equal(created.welcome_email_sent, true);
     const welcome = await waitForMail(`to:"${BUILDER}" subject:"Your account"`);
     assert.equal(welcome.From.Address, "noreply@platform.localhost");
-    assert.match(welcome.Text, /studio\.localhost/);
+    assert.match(welcome.Text, /Studio: http:\/\/localhost:8100 /);
     assert.ok(!welcome.Text.includes(PASSWORD), "no password in the email");
     const token = ok(await request("POST", "/tokens", { body: { user_id: created.id, name: "e2e" } }), 201);
     assert.match(token.token, /^plat_/);
@@ -281,7 +281,7 @@ describe("admin API e2e", () => {
     assert.equal(app.name, "Admin e2e");
     assert.equal(app.status, "running");
     assert.equal(app.url, `http://${APP}.localhost:8100`);
-    assert.equal(app.studio_url, `http://studio.localhost:8100/project/${APP}`);
+    assert.equal(app.studio_url, `http://localhost:8100/project/${APP}`);
     assert.deepEqual(app.owners.map((o: any) => o.email), [BUILDER]);
     assert.equal(app.last_release.source, "direct");
     assert.equal(app.last_release.commit_sha, "a".repeat(40));
@@ -347,7 +347,7 @@ describe("admin API e2e", () => {
     const mail = await waitForMail(`to:"${COLLAB}" subject:"You were added"`);
     assert.match(mail.Text, /added you to the app ".*" .* as a collaborator\./);
     assert.ok(mail.Text.includes(ADMIN_EMAIL), "who added them");
-    assert.ok(mail.Text.includes(`http://studio.localhost:8100/project/${APP}`), "Studio link");
+    assert.ok(mail.Text.includes(`http://localhost:8100/project/${APP}`), "Studio link");
     for (const token of [env.PLATFORM_TOKEN!, users.builder!.token]) assert.ok(!mail.Text.includes(token), "no token");
     ok(await request("POST", "/app_members", { body: { app: APP, email: COLLAB, role: "collaborator" } }), 201);
     const promoted = ok(await request("PUT", `/app_members/${added.id}`, { body: { role: "owner" } }));

@@ -18,7 +18,7 @@ const env = Object.fromEntries(
 );
 const MCP_URL = env.PLATFORM_URL ?? "http://api.localhost:8100/mcp";
 const ADMIN = "http://admin.localhost:8100";
-const STUDIO = "http://studio.localhost:8100";
+const STUDIO = "http://localhost:8100";
 const ID = runId();
 const APP = `e2e-${ID}-oa`;
 const OTHER_APP = `e2e-${ID}-ob`;

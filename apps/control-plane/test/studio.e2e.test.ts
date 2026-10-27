@@ -20,7 +20,7 @@ const readEnv = (file: string) =>
 const local = readEnv("deploy/.env.local");
 const secrets = readEnv("deploy/.env");
 
-const STUDIO = "http://studio.localhost:8100";
+const STUDIO = "http://localhost:8100";
 const RUN = Date.now();
 const ID = runId();
 /** alice is a member of A only, bob of B only. */
@@ -66,7 +66,7 @@ function raw(method: string, path: string, headers: Record<string, string> = {},
       method,
       path,
       headers: {
-        host: "studio.localhost:8100",
+        host: "localhost:8100",
         ...(payload && !Buffer.isBuffer(body) ? { "content-type": "application/json" } : {}),
         ...(payload ? { "content-length": Buffer.byteLength(payload) } : {}),
         ...headers,

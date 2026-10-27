@@ -162,7 +162,7 @@ resource "aws_eip_association" "platform" {
   allocation_id = aws_eip.platform.id
 }
 
-# --- DNS: the wildcard covers api., admin., studio. and every app (INSTALL.md §3) ---------------------------------
+# --- DNS: the wildcard covers api., admin. and every app, the apex Studio (INSTALL.md §3) --------------------------
 resource "aws_route53_record" "wildcard" {
   zone_id = local.zone_id
   name    = "*.${var.domain}"

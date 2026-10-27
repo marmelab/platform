@@ -72,11 +72,12 @@ describe("On-demand TLS: ask endpoint", () => {
   });
 
   test("1. platform hosts and existing apps are approved, anything else refused", () => {
-    for (const host of [`api.${DOMAIN}`, `admin.${DOMAIN}`, `studio.${DOMAIN}`, `${P}.${DOMAIN}`, `${P.toUpperCase()}.${DOMAIN}.`]) {
+    for (const host of [`api.${DOMAIN}`, `admin.${DOMAIN}`, DOMAIN, `${P}.${DOMAIN}`, `${P.toUpperCase()}.${DOMAIN}.`]) {
       assert.equal(ask(host), 200, host);
     }
     for (const host of [`unknown-${P}.${DOMAIN}`, `${P}.example.org`, `${P}.${DOMAIN}.example.org`, `x.${P}.${DOMAIN}`,
-      `a.${DOMAIN}`, DOMAIN, `www.${DOMAIN}`, "", "localhost"]) {
+      `a.${DOMAIN}`, `studio.${DOMAIN}`, `www.${DOMAIN}`, "",
+      ...(DOMAIN === "localhost" ? [] : ["localhost"])]) {
       assert.equal(ask(host), 404, JSON.stringify(host));
     }
   });
@@ -92,7 +93,7 @@ describe("On-demand TLS: ask endpoint", () => {
     const app = await admin.callTool({ name: "create_app", arguments: { name: `${P}b`, slug: `${P}b` } }) as { isError?: boolean };
     assert.ok(!app.isError);
     try {
-      for (const host of [`api.${DOMAIN}`, `admin.${DOMAIN}`, `studio.${DOMAIN}`, `${P}b.${DOMAIN}`]) {
+      for (const host of [`api.${DOMAIN}`, `admin.${DOMAIN}`, DOMAIN, `${P}b.${DOMAIN}`]) {
         const result = await handshake(host);
         assert.ok(result.ok, `${host}: ${JSON.stringify(result)}`);
       }
@@ -106,10 +107,10 @@ describe("On-demand TLS: ask endpoint", () => {
       const auth = await fetch(`https://${P}b.${DOMAIN}/auth/v1/health`);
       assert.equal(auth.status, 200);
       // Studio's forward auth: a signed-out page request is redirected to the platform login
-      const studio = await fetch(`https://studio.${DOMAIN}/`, { redirect: "manual", headers: { accept: "text/html" } });
+      const studio = await fetch(`https://${DOMAIN}/`, { redirect: "manual", headers: { accept: "text/html" } });
       assert.equal(studio.status, 302);
       assert.match(studio.headers.get("location") ?? "", /\/_platform\/login/);
-      const login = await fetch(`https://studio.${DOMAIN}/_platform/login`);
+      const login = await fetch(`https://${DOMAIN}/_platform/login`);
       assert.equal(login.status, 200);
       const adminPage = await fetch(`https://admin.${DOMAIN}/`);
       assert.equal(adminPage.status, 200);

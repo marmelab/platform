@@ -17,7 +17,7 @@ const env = Object.fromEntries(
     .map((l) => [l.slice(0, l.indexOf("=")), l.slice(l.indexOf("=") + 1)]),
 );
 const MCP_URL = env.PLATFORM_URL ?? "http://api.localhost:8100/mcp";
-const STUDIO = "http://studio.localhost:8100";
+const STUDIO = "http://localhost:8100";
 const ADMIN = "http://admin.localhost:8100";
 const RUN = runId();
 const DOMAIN = "sso.example.com";

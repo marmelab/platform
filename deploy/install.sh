@@ -9,8 +9,8 @@
 #   deploy/install.sh [--seed]
 #     --seed (or SEED=1)  also seeds the app builders alice and bob and their example apps (apps/control-plane/scripts/seed.ts)
 #
-# Production mode: https://{api,admin,studio,<app>}.<domain>, certificates obtained on demand by Caddy (Let's Encrypt)
-# for the hosts the control plane approves, DIRECT_DEPLOY=admins, no test service or flag.
+# Production mode: https://<domain> (Studio) and https://{api,admin,<app>}.<domain>, certificates obtained on demand
+# by Caddy (Let's Encrypt) for the hosts the control plane approves, DIRECT_DEPLOY=admins, no test service or flag.
 #   deploy/install.sh --production --domain platform.example.com --acme-email ops@example.com --admin-email me@example.com
 #     --internal-tls               Caddy's internal CA instead of Let's Encrypt (tests, private networks)
 #     --acme-ca <url>              ACME directory, e.g. https://acme-staging-v02.api.letsencrypt.org/directory
@@ -139,13 +139,15 @@ check_prerequisites() {
       warn "port $port is already in use on this host: stop that service (the platform's Caddy needs 80 and 443)"; ok=0
     fi
   done
-  # DNS: the platform hosts and a random name under the domain (wildcard record)
+  # DNS: the platform hosts, Studio on the domain itself (apex record) and a random name under the domain (wildcard record)
   local probe="dns-check-$RANDOM$RANDOM.$domain" address host
-  for host in "api.$domain" "admin.$domain" "studio.$domain" "$probe"; do
+  for host in "api.$domain" "admin.$domain" "$domain" "$probe"; do
     address="$(getent ahostsv4 "$host" 2>/dev/null | awk 'NR == 1 {print $1}' || true)"
     if [ -z "$address" ]; then
       if [ "$host" = "$probe" ]; then
         warn "no wildcard DNS record: $host does not resolve. Create *.$domain (A record) pointing to this host's public address, or every app's URL will fail (docs/INSTALL.md, DNS)"
+      elif [ "$host" = "$domain" ]; then
+        warn "$domain does not resolve: create an A record for $domain itself (Studio) pointing to this host (docs/INSTALL.md, DNS)"
       else
         warn "$host does not resolve: create *.$domain (A record) pointing to this host (docs/INSTALL.md, DNS)"
       fi
@@ -223,7 +225,7 @@ if [ "$MODE" = local ]; then
   add_value SSO_TEST_CA_VOLUME plat_idp-ca
   ADMIN_EMAIL="${OPT_ADMIN_EMAIL:-${ADMIN_EMAIL:-admin@example.com}}"
   API_URL="http://api.localhost:8100"
-  STUDIO_URL="http://studio.localhost:8100"
+  STUDIO_URL="http://localhost:8100"
   ADMIN_URL="http://admin.localhost:8100"
 else
   # ---------------------------------------------------------------------------------------------------------------
@@ -242,7 +244,7 @@ else
   set_value PLATFORM_DOMAIN "$DOMAIN"
   set_value PUBLIC_SCHEME https
   set_value PUBLIC_PORT 443
-  set_value STUDIO_PUBLIC_URL "https://studio.$DOMAIN"
+  set_value STUDIO_PUBLIC_URL "https://$DOMAIN"
   # Caddy: HTTPS on 443 and the HTTP -> HTTPS redirect on 80, on every interface
   set_value CADDY_HTTP_PUBLISH 80
   set_value CADDY_HTTP_PORT 80
@@ -340,7 +342,7 @@ else
     [ -n "$ADMIN_EMAIL" ] || die "--admin-email is required for the first admin"
   fi
   API_URL="https://api.$DOMAIN"
-  STUDIO_URL="https://studio.$DOMAIN"
+  STUDIO_URL="https://$DOMAIN"
   ADMIN_URL="https://admin.$DOMAIN"
 fi
 umask 022

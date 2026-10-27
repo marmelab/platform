@@ -579,7 +579,7 @@ describe("control plane M2 e2e", () => {
     assert.equal(mail.Subject, `You were added to the app "Demo"`);
     assert.match(mail.Text, new RegExp(`^${OWNER} added you to the app "Demo" .* as a collaborator\\.`, "m"));
     assert.ok(mail.Text.includes(APP_URL), "app URL");
-    assert.ok(mail.Text.includes(`http://studio.localhost:8100/project/${APP}`), "Studio link");
+    assert.ok(mail.Text.includes(`http://localhost:8100/project/${APP}`), "Studio link");
     for (const token of [ownerToken, collabToken, env.PLATFORM_TOKEN!]) assert.ok(!mail.Text.includes(token), "no token");
     await call(owner, "add_member", { app: APP, email: COLLAB, role: "collaborator" });
     await new Promise((resolve) => setTimeout(resolve, 1500));

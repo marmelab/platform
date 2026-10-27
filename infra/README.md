@@ -1,9 +1,9 @@
 # Provisioning
 
-The platform runs on one Linux VM with Docker (INSTALL.md §2) and needs three outside services: a DNS wildcard, an
-SMTP relay and an S3-compatible bucket for the backups. How they are provisioned is the company's choice: a module
-here per provider, or by hand. The contract with the installer is one env file, read by `deploy/install.sh --env-file`
-(or exported in the environment), with the `deploy/.env` keys:
+The platform runs on one Linux VM with Docker (INSTALL.md §2) and needs three outside services: DNS (a wildcard and
+the domain itself), an SMTP relay and an S3-compatible bucket for the backups. How they are provisioned is the
+company's choice: a module here per provider, or by hand. The contract with the installer is one env file, read by
+`deploy/install.sh --env-file` (or exported in the environment), with the `deploy/.env` keys:
 
 ```
 PLATFORM_DOMAIN=apps.example.com
