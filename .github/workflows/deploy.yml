@@ -1,6 +1,6 @@
 # Reusable deployment workflow of the platform (ARCHITECTURE §6.2), maintained by the platform admin.
 #
-# App repositories call it (see plugin/skills/deploy/assets/platform.yml); they cannot change what it runs. The platform only
+# App repositories call it (see plugin/template/ci/.github/workflows/platform.yml); they cannot change what it runs. The platform only
 # accepts CI tokens whose `job_workflow_ref` is in CI_ALLOWED_WORKFLOWS, so the company checks below cannot be
 # skipped by editing the app repository's workflow.
 #

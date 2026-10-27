@@ -1,7 +1,7 @@
 ---
 name: deploy
 description: Deploy the current Vite + Supabase project to the internal platform (database migrations, edge functions, static frontend), through the app's GitHub Actions CI or, when the platform allows it, directly from this machine. Use when the user asks to deploy, publish, ship or put the app online "on the platform", to set up its CI, or to redeploy after changes.
-allowed-tools: mcp__plugin_platform_platform__*, Bash(git *), Bash(gh *), Bash(npm *), Bash(curl *), Bash(${CLAUDE_PLUGIN_ROOT}/skills/deploy/scripts/*), Bash(PLATFORM_DEPLOY_TOKEN=* ${CLAUDE_PLUGIN_ROOT}/skills/deploy/scripts/platform-deploy *), Read, Glob, Grep, Write, Edit
+allowed-tools: mcp__plugin_platform_platform__*, Bash(git *), Bash(gh *), Bash(npm *), Bash(curl *), Bash(${CLAUDE_PLUGIN_ROOT}/skills/deploy/scripts/*), Bash(${CLAUDE_PLUGIN_ROOT}/template/init-app.sh *), Bash(PLATFORM_DEPLOY_TOKEN=* ${CLAUDE_PLUGIN_ROOT}/skills/deploy/scripts/platform-deploy *), Read, Glob, Grep, Write, Edit
 ---
 
 # Deploy to the platform
@@ -15,7 +15,7 @@ Scripts (call them by absolute path, from the project root):
 
 - `${CLAUDE_PLUGIN_ROOT}/skills/deploy/scripts/platform-deploy check|deploy`: `check` = `get_app`, migrations dry run with the security linter, build (publishes nothing, allowed to every member); `deploy` = release, migrations, functions, build, frontend, smoke test. Prints a step report and a markdown summary.
 - `${CLAUDE_PLUGIN_ROOT}/skills/deploy/scripts/function-secrets.sh`: secrets read by the functions (`Deno.env.get`), platform-provided ones excluded.
-- `${CLAUDE_PLUGIN_ROOT}/skills/deploy/scripts/install-workflow.sh <uses> <default_branch>`: writes `.github/workflows/platform.yml` if missing.
+- `${CLAUDE_PLUGIN_ROOT}/template/init-app.sh <slug> [<uses> <default_branch>]`: adds the missing files of the app template, never overwrites: `CLAUDE.md` (the target architecture); with `<uses>`, `.github/workflows/platform.yml` and `.claude/settings.json` (offers the platform plugin to whoever opens the repository).
 - `${CLAUDE_PLUGIN_ROOT}/skills/deploy/scripts/check-connection.sh [--after-auth-error]`: why the platform cannot be used, in one word (step 0), and the API URL it checked.
 
 **Credentials of `platform-deploy`.** When `whoami` says `credential: "oauth"` (the user signed in through the browser, the usual case), `platform-deploy` has no token of its own: call `create_deploy_token` with the app (valid 15 minutes, this app only), then run the script with the token as an environment prefix, e.g. `PLATFORM_DEPLOY_TOKEN=<token> ${CLAUDE_PLUGIN_ROOT}/skills/deploy/scripts/platform-deploy check`. Get a new one for each command. When `credential` is `"pat"`, run the script without a prefix: it uses `PLATFORM_TOKEN` from the environment.
@@ -46,7 +46,7 @@ Add one line for the admin: "for your admin: <word>, <the `api:` line the script
 
 1. `whoami`: note `role`, `credential`, `direct_deploy`, `ci` (`uses` and `github_org`, or null when CI is not set up on the platform) and `api_url`. If it fails, go to step 0.
 2. Read `.platform.json` (`{ "app": "<slug>", "acceptedLints": [...] }`). If missing: slug from `package.json` `name` (`^[a-z][a-z0-9-]{1,30}[a-z0-9]$`), `create_app` (idempotent), write `.platform.json` with `{ "app": "<slug>" }`. Otherwise `get_app`; stop if access is denied.
-3. Check it is a Vite SPA (`package.json` with a `build` script and `vite`, `index.html`). Migrations must be `supabase/migrations/<numeric version>_<name>.sql`.
+3. Check it is a Vite SPA (`package.json` with a `build` script and `vite`, `index.html`). Migrations must be `supabase/migrations/<numeric version>_<name>.sql`. Then `init-app.sh <slug>`: an app created before the template gets its `CLAUDE.md`, committed with the deployment.
 4. Git: `git status --porcelain`, `git remote -v`. If there is no git repository, `git init -b main` and commit.
 5. Auth (`get_app` `auth`): when `email_confirmation_effective` is true, `signUp` returns no session until the user opens the emailed link; check that the app's sign-up flow says so ("check your email") and that any `emailRedirectTo` / `resetPasswordForEmail` `redirectTo` is under the app URL or in `redirect_urls`. Change the policy (sign-up, confirmation, allowed email domains, redirect URLs, sender, company SSO) with `configure_auth` only when the user asks: owners and admins only, the app's Auth restarts for a few seconds. Company SSO (`sso: {provider: "company"}`, only when the platform admin configured it): the app signs in with `supabase.auth.signInWithOAuth({ provider: "custom:company" })`, and the admin must register the `callback_url` shown in `get_app` at the identity provider; tell the user. A new account is checked against the sign-up switch first (off: "Signups not allowed", only invited or existing users get in), then against the allowed email domains.
 
@@ -72,8 +72,8 @@ Run `function-secrets.sh`, then `list_secrets`. Ask the user for each missing va
 1. Repository: if missing, `gh repo create <ci.github_org>/<slug> --private --source . --push` (commit first). Then `gh api repos/<owner>/<repo> --jq '{id: .id, default_branch: .default_branch, full_name: .full_name}'`.
 2. `link_repo` with `repo` (owner/name), `repository_id` (numeric `id`) and `default_branch` (owner of the app only; otherwise ask the owner).
 3. `PLATFORM_URL` variable: if neither `gh variable list --org <owner>` nor `gh variable list` shows it, `gh variable set PLATFORM_URL --body <api_url>` (repository level).
-4. Workflow: `install-workflow.sh <ci.uses> <default_branch>` (never overwrites an existing file; if one exists, check it calls `ci.uses` with `id-token: write`).
-5. Commit the changes (`.platform.json`, workflow, fixes) on the default branch and `git push`: every push to it deploys. Do not protect the branch: reviews, if the company wants them, come from its GitHub rulesets. Only if the push is refused by such a rule: `git switch -c platform-deploy`, `git push -u origin platform-deploy`, `gh pr create --fill`, `gh pr checks --watch`, then ask the user to get the PR merged (the merge is the push that deploys; `gh pr merge --squash` only if they say so).
+4. Workflow: `init-app.sh <slug> <ci.uses> <default_branch>`. It never overwrites: if the workflow already existed, check it calls `ci.uses` with `id-token: write`; if `.claude/settings.json` already existed, add the template's `extraKnownMarketplaces` and `enabledPlugins` entries to it.
+5. Commit the changes (`.platform.json`, the template files, fixes) on the default branch and `git push`: every push to it deploys. Do not protect the branch: reviews, if the company wants them, come from its GitHub rulesets. Only if the push is refused by such a rule: `git switch -c platform-deploy`, `git push -u origin platform-deploy`, `gh pr create --fill`, `gh pr checks --watch`, then ask the user to get the PR merged (the merge is the push that deploys; `gh pr merge --squash` only if they say so).
 6. `gh run list --workflow platform.yml --branch <default_branch> --limit 1 --json databaseId,url,status`, then `gh run watch <id> --exit-status`.
 7. Report the app URL, the Studio link (`get_app` `studio_url`) and the run URL. On failure: `gh run view <id> --log-failed`, then `get_logs`, and diagnose.
 

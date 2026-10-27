@@ -7,7 +7,7 @@ name: Platform
 
 on:
   push:
-    branches: [main] # the app's default branch
+    branches: [__BRANCH__] # the app's default branch
   pull_request:
 
 permissions:
@@ -16,7 +16,7 @@ permissions:
 
 jobs:
   platform:
-    # replace YOUR-ORG/platform and the ref with the reusable workflow allowed by the platform admin
-    uses: YOUR-ORG/platform/.github/workflows/deploy.yml@main
+    # the reusable workflow allowed by the platform admin (whoami ci.uses)
+    uses: __USES__
     with:
       mode: ${{ github.event_name == 'push' && 'deploy' || 'check' }}
