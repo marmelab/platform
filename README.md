@@ -61,8 +61,8 @@ flowchart TB
     end
 
     user -- "&lt;app&gt;.domain" --> caddy
-    builder -- "studio.domain<br/>(own apps only)" --> caddy
-    admin -- "admin.domain<br/>studio.domain (all apps)" --> caddy
+    builder -- "domain (Studio)<br/>(own apps only)" --> caddy
+    admin -- "admin.domain<br/>domain (Studio, all apps)" --> caddy
     claude -- "MCP<br/>api.domain" --> caddy
     gha -- "deploy (GitHub OIDC)<br/>api.domain" --> caddy
 
@@ -149,7 +149,7 @@ docker compose -p plat -f deploy/docker-compose.yml start
 | URL | What |
 |---|---|
 | http://api.localhost:8100/mcp | MCP server: browser sign-in from Claude Code (OAuth), or a PAT (`Authorization: Bearer <PAT>` or `X-Platform-Token: <PAT>`). Its OAuth token endpoint is announced on http://localhost:8100/oauth/token: Claude Code only sends token requests to HTTPS or loopback hosts |
-| http://studio.localhost:8100 | Studio (platform login) |
+| http://localhost:8100 | Studio (platform login) |
 | http://admin.localhost:8100 | Admin console, admins only (`PLATFORM_ADMIN_EMAIL` / `PLATFORM_ADMIN_PASSWORD` from `deploy/.env.local`); its REST API is under `/api` |
 | http://`<slug>`.localhost:8100 | Each app: frontend at `/`, Supabase APIs at `/auth/v1`, `/rest/v1`, `/storage/v1`, `/realtime/v1`, `/functions/v1` |
 | http://localhost:8025 | Mailpit (local installs): every email sent by the platform and its apps (sign-up confirmations, password resets, invitations, notices) |
@@ -185,7 +185,7 @@ An app builder only sees, in Studio and through MCP, the apps they are a member 
 
 - **todo-app, as an app user**: open http://todo-app.localhost:8100 and sign in as `demo-user@example.com` / `demo-password`. You can add, check and delete todos; the "x of y done" counter comes from the `summary` Edge Function. You can also sign up with a new account (the seed turns email confirmation off for its example apps; on other apps, open the confirmation email in mailpit, http://localhost:8025): it won't see `demo-user`'s todos (RLS), and it won't exist in `notes-app`.
 - **notes-app, sharing between users**: open http://notes-app.localhost:8100 and sign in as `demo-user@example.com` / `demo-password`. "My notes" lists three notes: "Team offsite ideas" (shared read-only with `demo-user-2`), "Release checklist" (shared for editing) and "Personal reminders" (private). Open a note to edit it and to manage its sharing: share it with `demo-user-2@example.com`, change the permission, or remove the share. Sharing with an email that has no account in the app is refused. Then sign out, sign in as `demo-user-2@example.com` / `demo-password` and open "Shared with me": the shared notes are there, with their permission. You can edit "Release checklist" (the editor then shows you as the last editor), but "Team offsite ideas" is read-only, and you can neither delete a shared note nor reshare it. A new account sees no notes at all. `node apps/control-plane/scripts/verify-notes-app.ts` runs the same checks against the API.
-- **As an app builder, in Studio**: sign in to http://studio.localhost:8100 as alice (only `todo-app` is listed) or bob (only `notes-app`). Users are under Auth > Users; the data is under Table editor (`todos` for `todo-app`; `notes`, `note_shares` and `profiles` for `notes-app`). The admin sees every app.
+- **As an app builder, in Studio**: sign in to http://localhost:8100 as alice (only `todo-app` is listed) or bob (only `notes-app`). Users are under Auth > Users; the data is under Table editor (`todos` for `todo-app`; `notes`, `note_shares` and `profiles` for `notes-app`). The admin sees every app.
 - **As an app builder, with Claude Code**: install the plugin without `PLATFORM_TOKEN` (see [Deploy an app with Claude Code](#deploy-an-app-with-claude-code)), sign in as `alice@example.com` / `alice-password` in the browser when Claude Code asks, then ask for instance "show me the logs of todo-app" or "add a priority column to the todos and redeploy". As alice, `notes-app` is reported as not found. The admin console's Tokens screen lists the connection ("Claude Code connection"), and revoking it makes Claude ask to sign in again. With a PAT instead: `export PLATFORM_TOKEN=<SEED_ALICE_TOKEN>` before starting Claude Code.
 
 ### Admin console
@@ -197,7 +197,7 @@ Open http://admin.localhost:8100 and sign in with `PLATFORM_ADMIN_EMAIL` / `PLAT
 The platform can delegate its logins (Studio, admin console) to the company's OpenID Connect provider, and apps can let their users sign in with it. Local installs run a mock provider that signs in any email. To try it:
 
 1. In the admin console, open **SSO** and set: issuer `https://idp.sso.test:8443`, discovery URL `http://idp:8090/.well-known/openid-configuration`, client ID `platform`, client secret `platform-secret`, then check **Enabled** and save.
-2. Open http://studio.localhost:8100, click **Sign in with company SSO**, type `alice@example.com` (seed) or your admin email in the mock provider's form: you are signed in to Studio as alice (an unknown email is refused, unless "Unknown users" creates developers). The admin console's login page has the same button, for admins.
+2. Open http://localhost:8100, click **Sign in with company SSO**, type `alice@example.com` (seed) or your admin email in the mock provider's form: you are signed in to Studio as alice (an unknown email is refused, unless "Unknown users" creates developers). The admin console's login page has the same button, for admins.
 3. For an app's users, ask Claude (or call `configure_auth`) to enable company SSO on the app (`sso: {provider: "company"}`); the app then signs in with `supabase.auth.signInWithOAuth({ provider: "custom:company" })`.
 
 Details, security checks and limits: [apps/control-plane/README.md](apps/control-plane/README.md#company-sso).

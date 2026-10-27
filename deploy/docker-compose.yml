@@ -130,7 +130,7 @@ services:
       PLATFORM_STUDIO_CONFIG_TOKEN: ${PLATFORM_STUDIO_CONFIG_TOKEN}
       STUDIO_META_DEFAULT_PASSWORD: ${STUDIO_META_DEFAULT_PASSWORD}
       # Hosts (config.ts): apps on <slug>.<domain>, api.<domain>, admin.<domain> (admin console and its API, apps/admin
-      # built into this image), studio.<domain>. install.sh --production writes PLATFORM_DOMAIN, PUBLIC_SCHEME=https,
+      # built into this image), <domain> (Studio). install.sh --production writes PLATFORM_DOMAIN, PUBLIC_SCHEME=https,
       # PUBLIC_PORT=443 and TLS_MODE (acme, or internal: Caddy's own CA) into deploy/.env.
       PLATFORM_DOMAIN: ${PLATFORM_DOMAIN:-localhost}
       PUBLIC_SCHEME: ${PUBLIC_SCHEME:-http}
@@ -291,7 +291,7 @@ services:
       platform.service: realtime
 
   # Multi-head Studio (apps/studio, image built on the host by apps/studio/build.sh). No published port:
-  # reachable only through Caddy (studio.<domain>) behind the control plane's forward auth.
+  # reachable only through Caddy (<domain>) behind the control plane's forward auth.
   studio:
     image: plat/studio:dev
     container_name: plat-studio
@@ -306,7 +306,7 @@ services:
       PG_META_CRYPTO_KEY: ${PG_META_CRYPTO_KEY}
       STUDIO_DATA_DIR: /tmp/studio-data
       DEFAULT_ORGANIZATION_NAME: Platform
-      SUPABASE_PUBLIC_URL: ${STUDIO_PUBLIC_URL:-http://studio.localhost:8100}
+      SUPABASE_PUBLIC_URL: ${STUDIO_PUBLIC_URL:-http://localhost:8100}
       # Global "default project" of the fork: unreachable on purpose, every route must use its project
       SUPABASE_URL: http://unreachable.invalid
       SUPABASE_ANON_KEY: none

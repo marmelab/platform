@@ -1,6 +1,6 @@
 # Platform infrastructure on AWS (OpenTofu)
 
-One VM (Ubuntu 24.04, Docker, Elastic IP, 80/443 open, SSM Session Manager), the wildcard DNS record in Route 53, a
+One VM (Ubuntu 24.04, Docker, Elastic IP, 80/443 open, SSM Session Manager), the wildcard and apex DNS records in Route 53, a
 private versioned S3 bucket for the backups with a user limited to it, and Amazon SES as the SMTP relay (domain
 identity with DKIM and a custom MAIL FROM, a user limited to sending from that identity). The module writes nothing on
 the VM beyond its boot script (`user-data.sh`): the platform is installed afterwards by `remote-install.sh` (below)

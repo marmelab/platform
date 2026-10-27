@@ -9,7 +9,7 @@ const optional = (name: string): string | undefined => process.env[name] || unde
 
 /**
  * The platform's domain (install.sh --domain): apps on <slug>.<domain>, the API on api.<domain>, the admin console on
- * admin.<domain>, Studio on studio.<domain>. Each host can still be set on its own (APPS_DOMAIN, API_HOST...).
+ * admin.<domain>, Studio on <domain> itself. Each host can still be set on its own (APPS_DOMAIN, API_HOST...).
  * `localhost` for local installs.
  */
 const domain = env("PLATFORM_DOMAIN", "localhost");
@@ -136,7 +136,7 @@ export const config = {
   /** First boot of a function may download its npm: dependencies. */
   warmTimeoutMs: Number(env("WARM_TIMEOUT_MS", "60000")),
   studio: {
-    host: env("STUDIO_HOST", `studio.${domain}`),
+    host: env("STUDIO_HOST", domain),
     upstream: env("STUDIO_UPSTREAM", "studio:3000"),
     forwardAuth: env("STUDIO_FORWARD_AUTH", "control-plane:3001"),
     /** HMAC key of the X-Platform-* headers trusted by Studio. */

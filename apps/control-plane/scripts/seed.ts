@@ -14,7 +14,7 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 const ROOT = new URL("../../../", import.meta.url);
 const ENV_LOCAL = new URL("deploy/.env.local", ROOT);
 const DEPLOY_CLI = fileURLToPath(new URL("packages/deploy-cli/src/main.ts", ROOT));
-const STUDIO_URL = "http://studio.localhost:8100";
+const STUDIO_URL = "http://localhost:8100";
 const DEMO_USER = { email: "demo-user@example.com", password: "demo-password" };
 const DEMO_USER_2 = { email: "demo-user-2@example.com", password: "demo-password" };
 

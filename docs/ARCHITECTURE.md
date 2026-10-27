@@ -39,7 +39,7 @@ Sizing target: **40 to 60 apps** per install (several apps per employee), on a s
  GitHub Actions ─HTTPS+OIDC─►  │  (deployments, §5.1)                                         │
  Browsers ──HTTPS──────────►   ├── admin.<domain>         → Admin (shadcn-admin-kit, static)    │
                                ├── api.<domain>           → Control plane (REST API + /mcp)     │
-                               ├── studio.<domain>        → Multi-head Studio (1 instance)      │
+                               ├── <domain>               → Multi-head Studio (1 instance)      │
                                └── <app>.<domain>                                               │
                                      /                    → static files /sites/<app>/current
                                      /auth/v1/*           → GoTrue <app>        (1 container/app)
@@ -111,7 +111,7 @@ The official Studio is open source (Apache 2.0) but **single-project in self-hos
 
 - **Projects come from the control plane**: Studio fetches the project configs (external mode: database connection, `public_url`, keys) from the control plane's internal API instead of the fork's `projects.json`, scoped to the identity of the request. Project ref = app slug. Registering an app (`StudioRegistry.register`) only prepares the database grants of its owner role.
 - **postgres-meta is shared**: Studio passes the target connection string in the `x-connection-encrypted` header (key `PG_META_CRYPTO_KEY`).
-- **Access**: Studio on `studio.<domain>` behind the control plane's forward auth (platform login, local account or company SSO). Caddy passes the identity to Studio in signed headers. A builder only sees the apps they are a member of; an admin sees every app.
+- **Access**: Studio on `<domain>` itself behind the control plane's forward auth (platform login, local account or company SSO). Caddy passes the identity to Studio in signed headers. A builder only sees the apps they are a member of; an admin sees every app.
 - **The fork's provisioning modes are not used**: the `stack` mode creates a full Docker Compose stack per project, and the `embedded` mode only creates a database that shares the default stack's GoTrue and PostgREST. The platform's provisioning (§4.2) does that job. The fork's backups, replicas, failover, PocketBase and Authelia features are not used either; backups are in the control plane (§3.9).
 - **No app key in the browser**: the features that would call the app's API from the browser with a "temporary" key (which the fork serves as the permanent `service_role` key) go through Studio's server instead.
 - **What does not work**: the Functions tab (the fork's functions folder is global) and the Logs tab (no Logflare). Builders use the MCP tool `get_logs` and their repository instead.

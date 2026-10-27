@@ -14,7 +14,7 @@ connection pooler, Studio, and one GoTrue and one PostgREST container per app. H
 |---|---|
 | `api.<domain>` | MCP endpoint (`/mcp`) for Claude Code, CI deployment API (`/ci`) for GitHub Actions |
 | `admin.<domain>` | Admin console (admins only) |
-| `studio.<domain>` | Studio (builders see their own apps) |
+| `<domain>` | Studio (builders see their own apps) |
 | `<app>.<domain>` | Each app: frontend, `/auth/v1`, `/rest/v1`, `/storage/v1`, `/realtime/v1`, `/functions/v1` |
 
 Certificates are obtained by Caddy from Let's Encrypt **on demand**, the first time a host is visited, and only for
@@ -38,7 +38,7 @@ elsewhere and `docker load` it as `plat/studio:dev`) and the patched Realtime im
 
 **Other services**
 
-- A **DNS zone** where you can create a wildcard record (section 3).
+- A **DNS zone** where you can create a wildcard record and a record for the domain itself (section 3).
 - An **SMTP relay** (company relay, Brevo, Scaleway TEM, SES...) for the apps' emails (sign-up confirmation, password
   reset, invitations) and the platform's own (welcome, backup failures, abandoned apps). Without SMTP, app sign-ups are
   confirmed without email and invitation links are returned to the builder (TECH_DEBT CP-16).
@@ -55,7 +55,7 @@ file (section 5).
 ### 2b. Provisioning with OpenTofu (AWS module)
 
 [`infra/aws/`](../infra/aws/README.md) creates everything of this section on AWS: the VM (Ubuntu 24.04 with Docker,
-Elastic IP, 80/443 open, SSM Session Manager), the wildcard record in Route 53, a private versioned S3 bucket with a
+Elastic IP, 80/443 open, SSM Session Manager), the wildcard and apex records in Route 53, a private versioned S3 bucket with a
 user limited to it, and Amazon SES as the relay (domain identity with DKIM, SMTP credentials). `tofu apply`, then
 `infra/aws/remote-install.sh` runs section 5 on the VM through SSM, without a shell: the env file is handed to the VM
 as an SSM parameter. The VM clones the company's platform repository (section 7) without credentials: the script
@@ -66,16 +66,17 @@ sandbox exit (one request to AWS) and the VM snapshots are not covered; see the 
 
 ## 3. DNS
 
-Use a dedicated domain or subdomain, for example `apps.example.com`, and create one wildcard record pointing to the VM's
-public address:
+Use a dedicated domain or subdomain, for example `apps.example.com`, and create two records pointing to the VM's
+public address, a wildcard and the domain itself:
 
 ```
 *.apps.example.com.   300   IN   A   203.0.113.10
+apps.example.com.     300   IN   A   203.0.113.10
 ```
 
-It covers `api.`, `admin.`, `studio.` and every app. If the zone has CAA records, allow `letsencrypt.org`. The
-installer checks that `api.<domain>`, `admin.<domain>`, `studio.<domain>` and a random name under the domain resolve,
-and warns otherwise: a missing wildcard record breaks every app URL even when the platform hosts work.
+The wildcard covers `api.`, `admin.` and every app; the second record serves Studio. If the zone has CAA records, allow
+`letsencrypt.org`. The installer checks that `api.<domain>`, `admin.<domain>`, `<domain>` and a random name under the
+domain resolve, and warns otherwise: a missing wildcard record breaks every app URL even when the platform hosts work.
 
 ## 4. Firewall
 
@@ -127,7 +128,7 @@ deploy/install.sh --production --non-interactive --domain apps.example.com \
 
 | Option | Default | |
 |---|---|---|
-| `--domain` | required | apps on `<app>.<domain>`, `api.`, `admin.`, `studio.` |
+| `--domain` | required | apps on `<app>.<domain>`, `api.`, `admin.`, Studio on `<domain>` |
 | `--acme-email` | none | Let's Encrypt account email (expiry notices) |
 | `--acme-ca` | Let's Encrypt production | ACME directory, e.g. Let's Encrypt staging while testing |
 | `--internal-tls` | off | Caddy's own CA instead of ACME: tests, or a private network whose clients trust that CA (`deploy/caddy-root.crt`) |

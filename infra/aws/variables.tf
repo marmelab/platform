@@ -1,6 +1,6 @@
 variable "domain" {
   type        = string
-  description = "Platform domain: apps on <app>.<domain>, API on api.<domain>, Studio on studio.<domain>"
+  description = "Platform domain: apps on <app>.<domain>, API on api.<domain>, Studio on <domain>"
 }
 
 variable "zone_name" {
