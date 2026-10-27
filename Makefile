@@ -44,12 +44,26 @@ build-studio: ## Rebuild and restart the Studio image
 dev: ## Hot reload for Studio and the admin console (Ctrl+C stops both)
 	@$(MAKE) --no-print-directory -j2 dev-studio dev-admin
 
-dev-admin: ## Admin console on Vite, /api proxied to the stack (password login only)
-	pnpm --filter @platform/admin dev --clearScreen false
+# Announces the platform's URL instead of the dev server's own one ($(1) -> $(2)), drops the "Network:" lines. Ignores
+# Ctrl+C, so that the shutdown lines still go through. perl, not awk: mawk holds piped input back in blocks.
+announce = (trap '' INT; exec perl -ne 'BEGIN { $$| = 1 } next if /Network:/; s!\Q$(1)\E!$(2)!; print')
 
-# Ctrl+C stops the dev container; `trap :` keeps the shell alive to put the built Studio back.
-dev-studio: ## Studio on next dev at http://studio.localhost:8100 (Ctrl+C restores the built Studio)
-	trap : INT TERM; $(COMPOSE_DEV) up --no-deps studio; $(COMPOSE) up -d --no-deps studio
+# Points Caddy's admin route (router.ts upsertAdmin) to $(1). The control plane resets it when it starts.
+admin_route = curl -fsS -X PATCH -H 'Content-Type: application/json' -d '"$(1)"' \
+	http://127.0.0.1:2030/id/admin/handle/0/upstreams/0/dial
+
+# Same Ctrl+C handling as dev-studio, below.
+dev-admin: ## Admin console on Vite at http://admin.localhost:8100 (Ctrl+C restores the built console)
+	trap : INT TERM; $(call admin_route,admin-dev:5173) && \
+	$(COMPOSE_DEV) up --no-deps --menu=false admin-dev | $(call announce,http://localhost:5173/,http://admin.localhost:8100/); \
+	$(call admin_route,control-plane:3000); $(COMPOSE_DEV) rm -fs admin-dev
+
+# Ctrl+C stops the dev container; `trap :` keeps the shell alive to put the built Studio back, stopped if the stack is
+# (`make stop` during a session). No compose menu: it puts the terminal in raw mode, and Ctrl+C would then reach compose
+# only, not Vite under `make dev`.
+dev-studio: ## Studio on next dev at http://localhost:8100 (Ctrl+C restores the built Studio)
+	trap : INT TERM; $(COMPOSE_DEV) up --no-deps --menu=false studio | $(call announce,http://localhost:3000,http://localhost:8100); \
+	$(COMPOSE) up --no-deps $$($(COMPOSE) ps -q control-plane | grep -q . && echo -d || echo --no-start) studio
 
 typecheck: ## Typecheck every workspace package
 	pnpm typecheck
