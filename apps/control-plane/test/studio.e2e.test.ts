@@ -230,6 +230,8 @@ describe("Studio for app builders", () => {
     const orgProjects = await raw("GET", "/api/platform/organizations/default-org-slug/projects", { cookie: alice });
     assert.equal(orgProjects.status, 200, orgProjects.body);
     assert.ok(orgProjects.body.includes(A) && !orgProjects.body.includes(B), orgProjects.body);
+    const project = JSON.parse((await raw("GET", `/api/platform/projects/${A}`, { cookie: alice })).body);
+    assert.equal(project.public_url, `http://${A}.localhost:8100`); // the header's "Open app" link
     const profile = JSON.parse((await raw("GET", "/api/platform/profile", { cookie: alice })).body);
     assert.equal(profile.primary_email, users.alice.email);
   });
