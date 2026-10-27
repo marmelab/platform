@@ -222,7 +222,7 @@ Details, security checks and limits: [apps/control-plane/README.md](apps/control
 
 On a local install (`DIRECT_DEPLOY=everyone`, no CI configured), the `deploy` skill takes the direct path: it creates the app, writes and commits `.platform.json`, checks the secrets the functions read, runs `platform-deploy check` (migrations dry run with the security linter, build), then `platform-deploy deploy` (migrations, Edge Functions, frontend, smoke test), and prints the app URL (for instance http://todo-app.localhost:8100) and its Studio link.
 
-> In production (`DIRECT_DEPLOY=admins`, `CI_ALLOWED_WORKFLOWS` set), the same request takes the CI path: the skill creates or links the GitHub repository, installs the workflow that calls the platform's reusable workflow, opens a PR and watches the GitHub Actions run; direct deployment is reserved to admins (`admin-deploy` skill, with a reason). See [docs/USER_JOURNEYS.md](docs/USER_JOURNEYS.md) B2 and A10, and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) §6.
+> In production (`DIRECT_DEPLOY=admins`, `CI_ALLOWED_WORKFLOWS` set), the same request takes the CI path: the skill creates or links the GitHub repository, installs the workflow that calls the platform's reusable workflow, pushes to the default branch and watches the GitHub Actions run; direct deployment is reserved to admins (`admin-deploy` skill, with a reason). See [docs/USER_JOURNEYS.md](docs/USER_JOURNEYS.md) B2 and A10, and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) §6.
 
 Without Claude, the same deployment runs from a terminal with the deploy CLI (it reads `.platform.json`, which the skill writes):
 

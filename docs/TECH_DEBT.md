@@ -155,7 +155,7 @@ reuse a removed ID. Effort is in days when known.
 | ID | Issue | Impact | Suggested fix | Effort | Priority | Source |
 |---|---|---|---|---|---|---|
 | PLG-1 | No evaluation suite for the `build`, `deploy` and `admin-deploy` skills: `plugin/test/scripts.test.sh` checks their scripts and the MCP tools they name, `test/plugin.e2e.test.ts` runs the commands of `deploy` and `admin-deploy`, but Claude's decisions (target architecture, path choice, safety stops) were only checked by hand, with one headless run of each skill. | Regressions on the safety stops (RLS, lints, missing secrets, boot errors, dirty tree) or on the architecture of the apps `build` writes (RLS on every table, invitation links) go unnoticed. | `claude plugin eval` from scenarios 1–6 of the M3 report, plus the path choice (CI available or not, `direct_deploy` true or false), the `admin-deploy` refusals, and a few `build` requests checked by `platform-deploy check` and an invitation flow. | 1 | P2 | — |
-| PLG-4 | The CI path of the `deploy` skill has never run against GitHub: `gh repo create` in the organization, `link_repo` with the numeric repository id, the branch protection call (`gh api -X PUT .../protection` with a PR required and 0 approvals, which a company may want stricter or handled by organization rulesets), `gh variable set PLATFORM_URL`, the PR then `gh run watch`. | The M3bis exit criterion is not met; the skill may stall on permissions (no right to create repositories or protect branches in the organization). | Run it on `examples/todo-app` in a test organization together with CI-1. | 0.5 | P1 | `plugin/skills/deploy/SKILL.md` (M3bis) |
+| PLG-4 | The CI path of the `deploy` skill has never run against GitHub: `gh repo create` in the organization, `link_repo` with the numeric repository id, `gh variable set PLATFORM_URL`, the push then `gh run watch`. First real run on 2026-10-27 (`marmelab/team-tasks`): repo, link, variable and workflow fine; the PR path (since removed) stalled on the merge. | The M3bis exit criterion is not met; the skill may stall on permissions (no right to create repositories in the organization). | Run it on `examples/todo-app` in a test organization together with CI-1. | 0.5 | P1 | `plugin/skills/deploy/SKILL.md` (M3bis) |
 | PLG-5 | `platform-deploy` ships in the plugin as TypeScript (`plugin/deploy-cli/`) and needs Node ≥ 22.18 on the builder's machine (type stripping). | The direct path and `admin-deploy` fail on older Node versions (the wrapper reports it). | Bundle the CLI into one committed `.mjs` file. | 0.25 | P3 | `plugin/skills/deploy/scripts/platform-deploy` |
 | PLG-3 | The MCP tools are deferred, so every run spends a turn on `ToolSearch`; the server has no `instructions` pointing to the skill. | One extra turn per run; harder for Claude to find the workflow without the skill. | Add server `instructions`. | 0.1 | P3 | — |
 
@@ -187,6 +187,10 @@ Deliberate choices, not debt. Revisit only if the context changes.
   network and the control plane keeps the Docker socket. Accepted because the alpha builders are trusted colleagues
   and the functions they deploy are reviewed in the company GitHub organization. Both are to be paid off before any
   install for an external client.
+- **Deployments from an unprotected default branch** (2026-10-27): the control plane no longer requires
+  `ref_protected`, and the `deploy` skill pushes straight to the default branch without protecting it. The company
+  checks of the reusable workflow still run before every deployment; code review before a deployment is the
+  organization's rulesets, not the platform's. Decided for the alpha so that a first deployment needs no merge.
 - **Separate sign-ins for Studio and the admin console**: both use the platform sessions, but each host has its own
   host-only cookie. A cookie for the parent domain would also reach every `<app>.<domain>`, whose functions are
   written by builders.

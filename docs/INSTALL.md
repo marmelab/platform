@@ -200,9 +200,9 @@ Deployments go through the company's GitHub Actions (ARCHITECTURE §5.1 and §6.
    deployment only from that exact `job_workflow_ref`, which proves that the company checks ran.
 5. **Set the organization variable** `PLATFORM_URL=https://api.<domain>` (Settings > Secrets and variables > Actions >
    Variables). It is also the OIDC audience the platform expects.
-6. **Branch protection**: the platform only deploys from an app's protected default branch (`ref_protected`). Use
-   organization rulesets to require pull requests and reviews on the default branch of every repository, or let the
-   `deploy` skill set a minimal protection per repository.
+6. **Branch protection** (optional): every push to an app's default branch deploys, and the `deploy` skill does not
+   protect the branches it creates. To require pull requests and reviews before a deployment, use organization
+   rulesets on the default branch of every repository; the skill then opens a PR instead of pushing.
 7. **Builders** install the plugin: `claude plugin marketplace add <org>/platform`, then
    `claude plugin install platform@platform-local`; Claude Code asks for the Platform MCP URL,
    `https://api.<domain>/mcp` (the welcome email gives it). They also have the GitHub CLI logged in. At the first use, Claude Code

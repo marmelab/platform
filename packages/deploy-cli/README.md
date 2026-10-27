@@ -42,9 +42,9 @@ Direct deployments are allowed by the platform setting `DIRECT_DEPLOY`: `everyon
 3. lists the functions (not deployed);
 4. build: `npm ci` if `node_modules` is missing, then `npm run build` with `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` from `get_app`.
 
-**deploy** (push on the protected default branch, or direct):
+**deploy** (push on the default branch, or direct):
 
-1. `get_app`; in CI, a check-mode token (pull request, other branch, unprotected branch) stops here;
+1. `get_app`; in CI, a check-mode token (pull request, other branch) stops here;
 2. build, **before** anything is published: a broken build publishes nothing;
 3. begin the release (CI: one per run attempt; direct: `begin_release` with commit and reason);
 4. migrations with `accept_lints` = `acceptedLints`: the platform rejects the whole batch on a new unaccepted `ERROR` lint;

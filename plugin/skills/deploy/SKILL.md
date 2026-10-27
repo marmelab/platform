@@ -8,7 +8,7 @@ allowed-tools: mcp__plugin_platform_platform__*, Bash(git *), Bash(gh *), Bash(n
 
 The platform hosts Supabase-style apps (Postgres, Auth, REST, edge functions, static SPA) at `https://<slug>.<domain>`. Two deployment paths, same CLI (`platform-deploy`):
 
-- **CI** (the normal path in production): the app's GitHub repository in the company organization calls the platform's reusable workflow; a push to the protected default branch deploys, pull requests are checked.
+- **CI** (the normal path in production): the app's GitHub repository in the company organization calls the platform's reusable workflow; every push to the default branch deploys, pull requests are checked.
 - **Direct**: `platform-deploy` runs here with the user's credentials. Only when `whoami` says `direct_deploy: true`.
 
 Scripts (call them by absolute path, from the project root):
@@ -71,12 +71,11 @@ Run `function-secrets.sh`, then `list_secrets`. Ask the user for each missing va
 
 1. Repository: if missing, `gh repo create <ci.github_org>/<slug> --private --source . --push` (commit first). Then `gh api repos/<owner>/<repo> --jq '{id: .id, default_branch: .default_branch, full_name: .full_name}'`.
 2. `link_repo` with `repo` (owner/name), `repository_id` (numeric `id`) and `default_branch` (owner of the app only; otherwise ask the owner).
-3. Branch protection: `gh api repos/<owner>/<repo>/branches/<default_branch> --jq .protected`. The platform only deploys from a protected default branch. If false, tell the user and, with their consent, protect it: `gh api -X PUT repos/<owner>/<repo>/branches/<default_branch>/protection -F required_status_checks=null -F enforce_admins=false -F restrictions=null -F 'required_pull_request_reviews[required_approving_review_count]=0'` (or let the organization's rulesets do it).
-4. `PLATFORM_URL` variable: if neither `gh variable list --org <owner>` nor `gh variable list` shows it, `gh variable set PLATFORM_URL --body <api_url>` (repository level).
-5. Workflow: `install-workflow.sh <ci.uses> <default_branch>` (never overwrites an existing file; if one exists, check it calls `ci.uses` with `id-token: write`).
-6. Commit the changes (`.platform.json`, workflow, fixes). If the default branch is protected (expected), push a branch and open a PR: `git switch -c platform-deploy`, `git push -u origin platform-deploy`, `gh pr create --fill`. Watch the PR check: `gh pr checks --watch`. Ask the user to get the PR reviewed and merged (merge it with `gh pr merge --squash` only if they say so). Unprotected branch: push directly; the run will only check.
-7. After the merge: `gh run list --workflow platform.yml --branch <default_branch> --limit 1 --json databaseId,url,status`, then `gh run watch <id> --exit-status`.
-8. Report the app URL, the Studio link (`get_app` `studio_url`) and the run URL. On failure: `gh run view <id> --log-failed`, then `get_logs`, and diagnose.
+3. `PLATFORM_URL` variable: if neither `gh variable list --org <owner>` nor `gh variable list` shows it, `gh variable set PLATFORM_URL --body <api_url>` (repository level).
+4. Workflow: `install-workflow.sh <ci.uses> <default_branch>` (never overwrites an existing file; if one exists, check it calls `ci.uses` with `id-token: write`).
+5. Commit the changes (`.platform.json`, workflow, fixes) on the default branch and `git push`: every push to it deploys. Do not protect the branch: reviews, if the company wants them, come from its GitHub rulesets. Only if the push is refused by such a rule: `git switch -c platform-deploy`, `git push -u origin platform-deploy`, `gh pr create --fill`, `gh pr checks --watch`, then ask the user to get the PR merged (the merge is the push that deploys; `gh pr merge --squash` only if they say so).
+6. `gh run list --workflow platform.yml --branch <default_branch> --limit 1 --json databaseId,url,status`, then `gh run watch <id> --exit-status`.
+7. Report the app URL, the Studio link (`get_app` `studio_url`) and the run URL. On failure: `gh run view <id> --log-failed`, then `get_logs`, and diagnose.
 
 ## 5b. Direct path
 

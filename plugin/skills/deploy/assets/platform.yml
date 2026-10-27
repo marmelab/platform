@@ -2,7 +2,7 @@
 # checks pull requests (company checks, migrations dry run with the security linter, build). Nothing else is
 # needed in the repository: no deploy secret (GitHub OIDC), PLATFORM_URL comes from an organization variable.
 #
-# The platform only deploys from the default branch linked to the app (link_repo) when it is protected.
+# The platform only deploys from the default branch linked to the app (link_repo).
 name: Platform
 
 on:

@@ -40,7 +40,7 @@ export interface AppInfo {
   anon_key: string;
   studio_url?: string;
   github_repo?: string | null;
-  /** CI API only: "deploy" on the protected default branch, "check" otherwise. */
+  /** CI API only: "deploy" on the default branch, "check" otherwise. */
   mode?: "check" | "deploy";
   check_reasons?: string[];
 }

@@ -244,7 +244,8 @@ describe("CI deployment API (GitHub OIDC) and DIRECT_DEPLOY", () => {
     await ciRefused("POST", "/deployments", pr, 403, /check mode/, { kind: "frontend" });
     await ciRefused("POST", "/release", await oidcToken({ ref: "refs/heads/release", ref_protected: "true" }), 403,
       /not the default branch refs\/heads\/main/);
-    await ciRefused("POST", "/release", await oidcToken({ ref_protected: "false" }), 403, /not a protected branch/);
+    const unprotected = await oidcToken({ ref_protected: "false" });
+    assert.equal((await ci("GET", "", unprotected)).body.mode, "deploy", "an unprotected default branch deploys too");
     assert.equal(psql(`select count(*) from releases r join apps a on a.id = r.app_id where a.slug = '${APP}'`), "0");
   });
 
