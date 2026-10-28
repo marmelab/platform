@@ -103,7 +103,7 @@ examples/notes-app/   example app: notes shared between users (Vite + React + su
 ## Prerequisites
 
 - macOS or Linux, with Docker (Docker Desktop: 8 GB of RAM or more allocated)
-- Node 24 and pnpm 10 (`corepack enable`)
+- Node 24 (`nvm use` reads `.nvmrc`) and pnpm 10 (`corepack enable`)
 - Deno 2 (Edge Functions unit tests only)
 - `openssl`, `curl`
 - Claude Code, to deploy apps through the plugin
