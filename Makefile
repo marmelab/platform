@@ -19,8 +19,12 @@ install: deps ## Install or update the local stack (safe to rerun)
 seed: deps ## Install the local stack with sample users and apps
 	deploy/install.sh --seed
 
-start: ## Start the stack
-	$(COMPOSE) start
+# `up --build`, like install.sh: the control plane (routes, Studio's URL...) and the containers follow the checkout, a
+# cache hit when nothing changed. Waits for the control plane's API, which it serves once its routes (Caddy) are in place.
+start: ## Start the stack, rebuilding the control plane if its sources changed
+	$(COMPOSE) up -d --build
+	@for i in $$(seq 60); do curl -fs -o /dev/null -H 'Host: api.localhost:8100' http://127.0.0.1:8100/health && exit 0; \
+	sleep 1; done; echo "the control plane did not answer within 60 s (make logs SERVICE=control-plane)" >&2; exit 1
 
 stop: ## Stop the stack
 	$(COMPOSE) stop
@@ -53,7 +57,7 @@ admin_route = curl -fsS -X PATCH -H 'Content-Type: application/json' -d '"$(1)"'
 	http://127.0.0.1:2030/id/admin/handle/0/upstreams/0/dial
 
 # Same Ctrl+C handling as dev-studio, below.
-dev-admin: ## Admin console on Vite at http://admin.localhost:8100 (Ctrl+C restores the built console)
+dev-admin: start ## Admin console on Vite at http://admin.localhost:8100 (Ctrl+C restores the built console)
 	trap : INT TERM; $(call admin_route,admin-dev:5173) && \
 	$(COMPOSE_DEV) up --no-deps --menu=false admin-dev | $(call announce,http://localhost:5173/,http://admin.localhost:8100/); \
 	$(call admin_route,control-plane:3000); $(COMPOSE_DEV) rm -fs admin-dev
@@ -61,7 +65,7 @@ dev-admin: ## Admin console on Vite at http://admin.localhost:8100 (Ctrl+C resto
 # Ctrl+C stops the dev container; `trap :` keeps the shell alive to put the built Studio back, stopped if the stack is
 # (`make stop` during a session). No compose menu: it puts the terminal in raw mode, and Ctrl+C would then reach compose
 # only, not Vite under `make dev`.
-dev-studio: ## Studio on next dev at http://localhost:8100 (Ctrl+C restores the built Studio)
+dev-studio: start ## Studio on next dev at http://localhost:8100 (Ctrl+C restores the built Studio)
 	trap : INT TERM; $(COMPOSE_DEV) up --no-deps --menu=false studio | $(call announce,http://localhost:3000,http://localhost:8100); \
 	$(COMPOSE) up --no-deps $$($(COMPOSE) ps -q control-plane | grep -q . && echo -d || echo --no-start) studio
 
