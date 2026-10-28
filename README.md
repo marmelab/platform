@@ -148,11 +148,9 @@ docker compose -p plat -f deploy/docker-compose.yml start
 
 ### Dev mode
 
-`make dev` runs Studio and the admin console with hot reload, in the foreground, after starting the stack if needed (`make dev-studio` or `make dev-admin` for one of them). Ctrl+C stops them.
+`make dev-admin` runs the admin console on Vite with hot reload, in the foreground, after starting the stack if needed, on the usual http://admin.localhost:8100: for the session, Caddy's admin route leads to the dev container ([deploy/docker-compose.dev.yml](deploy/docker-compose.dev.yml)), which passes `/api` on to the control plane. Ctrl+C puts the built console back (so does any control plane restart). On macOS, run `make deps` once, so that pnpm also installs the Linux native binaries the container uses (`supportedArchitectures` in [pnpm-workspace.yaml](pnpm-workspace.yaml)).
 
-- Studio runs `next dev` from the checkout in place of the built image ([deploy/docker-compose.dev.yml](deploy/docker-compose.dev.yml)), on the usual http://localhost:8100. Ctrl+C puts the built Studio back. Each page compiles on its first visit (5 to 15 s), and next dev grows by about 0.5 GB per page compiled, up to its 8 GB cap, where it is killed and restarts on its own ([docs/TECH_DEBT.md](docs/TECH_DEBT.md) STU-11). If the machine restarts during a session, Docker restarts the dev container too: `make dev-studio`, then Ctrl+C, puts the built Studio back.
-- On macOS, run `make deps` once, so that pnpm also installs the Linux native binaries the container uses (`supportedArchitectures` in [pnpm-workspace.yaml](pnpm-workspace.yaml)), and give Docker Desktop 12 GB of memory or more.
-- The admin console runs on Vite in place of the built one, on the usual http://admin.localhost:8100: for the session, Caddy's admin route leads to the dev container ([deploy/docker-compose.dev.yml](deploy/docker-compose.dev.yml)), which passes `/api` on to the control plane. Ctrl+C puts the built console back (so does any control plane restart).
+Studio has no dev mode for now: `make build-studio` after a change ([docs/TECH_DEBT.md](docs/TECH_DEBT.md) STU-11).
 
 ## URLs
 

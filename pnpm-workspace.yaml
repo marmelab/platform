@@ -3,8 +3,8 @@ packages:
   - apps/studio/vendor/*
   - packages/*
 
-# Also install the Linux native binaries (Next SWC, sharp...): Studio's dev mode (deploy/docker-compose.dev.yml) runs
-# next dev in a Linux container on the host's node_modules, macOS included.
+# Also install the Linux native binaries (rolldown, lightningcss...): the admin console's dev mode
+# (deploy/docker-compose.dev.yml) runs Vite in a Linux container on the host's node_modules, macOS included.
 supportedArchitectures:
   os: [current, linux]
   cpu: [current]

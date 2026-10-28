@@ -1,25 +1,8 @@
-# Dev mode (make dev-studio): Studio runs `next dev` from the checkout, with hot reload, in place of the built image.
-# Same service name, so Caddy's route (studio:3000) and the internal host names stay unchanged. It reuses the host's
+# Dev mode (make dev-admin): the admin console on Vite, from the checkout, with hot reload. Caddy's admin route
+# (admin.localhost:8100) leads here during the session; /api goes on to the control plane. It reuses the host's
 # node_modules, whose Linux native binaries pnpm also installs on macOS (supportedArchitectures, pnpm-workspace.yaml).
+# No Studio dev mode until Next 16.3 (docs/TECH_DEBT.md STU-11).
 services:
-  studio:
-    image: node:22-slim
-    user: ${DEV_USER:-1000:1000}
-    working_dir: /repo/apps/studio
-    # the .bin/next shim hard-codes host paths
-    command: ["node", "node_modules/next/dist/bin/next", "dev", "-p", "3000", "-H", "0.0.0.0"]
-    # merged with the base environment; same flags as apps/studio/build.sh
-    environment:
-      NEXT_TELEMETRY_DISABLED: "1"
-      NEXT_PUBLIC_ENABLE_LOGS: "false"
-      NEXT_PUBLIC_DISABLED_FEATURES: organizations:create
-    volumes:
-      - ..:/repo
-    # next dev grows by ~0.5 GB per page compiled: killed here, then restarted (docs/TECH_DEBT.md STU-11)
-    mem_limit: 8g
-
-  # Dev mode (make dev-admin): the admin console on Vite. Caddy's admin route (admin.localhost:8100) leads here during
-  # the session; /api goes on to the control plane.
   admin-dev:
     image: node:22-slim
     container_name: plat-admin-dev
