@@ -27,7 +27,8 @@ test("an app name cannot inject HTML, Go template actions or headers", () => {
   assert.ok(!body.includes("<img"));
   assert.ok(!body.includes("{{ .Token }}"));
   assert.ok(body.includes("&#60;img src=x&#62;&#123;&#123; .Token &#125;&#125;"));
-  const subject = appMailSubject("invite", name);
-  assert.ok(!/[\r\n{}]/.test(subject), subject);
-  assert.equal(subject, "You're invited to <img src=x> .Token Bcc: x@evil.test");
+  // Go renders {{"{"}} as "{": the subject reads "You're invited to ‹img src=x›{{ .Token }} Bcc: x@evil.test"
+  assert.equal(appMailSubject("invite", name), `You're invited to ‹img src=x›{{"{"}}{{"{"}} .Token }} Bcc: x@evil.test`);
+  // an unclosed tag would make GoTrue's html/template fail every email of the app
+  assert.equal(appMailSubject("invite", "Ops <beta"), "You're invited to Ops ‹beta");
 });

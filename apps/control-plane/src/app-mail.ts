@@ -48,9 +48,15 @@ const MAILS: Record<AppMailType, { subject: string; intro: (app: string) => stri
 /** HTML-escaped, braces included: GoTrue parses the result as a Go template. */
 const escape = (value: string) => value.replace(/[&<>"'{}]/g, (c) => `&#${c.charCodeAt(0)};`);
 
-/** GOTRUE_MAILER_SUBJECTS_*: one line (a header), no braces (a Go template too). */
+/**
+ * GoTrue parses the subject as an html/template and sends its text as is: `{` as a Go string literal; angle brackets
+ * cannot be escaped (it would print `&lt;`) and an unclosed tag fails every email, so lookalikes.
+ */
+const SUBJECT_ESCAPES: Record<string, string> = { "{": `{{"{"}}`, "<": "‹", ">": "›" };
+
+/** GOTRUE_MAILER_SUBJECTS_*: one line (a header). */
 export const appMailSubject = (type: AppMailType, appName: string) =>
-  `${MAILS[type].subject} ${appName.replace(/[\s{}]+/g, " ").trim()}`;
+  `${MAILS[type].subject} ${appName.replace(/\s+/g, " ").trim().replace(/[{<>]/g, (c) => SUBJECT_ESCAPES[c]!)}`;
 
 /** The body GoTrue fetches. The action link is the first link (test/mailpit.ts mailLink relies on it). */
 export function appMailTemplate(type: AppMailType, app: AppMailApp) {
@@ -61,7 +67,7 @@ export function appMailTemplate(type: AppMailType, app: AppMailApp) {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${escape(appMailSubject(type, app.name))}</title>
+<title>${mail.subject} ${name}</title>
 </head>
 <body style="margin:0;padding:24px;background:#f4f4f5;font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.5;color:#18181b">
 <div style="max-width:560px;margin:0 auto;padding:24px 32px;background:#ffffff;border-radius:8px">
