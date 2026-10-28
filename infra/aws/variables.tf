@@ -50,6 +50,12 @@ variable "backup_bucket" {
   description = "S3 bucket name for the backups (bucket names are global). Empty: <name>-backups-<account id>"
 }
 
+variable "dmarc_email" {
+  type        = string
+  default     = ""
+  description = "Mailbox for the DMARC aggregate reports (rua). Empty: the DMARC record is published without reports"
+}
+
 # Install values (optional): with them, the env file is complete and remote-install.sh needs no option.
 variable "acme_email" {
   type        = string

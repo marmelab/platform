@@ -2,7 +2,7 @@
 
 One VM (Ubuntu 24.04, Docker, Elastic IP, 80/443 open, SSM Session Manager), the wildcard and apex DNS records in Route 53, a
 private versioned S3 bucket for the backups with a user limited to it, and Amazon SES as the SMTP relay (domain
-identity with DKIM and a custom MAIL FROM, a user limited to sending from that identity). The module writes nothing on
+identity with DKIM, a custom MAIL FROM and DMARC, a user limited to sending from that identity). The module writes nothing on
 the VM beyond its boot script (`user-data.sh`): the platform is installed afterwards by `remote-install.sh` (below)
 or by hand, INSTALL.md §5.
 
@@ -92,6 +92,13 @@ aws sesv2 create-email-identity --region eu-west-3 --email-identity someone@exam
 aws sesv2 get-email-identity --region eu-west-3 --email-identity apps.example.com \
   --query '[VerifiedForSendingStatus,DkimAttributes.Status]'                               # DNS verification, a few minutes
 ```
+
+## DMARC
+
+`_dmarc.<domain>` starts at `p=none`: receivers only report. With `dmarc_email` set, the aggregate reports arrive there
+daily; once they show the domain's mail passing DKIM or SPF alignment, change `p=none` to `p=quarantine` in `main.tf`
+and `tofu apply`. A `dmarc_email` on another domain than `<domain>`'s parent only gets the reports if that domain
+publishes the TXT record `<domain>._report._dmarc.<its domain>` = `v=DMARC1`.
 
 ## Not covered
 
