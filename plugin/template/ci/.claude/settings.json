@@ -1,6 +1,6 @@
 {
   "extraKnownMarketplaces": {
-    "platform-local": { "source": { "source": "github", "repo": "__MARKETPLACE__" } }
+    "platform": { "source": { "source": "url", "url": "__MARKETPLACE__" } }
   },
-  "enabledPlugins": { "platform@platform-local": true }
+  "enabledPlugins": { "platform@platform": true }
 }

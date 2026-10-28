@@ -137,13 +137,9 @@ adminApi.post("/users", async (c) => {
 });
 
 async function sendWelcome(email: string, role: "admin" | "developer") {
-  const settings = await getSettings();
-  const { sso } = settings;
+  const { sso } = await getSettings();
   const ssoLogin = ssoActive(sso);
   const passwordToo = !ssoLogin || sso.passwordLogin === "everyone" || role === "admin";
-  // the plugin marketplace is the repository of the allowed reusable workflow (INSTALL.md §7)
-  const [org, repo] = settings.ciAllowedWorkflows[0]?.split("/") ?? [];
-  const marketplace = repo ? `${githubServerUrl(settings.oidcIssuer)}/${org}/${repo}.git` : "<platform repository, ask your admin>";
   return sendPlatformMail({
     to: [email],
     subject: "Your account on the app platform",
@@ -155,8 +151,7 @@ async function sendWelcome(email: string, role: "admin" | "developer") {
       "- Build and deploy apps with Claude Code. You need Node.js 22.18 or later and the GitHub CLI (gh) logged in. " +
       "Install the platform plugin from a terminal:",
       "",
-      `    claude plugin marketplace add ${marketplace}`,
-      `    claude plugin install platform@platform-local --config platform_url=${apiUrl()}/mcp`,
+      `    claude plugin install platform --marketplace ${apiUrl()}/plugin/marketplace.json`,
       "",
       "  Then start Claude Code, type /mcp, choose plugin:platform:platform, then Authenticate: your browser opens, " +
       "sign in with your platform account and allow the access. You can now ask Claude to deploy your app.",

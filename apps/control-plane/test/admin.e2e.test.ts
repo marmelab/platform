@@ -4,7 +4,7 @@
 import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { cleanup, cli, psql, runId, waitForControlPlane } from "./disposable.ts";
@@ -159,7 +159,12 @@ describe("admin API e2e", () => {
     const welcome = await waitForMail(`to:"${BUILDER}" subject:"Your account"`);
     assert.equal(welcome.From.Address, "noreply@platform.localhost");
     assert.match(welcome.Text, /Studio: http:\/\/localhost:8100 /);
-    assert.match(welcome.Text, /claude plugin install platform@platform-local --config platform_url=http:\/\/api\.localhost:8100\/mcp/);
+    assert.match(welcome.Text, /claude plugin install platform --marketplace http:\/\/api\.localhost:8100\/plugin\/marketplace\.json\r?\n/);
+    // the plugin it points to (src/plugin.ts): the zip matches the marketplace's pin
+    const marketplace = await (await fetch("http://api.localhost:8100/plugin/marketplace.json")).json();
+    const zip = await fetch(marketplace.plugins[0].source.url);
+    assert.equal(zip.headers.get("content-type"), "application/zip");
+    assert.equal(createHash("sha256").update(Buffer.from(await zip.arrayBuffer())).digest("hex"), marketplace.plugins[0].source.sha256);
     assert.ok(!welcome.Text.includes(PASSWORD), "no password in the email");
     const token = ok(await request("POST", "/tokens", { body: { user_id: created.id, name: "e2e" } }), 201);
     assert.match(token.token, /^plat_/);

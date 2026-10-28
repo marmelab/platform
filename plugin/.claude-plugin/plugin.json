@@ -11,13 +11,5 @@
     "deploy",
     "supabase",
     "vite"
-  ],
-  "userConfig": {
-    "platform_url": {
-      "type": "string",
-      "title": "Platform MCP URL",
-      "description": "The MCP URL of your company's platform, https://api.<domain>/mcp (given by your platform administrator); the local stack's URL by default",
-      "default": "http://api.localhost:8100/mcp"
-    }
-  }
+  ]
 }

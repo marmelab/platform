@@ -4,9 +4,11 @@ import type { ReadableStream as WebReadableStream } from "node:stream/web";
 import { adminSite, isAdminHost } from "./admin/site.ts";
 import { authenticate } from "./auth.ts";
 import { ciRoutes } from "./ci.ts";
+import { apiUrl } from "./config.ts";
 import { receiveUpload } from "./deployments.ts";
 import { buildMcpServer } from "./mcp.ts";
 import { mcpChallenge, oauthRoutes } from "./oauth.ts";
+import { buildPlugin } from "./plugin.ts";
 import { studioPublicRoutes } from "./studio/routes.ts";
 
 export const app = new Hono();
@@ -18,6 +20,12 @@ app.use("*", async (c, next) => {
 });
 
 app.get("/health", (c) => c.json({ ok: true }));
+
+// The plugin, built once at the first request (plugin.ts)
+let plugin: ReturnType<typeof buildPlugin> | undefined;
+const served = () => (plugin ??= buildPlugin(apiUrl()));
+app.get("/plugin/marketplace.json", (c) => c.json(served().marketplace));
+app.get("/plugin/platform.zip", (c) => c.body(served().zip, 200, { "content-type": "application/zip" }));
 app.route("/", studioPublicRoutes);
 app.route("/ci", ciRoutes);
 app.route("/", oauthRoutes);
