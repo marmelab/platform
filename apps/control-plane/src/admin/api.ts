@@ -137,9 +137,13 @@ adminApi.post("/users", async (c) => {
 });
 
 async function sendWelcome(email: string, role: "admin" | "developer") {
-  const { sso } = await getSettings();
+  const settings = await getSettings();
+  const { sso } = settings;
   const ssoLogin = ssoActive(sso);
   const passwordToo = !ssoLogin || sso.passwordLogin === "everyone" || role === "admin";
+  // the plugin marketplace is the repository of the allowed reusable workflow (INSTALL.md §7)
+  const [org, repo] = settings.ciAllowedWorkflows[0]?.split("/") ?? [];
+  const marketplace = repo ? `${githubServerUrl(settings.oidcIssuer)}/${org}/${repo}.git` : "<platform repository, ask your admin>";
   return sendPlatformMail({
     to: [email],
     subject: "Your account on the app platform",
@@ -148,9 +152,14 @@ async function sendWelcome(email: string, role: "admin" | "developer") {
       "",
       `An account was created for you (${email}) on the company's app platform${role === "admin" ? ", as an admin" : ""}.`,
       "",
-      "- Build and deploy apps with Claude Code: install the platform plugin and, when it asks for the Platform MCP URL, " +
-      `enter ${apiUrl()}/mcp. Then ask Claude to deploy your app: the first time, Claude Code opens your browser, ` +
-      "sign in with your platform account and allow the access.",
+      "- Build and deploy apps with Claude Code. You need Node.js 22.18 or later and the GitHub CLI (gh) logged in. " +
+      "Install the platform plugin from a terminal:",
+      "",
+      `    claude plugin marketplace add ${marketplace}`,
+      `    claude plugin install platform@platform-local --config platform_url=${apiUrl()}/mcp`,
+      "",
+      "  Then start Claude Code, type /mcp, choose plugin:platform:platform, then Authenticate: your browser opens, " +
+      "sign in with your platform account and allow the access. You can now ask Claude to deploy your app.",
       `- Inspect your apps' data in Studio: ${studioUrl()} (sign in ${ssoLogin ? `with ${sso.name}${passwordToo ? ", or with this email and the password your admin gives you" : ""}` : "with this email and the password your admin gives you"}).`,
       ...(role === "admin" ? [`- Administration console: ${adminUrl()}`] : []),
       "",

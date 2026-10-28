@@ -159,6 +159,7 @@ describe("admin API e2e", () => {
     const welcome = await waitForMail(`to:"${BUILDER}" subject:"Your account"`);
     assert.equal(welcome.From.Address, "noreply@platform.localhost");
     assert.match(welcome.Text, /Studio: http:\/\/localhost:8100 /);
+    assert.match(welcome.Text, /claude plugin install platform@platform-local --config platform_url=http:\/\/api\.localhost:8100\/mcp/);
     assert.ok(!welcome.Text.includes(PASSWORD), "no password in the email");
     const token = ok(await request("POST", "/tokens", { body: { user_id: created.id, name: "e2e" } }), 201);
     assert.match(token.token, /^plat_/);
