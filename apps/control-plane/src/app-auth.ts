@@ -3,10 +3,12 @@
 // confirmation, allowed email domains, extra redirect URLs, sender override. Every change recreates the app's GoTrue
 // container with its new environment (a few seconds without /auth/v1 for that app).
 import { appRoles } from "@platform/sql";
+import { Hono } from "hono";
+import { APP_MAIL_TYPES, type AppMailType, appMailTemplate } from "./app-mail.ts";
 import { type AppRow, dbId, ensureAuthService, requireWritable, UserError } from "./apps.ts";
 import { audit } from "./audit.ts";
 import type { User } from "./auth.ts";
-import { appUrl } from "./config.ts";
+import { appUrl, config } from "./config.ts";
 import { one, withAdmin } from "./db.ts";
 import { companySso, ensureCompanySso } from "./app-sso.ts";
 import { getSettings, ssoActive } from "./settings.ts";
@@ -26,7 +28,30 @@ export type { AuthConfig } from "./auth-policy.ts";
 export { authEnv } from "./auth-policy.ts";
 
 /** The policy's view of an app. */
-export const policyApp = (app: Pick<AppRow, "slug" | "name">): PolicyApp => ({ slug: app.slug, name: app.name, url: appUrl(app.slug) });
+export const policyApp = (app: Pick<AppRow, "slug" | "name">): PolicyApp => ({
+  slug: app.slug,
+  name: app.name,
+  url: appUrl(app.slug),
+  mailTemplatesUrl: `http://${config.internalListener}/email-templates/${app.slug}`,
+});
+
+/**
+ * Internal listener (never routed publicly): GET /email-templates/<slug>/<type>, the body of an app's emails
+ * (app-mail.ts), fetched by its GoTrue. GoTrue caches it 10 minutes and keeps its own default when this fails.
+ */
+export const appMailRoutes = new Hono();
+
+appMailRoutes.get("/email-templates/:slug/:type", async (c) => {
+  const type = c.req.param("type") as AppMailType;
+  const app = APP_MAIL_TYPES.includes(type)
+    ? await one<Pick<AppRow, "slug" | "name">>(
+      "select slug, name from apps where slug = $1 and status <> 'deleted'",
+      [c.req.param("slug")],
+    )
+    : null;
+  if (!app) return c.text("not found\n", 404);
+  return c.html(appMailTemplate(type, { name: app.name, url: appUrl(app.slug) }));
+});
 
 export async function authConfig(app: Pick<AppRow, "id">): Promise<AuthConfig> {
   const row = await one<AuthConfig>(
