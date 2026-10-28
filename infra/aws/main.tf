@@ -254,7 +254,7 @@ resource "aws_iam_access_key" "backups" {
   user = aws_iam_user.backups.name
 }
 
-# --- Mail: SES domain identity (any address on the domain can send), DKIM, custom MAIL FROM for SPF, SMTP user -----
+# --- Mail: SES domain identity (any address on the domain can send), DKIM, custom MAIL FROM for SPF, DMARC, SMTP user
 # The account starts in the SES sandbox (mail to verified recipients only): see README.md for the production access
 # request, which is not a resource.
 resource "aws_sesv2_email_identity" "domain" {
@@ -290,6 +290,15 @@ resource "aws_route53_record" "mail_from_spf" {
   type    = "TXT"
   ttl     = 1800
   records = ["v=spf1 include:amazonses.com ~all"]
+}
+
+# p=none only monitors: move to p=quarantine once the reports show the domain's mail passes DKIM or SPF alignment (README)
+resource "aws_route53_record" "dmarc" {
+  zone_id = local.zone_id
+  name    = "_dmarc.${var.domain}"
+  type    = "TXT"
+  ttl     = 1800
+  records = ["v=DMARC1; p=none${var.dmarc_email != "" ? "; rua=mailto:${var.dmarc_email}" : ""}"]
 }
 
 resource "aws_iam_user" "smtp" {

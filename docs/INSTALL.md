@@ -219,8 +219,8 @@ that host. The `$/` action reference is not available there: in the copy, replac
 The installer writes `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_SENDER_EMAIL` into `deploy/.env`.
 Every app's GoTrue sends through it (sender: the app's name and the platform's address; a builder can change the
 address within the same domain), and the platform sends its own emails. Any relay that accepts every address of the
-sender domain does (company relay, Brevo, Scaleway TEM, Amazon SES as set up by `infra/aws`...); set SPF and DKIM for
-it on that domain. To change it later: `deploy/install.sh --smtp-host ...`, or the `smtp_*` settings with the CLI
+sender domain does (company relay, Brevo, Scaleway TEM, Amazon SES as set up by `infra/aws`...); set SPF, DKIM and
+DMARC for it on that domain. To change it later: `deploy/install.sh --smtp-host ...`, or the `smtp_*` settings with the CLI
 (each running app's GoTrue is then recreated, without downtime). Details: control plane README, "Email".
 
 ## 9. Backups, S3 and the master key

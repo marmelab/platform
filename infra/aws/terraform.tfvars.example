@@ -7,6 +7,7 @@ region    = "eu-west-3"
 # volume_gb     = 100
 # admin_cidrs   = ["203.0.113.0/24"] # SSH from the office; empty: SSM Session Manager only
 # backup_bucket = "example-platform-backups"
+# dmarc_email   = "dmarc@example.com" # DMARC aggregate reports
 # Install values, so that remote-install.sh needs no option (INSTALL.md §5):
 # acme_email   = "ops@example.com"
 # admin_email  = "alice.admin@example.com"
