@@ -148,7 +148,7 @@ docker compose -p plat -f deploy/docker-compose.yml start
 
 ### Dev mode
 
-`make dev-admin` runs the admin console on Vite with hot reload, in the foreground, after starting the stack if needed, on the usual http://admin.localhost:8100: for the session, Caddy's admin route leads to the dev container ([deploy/docker-compose.dev.yml](deploy/docker-compose.dev.yml)), which passes `/api` on to the control plane. Ctrl+C puts the built console back (so does any control plane restart). On macOS, run `make deps` once, so that pnpm also installs the Linux native binaries the container uses (`supportedArchitectures` in [pnpm-workspace.yaml](pnpm-workspace.yaml)).
+`make start-dev` starts the stack (Studio included, built) and runs the admin console on Vite with hot reload, in the foreground (`make dev-admin` for the console alone, stack running), on the usual http://admin.localhost:8100: for the session, Caddy's admin route leads to the dev container ([deploy/docker-compose.dev.yml](deploy/docker-compose.dev.yml)), which passes `/api` on to the control plane. Ctrl+C puts the built console back (so does any control plane restart). On macOS, run `make deps` once, so that pnpm also installs the Linux native binaries the container uses (`supportedArchitectures` in [pnpm-workspace.yaml](pnpm-workspace.yaml)).
 
 Studio has no dev mode for now: `make build-studio` after a change ([docs/TECH_DEBT.md](docs/TECH_DEBT.md) STU-11).
 

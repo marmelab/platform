@@ -55,13 +55,14 @@ admin_route = curl -fsS -X PATCH -H 'Content-Type: application/json' -d '"$(1)"'
 
 # Ctrl+C stops the dev container; `trap :` keeps the shell alive to put the built console back. No compose menu: it puts
 # the terminal in raw mode. No Studio dev mode until Next 16.3 (docs/TECH_DEBT.md STU-11): `make build-studio`.
-dev-admin: start ## Admin console on Vite at http://admin.localhost:8100 (Ctrl+C restores the built console)
-	trap : INT TERM; $(call admin_route,admin-dev:5173) && \
+dev-admin: ## Admin console on Vite at http://admin.localhost:8100, stack running (Ctrl+C restores the built console)
+	trap : INT TERM; $(call admin_route,admin-dev:5173) || { echo "the stack is not running: make start-dev" >&2; exit 1; }; \
 	$(COMPOSE_DEV) up --no-deps --menu=false admin-dev | $(call announce,http://localhost:5173/,http://admin.localhost:8100/); \
 	$(call admin_route,control-plane:3000); $(COMPOSE_DEV) rm -fs admin-dev
 
-# ponytail: alias, dev-admin already starts the whole stack (built Studio included)
-start-dev: dev-admin ## Start the stack, Studio at http://localhost:8100, with the admin console on Vite
+# A sub-make rather than two prerequisites: dev-admin must not start before the stack, even under make -j.
+start-dev: start ## Start the stack, Studio at http://localhost:8100, with the admin console on Vite
+	@$(MAKE) --no-print-directory dev-admin
 
 typecheck: ## Typecheck every workspace package
 	pnpm typecheck
