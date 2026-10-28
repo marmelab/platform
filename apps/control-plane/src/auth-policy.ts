@@ -1,12 +1,17 @@
 // Pure part of the app auth policy (M6, app-auth.ts): GoTrue environment, hook SQL, view. No I/O and no platform
 // configuration import, so that the unit tests (test/auth-policy.test.ts) load it alone.
+import { APP_MAIL_TYPES, appMailSubject } from "./app-mail.ts";
 import type { SmtpSettings } from "./settings.ts";
 
-/** The app as the policy sees it: its name (default sender name), slug, and public URL (site URL, links). */
+/**
+ * The app as the policy sees it: its name (default sender name), slug, public URL (site URL, links), and where its
+ * GoTrue fetches the bodies of its emails (`<mailTemplatesUrl>/<type>`, app-auth.ts).
+ */
 export interface PolicyApp {
   slug: string;
   name: string;
   url: string;
+  mailTemplatesUrl: string;
 }
 
 export interface AuthConfig {
@@ -95,6 +100,11 @@ export function authEnv(app: PolicyApp, auth: AuthConfig, smtp: SmtpSettings | n
       GOTRUE_SMTP_ADMIN_EMAIL: sender.email!,
       GOTRUE_SMTP_SENDER_NAME: sender.name,
     });
+    // the platform's emails instead of GoTrue's generic ones (app-mail.ts)
+    for (const type of APP_MAIL_TYPES) {
+      env[`GOTRUE_MAILER_TEMPLATES_${type.toUpperCase()}`] = `${app.mailTemplatesUrl}/${type}`;
+      env[`GOTRUE_MAILER_SUBJECTS_${type.toUpperCase()}`] = appMailSubject(type, app.name);
+    }
   }
   if (auth.allowed_email_domains.length > 0) {
     Object.assign(env, {
@@ -145,7 +155,7 @@ export function authView(app: PolicyApp, auth: AuthConfig, smtp: SmtpSettings | 
     sender_name: sender.name,
     sender_email: sender.email,
     sender_overridden: auth.sender_name !== null || auth.sender_email !== null,
-    email_templates: "default",
+    email_templates: smtp ? "platform" : "default",
     sso: auth.sso_provider === "company"
       ? {
         provider: "company",

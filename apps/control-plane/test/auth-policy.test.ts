@@ -4,7 +4,12 @@ import { test } from "node:test";
 import { authEnv, authHookSql, authView, DEFAULT_AUTH, DOMAIN_RE, REDIRECT_URL_RE } from "../src/auth-policy.ts";
 import type { SmtpSettings } from "../src/settings.ts";
 
-const app = { slug: "demo", name: "Demo app", url: "https://demo.apps.example.com" };
+const app = {
+  slug: "demo",
+  name: "Demo app",
+  url: "https://demo.apps.example.com",
+  mailTemplatesUrl: "http://control-plane:3001/email-templates/demo",
+};
 const smtp: SmtpSettings = {
   host: "smtp.example.com",
   port: 587,
@@ -23,12 +28,16 @@ test("without SMTP: users are auto-confirmed, no SMTP variable, links on the app
   for (const kind of ["INVITE", "CONFIRMATION", "RECOVERY", "EMAIL_CHANGE"]) {
     assert.equal(env[`GOTRUE_MAILER_URLPATHS_${kind}`], "/auth/v1/verify");
   }
-  assert.deepEqual(Object.keys(env).filter((k) => k.startsWith("GOTRUE_SMTP_") || k.includes("HOOK")), []);
+  assert.deepEqual(
+    Object.keys(env).filter((k) => k.startsWith("GOTRUE_SMTP_") || k.includes("HOOK") || k.startsWith("GOTRUE_MAILER_TEMPLATES_")),
+    [],
+  );
   const view = authView(app, DEFAULT_AUTH, null);
   assert.equal(view.email_confirmation, true);
   assert.equal(view.email_confirmation_effective, false);
   assert.equal(view.smtp_configured, false);
   assert.equal(view.sender_email, null);
+  assert.equal(view.email_templates, "default");
 });
 
 test("with SMTP: confirmation required, the app's name as sender, the platform address", () => {
@@ -40,8 +49,14 @@ test("with SMTP: confirmation required, the app's name as sender, the platform a
   assert.equal(env.GOTRUE_SMTP_PASS, "s3cret");
   assert.equal(env.GOTRUE_SMTP_ADMIN_EMAIL, "noreply@example.com");
   assert.equal(env.GOTRUE_SMTP_SENDER_NAME, "Demo app");
+  // the platform's emails (app-mail.ts), fetched from the internal listener
+  assert.equal(env.GOTRUE_MAILER_TEMPLATES_INVITE, "http://control-plane:3001/email-templates/demo/invite");
+  assert.equal(env.GOTRUE_MAILER_TEMPLATES_MAGIC_LINK, "http://control-plane:3001/email-templates/demo/magic_link");
+  assert.equal(env.GOTRUE_MAILER_SUBJECTS_INVITE, "You're invited to Demo app");
+  assert.equal(env.GOTRUE_MAILER_SUBJECTS_EMAIL_CHANGE, "Confirm your new email address for Demo app");
   const view = authView(app, DEFAULT_AUTH, smtp);
   assert.equal(view.email_confirmation_effective, true);
+  assert.equal(view.email_templates, "platform");
   assert.ok(!JSON.stringify(view).includes("s3cret"), "no SMTP secret in the view");
 });
 

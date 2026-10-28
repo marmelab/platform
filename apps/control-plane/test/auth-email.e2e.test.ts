@@ -146,6 +146,9 @@ describe("M6: email and app auth policy", () => {
     assert.doesNotMatch(JSON.stringify(invited), /verify|token=/);
     assert.equal(invited.user.confirmed, false);
     const mail = await waitForMail(`to:"${guest}" subject:"invited"`);
+    // the platform's template (app-mail.ts), not GoTrue's generic one
+    assert.equal(mail.Subject, "You're invited to Mail e2e");
+    assert.match(mail.HTML, /You have been invited to join <strong>Mail e2e<\/strong>/);
     const location = await followLink(mailLink(mail));
     assert.ok(location.startsWith(APP_URL), location);
     assert.equal(fragmentParams(location).get("type"), "invite");
