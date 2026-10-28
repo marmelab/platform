@@ -103,7 +103,7 @@ examples/notes-app/   example app: notes shared between users (Vite + React + su
 ## Prerequisites
 
 - macOS or Linux, with Docker (Docker Desktop: 8 GB of RAM or more allocated)
-- Node 24 and pnpm 10 (`corepack enable`)
+- Node 24 (`nvm use` reads `.nvmrc`) and pnpm 10 (`corepack enable`)
 - Deno 2 (Edge Functions unit tests only)
 - `openssl`, `curl`
 - Claude Code, to deploy apps through the plugin
@@ -121,6 +121,8 @@ export NODE_OPTIONS="--import $PWD/packages/deploy-cli/src/localhost-dns.ts"
 pnpm install
 deploy/install.sh
 ```
+
+`make help` lists the main local commands (install, start and stop, logs, admin CLI, image rebuilds, dev mode, tests); `make install` runs the two commands above.
 
 `install.sh` is safe to rerun. It:
 1. generates the stack secrets in `deploy/.env`, points the platform SMTP to the local mail catcher (mailpit, `SMTP_HOST=mailpit`), and adds a mock OpenID Connect provider for the company SSO and a test S3 store (`COMPOSE_PROFILES=mail,sso-test,s3-test`);
@@ -143,6 +145,12 @@ To stop or restart the stack:
 docker compose -p plat -f deploy/docker-compose.yml stop
 docker compose -p plat -f deploy/docker-compose.yml start
 ```
+
+### Dev mode
+
+`make start-dev` starts the stack (Studio included, built) and runs the admin console on Vite with hot reload, in the foreground (`make dev-admin` for the console alone, stack running), on the usual http://admin.localhost:8100: for the session, Caddy's admin route leads to the dev container ([deploy/docker-compose.dev.yml](deploy/docker-compose.dev.yml)), which passes `/api` on to the control plane. Ctrl+C puts the built console back (so does any control plane restart). On macOS, run `make deps` once, so that pnpm also installs the Linux native binaries the container uses (`supportedArchitectures` in [pnpm-workspace.yaml](pnpm-workspace.yaml)).
+
+Studio has no dev mode for now: `make build-studio` after a change ([docs/TECH_DEBT.md](docs/TECH_DEBT.md) STU-11).
 
 ## URLs
 
