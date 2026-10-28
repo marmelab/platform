@@ -4,7 +4,7 @@ COMPOSE_DEV := $(COMPOSE) -f deploy/docker-compose.dev.yml
 export DEV_USER := $(shell id -u):$(shell id -g)
 
 .DEFAULT_GOAL := help
-.PHONY: help deps install seed start stop ps logs cli build-control-plane build-studio dev-admin \
+.PHONY: help deps install seed start stop ps logs cli build-control-plane build-studio dev-admin start-dev \
 	typecheck test e2e e2e-studio e2e-admin test-edge plugin
 
 help: ## Show this help
@@ -59,6 +59,9 @@ dev-admin: start ## Admin console on Vite at http://admin.localhost:8100 (Ctrl+C
 	trap : INT TERM; $(call admin_route,admin-dev:5173) && \
 	$(COMPOSE_DEV) up --no-deps --menu=false admin-dev | $(call announce,http://localhost:5173/,http://admin.localhost:8100/); \
 	$(call admin_route,control-plane:3000); $(COMPOSE_DEV) rm -fs admin-dev
+
+# ponytail: alias, dev-admin already starts the whole stack (built Studio included)
+start-dev: dev-admin ## Start the stack, Studio at http://localhost:8100, with the admin console on Vite
 
 typecheck: ## Typecheck every workspace package
 	pnpm typecheck
