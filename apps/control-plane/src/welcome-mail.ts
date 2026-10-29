@@ -11,6 +11,8 @@ export interface WelcomeMail {
   sso: { name: string; passwordToo: boolean } | null;
   /** Claude Code on the web (claude_web_environment, INSTALL.md §7): the link to a first session; null: not set up. */
   webStart: string | null;
+  /** The Connect Claude page: the claude.ai connector's setup (Team or Enterprise, or Pro or Max). */
+  connectPage: string;
 }
 
 export function welcomeMail(m: WelcomeMail) {
@@ -25,8 +27,12 @@ export function welcomeMail(m: WelcomeMail) {
   const claude = m.webStart
     ? [
       "- Build and deploy apps from your browser with Claude Code on the web, nothing to install. Once, connect " +
-      "Claude to the platform: on claude.ai, open Settings, then Connectors, choose Platform, then Connect, and sign " +
-      "in with your platform account. Then open this link and describe the app you need:",
+      "Claude to the platform as this page explains (one click on claude.ai Team or Enterprise, three steps on Pro or " +
+      "Max):",
+      "",
+      `    ${m.connectPage}`,
+      "",
+      "  Then open this link and describe the app you need:",
       "",
       `    ${m.webStart}`,
       "",

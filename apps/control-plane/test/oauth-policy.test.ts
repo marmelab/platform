@@ -1,13 +1,15 @@
 // Unit tests of the OAuth front's rules (journey B1, src/oauth-policy.ts) and of the token scopes (SEC-8,
-// src/token-scopes.ts): Claude Code's loopback and claude.ai's callback only, loopback port changes (RFC 8252), PKCE
-// S256 only, the resource indicator, the 60 s code lifetime, the tools of a deploy token, and what a preview token
-// opens in the preview tunnel. The flows themselves (single-use code, PKCE verification, refresh rotation and reuse,
+// src/token-scopes.ts): native clients only in registration, claude.ai's callback for the connector's confidential
+// client only, loopback port changes (RFC 8252), Basic client credentials, PKCE S256 only, the resource indicator, the
+// 60 s code lifetime, the tools of a deploy token, and what a preview token opens in the preview tunnel. The flows themselves (single-use code, PKCE verification, refresh rotation and reuse,
 // revocation) run against GoTrue in test/oauth.e2e.test.ts.
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { test } from "node:test";
 import {
+  basicCredentials,
   checkAuthorizeRequest,
+  clientAllowed,
   CODE_TTL_SECONDS,
   codeFresh,
   CLAUDE_AI_REDIRECT,
@@ -76,9 +78,12 @@ test("a native client may pick another port at each sign-in (RFC 8252 §7.3), no
   assert.ok(!next.includes("http://localhost:1000/callback"));
 });
 
-test("allowed redirect URIs: loopback, or exactly claude.ai's callback (connectors, Claude Code on the web)", () => {
-  assert.ok(isAllowedRedirect("http://localhost:53987/callback"));
-  assert.ok(isAllowedRedirect(CLAUDE_AI_REDIRECT));
+test("claude.ai's callback is the connector's confidential client's only redirect, and only it may use it", () => {
+  assert.ok(isAllowedRedirect("http://localhost:53987/callback", "public"));
+  assert.ok(isAllowedRedirect(CLAUDE_AI_REDIRECT, "confidential"));
+  // anyone can make a claude.ai account and register a client: a public client never reaches claude.ai's callback
+  assert.equal(isAllowedRedirect(CLAUDE_AI_REDIRECT, "public"), false);
+  assert.equal(isAllowedRedirect("http://localhost:53987/callback", "confidential"), false);
   for (const uri of [
     "https://claude.ai/api/mcp/auth_callback/",
     "https://claude.ai/api/mcp/auth_callback?x=1",
@@ -86,15 +91,38 @@ test("allowed redirect URIs: loopback, or exactly claude.ai's callback (connecto
     "https://claude.ai.evil.example/api/mcp/auth_callback",
     "https://claude.ai/elsewhere",
   ]) {
-    assert.equal(isAllowedRedirect(uri), false, uri);
+    assert.equal(isAllowedRedirect(uri, "confidential"), false, uri);
   }
-  assert.deepEqual(sanitizeRegistration({ client_name: "Claude", redirect_uris: [CLAUDE_AI_REDIRECT] }).redirect_uris, [CLAUDE_AI_REDIRECT]);
+  assert.equal(error(() => sanitizeRegistration({ client_name: "Claude", redirect_uris: [CLAUDE_AI_REDIRECT] })), "invalid_redirect_uri");
   // an exact match needs no new registration; port changes stay a loopback thing
   assert.equal(redirectsToRegister([CLAUDE_AI_REDIRECT], CLAUDE_AI_REDIRECT), null);
   assert.equal(error(() => redirectsToRegister(["http://localhost:1/callback"], CLAUDE_AI_REDIRECT)), "invalid_request");
 });
 
-test("dynamic registration: public clients of Claude only, other metadata dropped", () => {
+test("a builder's own connector signs in that builder only; the organization's anyone; an unlisted confidential client nobody", () => {
+  const [alice, bob] = ["alice-id", "bob-id"];
+  assert.ok(clientAllowed({ client_type: "public", connector: false, owner: null }, alice), "Claude Code");
+  assert.ok(clientAllowed({ client_type: "confidential", connector: true, owner: null }, alice), "the organization's");
+  assert.ok(clientAllowed({ client_type: "confidential", connector: true, owner: alice }, alice), "alice's, for alice");
+  // alice's secret, leaked or misused, signs in nobody but alice
+  assert.equal(clientAllowed({ client_type: "confidential", connector: true, owner: alice }, bob), false);
+  // a deleted builder's client (row gone with the account)
+  assert.equal(clientAllowed({ client_type: "confidential", connector: false, owner: null }, alice), false);
+});
+
+test("Basic client credentials (client_secret_basic): form-urlencoded parts, then base64", () => {
+  const basic = (value: string) => `Basic ${Buffer.from(value).toString("base64")}`;
+  assert.deepEqual(basicCredentials(basic("0b6c4c1e-2f3a-4d5e-8f90-1a2b3c4d5e6f:s3cr%3At+x")), {
+    client_id: "0b6c4c1e-2f3a-4d5e-8f90-1a2b3c4d5e6f",
+    client_secret: "s3cr:t x",
+  });
+  assert.deepEqual(basicCredentials(basic("id:")), { client_id: "id", client_secret: "" });
+  for (const header of [undefined, "", "Bearer abc", basic("no-colon"), "Basic not*base64", basic("id:%E0%A4%A")]) {
+    assert.equal(basicCredentials(header), null, String(header));
+  }
+});
+
+test("dynamic registration: public native clients only, other metadata dropped", () => {
   const claudeCode = {
     client_name: "Claude Code (platform)",
     redirect_uris: ["http://localhost:53987/callback"],

@@ -3,15 +3,24 @@ import { type Context, Hono } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { appsForUser, studio, UserError } from "../apps.ts";
 import type { User } from "../auth.ts";
-import { config, studioUrl } from "../config.ts";
+import { audit } from "../audit.ts";
+import { apiUrl, config, studioUrl } from "../config.ts";
 import { TooManyAttempts } from "../login-limit.ts";
 import { createSession, logout, SESSION_COOKIE, throttledCredentials, userForSession } from "../sessions.ts";
 import { getSettings, ssoActive } from "../settings.ts";
 import { finishSsoLogin, SSO_COOKIE, SSO_PENDING_SECONDS, ssoCookiePath, SsoError, startSsoLogin } from "../sso.ts";
 import { passwordLoginRefused, safeNext as localPath } from "../sso-policy.ts";
-import { ConsentError, consentRequest, decideConsent } from "../oauth.ts";
-import { CONSENT_PATH } from "../platform-auth.ts";
-import { consentPage, loginPage, oauthMessagePage, refusedPage, type SsoOption } from "./pages.ts";
+import { ConsentError, consentRequest, connectorClient, connectorClientId, decideConsent, mcpResource } from "../oauth.ts";
+import { CONNECTOR_PATH, CONSENT_PATH } from "../platform-auth.ts";
+import {
+  connectorPage,
+  type ConnectorSetup,
+  consentPage,
+  loginPage,
+  oauthMessagePage,
+  refusedPage,
+  type SsoOption,
+} from "./pages.ts";
 import { crossSiteRefusal, studioAccess } from "./policy.ts";
 import { realtimeInspectorToken } from "./realtime-token.ts";
 
@@ -147,7 +156,7 @@ const consentLogin = (c: Context, authorizationId: string) =>
 
 const consentFailure = (c: Context, error: unknown) => {
   if (!(error instanceof ConsentError)) throw error;
-  return c.html(oauthMessagePage("Sign-in request expired", error.message), 400);
+  return c.html(oauthMessagePage(error.title, error.message), 400);
 };
 
 studioPublicRoutes.get(CONSENT_PATH, async (c) => {
@@ -175,6 +184,39 @@ studioPublicRoutes.post(CONSENT_PATH, async (c) => {
   } catch (error) {
     return consentFailure(c, error);
   }
+});
+
+// The Connect Claude page (Claude Code on the web, INSTALL.md §7), behind the platform's login: the connector's setup,
+// and a builder's own connector client (claude.ai Pro or Max), created or given a new secret by its form (protected
+// like the login form)
+const connectorLogin = (c: Context) => c.redirect(`/_platform/login?next=${encodeURIComponent(CONNECTOR_PATH)}`, 302);
+
+async function connectorSetup(user: User, issued?: { client_id: string; client_secret?: string }): Promise<ConnectorSetup> {
+  const { claudeWebEnvironment } = await getSettings();
+  return {
+    email: user.email,
+    clientId: issued?.client_id ?? await connectorClientId(user.id),
+    secret: issued?.client_secret,
+    mcpUrl: mcpResource(),
+    hosts: [config.apiHost, `*.${config.appsDomain}`],
+    setupScript: `curl -fsSL ${apiUrl()}/plugin/cloud-setup.sh | bash`,
+    // the name the platform's links open (claude_web_environment)
+    environment: claudeWebEnvironment || "Platform",
+  };
+}
+
+studioPublicRoutes.get(CONNECTOR_PATH, async (c) => {
+  const user = await userForSession(getCookie(c, SESSION_COOKIE));
+  if (!user) return connectorLogin(c);
+  return c.html(connectorPage(await connectorSetup(user)));
+});
+
+studioPublicRoutes.post(CONNECTOR_PATH, async (c) => {
+  const user = await userForSession(getCookie(c, SESSION_COOKIE));
+  if (!user) return connectorLogin(c);
+  const issued = await connectorClient(user, true);
+  await audit(user.id, null, "claude_connector_secret", { client_id: issued.client_id, source: "connect_page" });
+  return c.html(connectorPage(await connectorSetup(user, issued)));
 });
 
 /** Internal listener: Caddy forward auth and Studio's project configs. Never routed by the public Caddy server. */

@@ -38,7 +38,7 @@ App builders are usually not developers. Speak about what the app does and what 
 Run this step when the platform tools are missing, or when `whoami` fails. Run `${CLAUDE_PLUGIN_ROOT}/skills/deploy/scripts/check-connection.sh`, with `--after-auth-error` when the platform tools worked earlier in this conversation and now fail with an authentication error (401, "needs authentication"). It prints one word; explain it in the user's language, without technical terms, then stop:
 
 - `NOT_SIGNED_IN`: "Claude is not connected to the platform yet. Type `/mcp`, choose **platform**, then **Authenticate**, and sign in with your platform account in the browser that opens. Then ask me again." (If the server shows **Re-authenticate**, choose it.)
-- `NOT_CONNECTED_WEB`: "Claude is not connected to the platform yet. On claude.ai, open Settings, then Connectors, choose **Platform**, then **Connect**, and sign in with your platform account. Then start a new session and ask me again."
+- `NOT_CONNECTED_WEB`: "Claude is not connected to the platform yet. On claude.ai, open Customize, then Connectors, choose **Platform**, then **Connect**, and sign in with your platform account (if there is no Platform connector, follow the Connect Claude page of your welcome email first). Then start a new session and ask me again."
 - `ACCOUNT_REFUSED`: "The platform refuses your account: it was disabled, or its access was removed. Contact the platform administrator."
 - `UNREACHABLE`: "Claude cannot reach the platform. Check your network connection (VPN?); if it keeps failing, tell the platform administrator."
 - `OK`: the platform answers; retry `whoami` once, then report the error as is.

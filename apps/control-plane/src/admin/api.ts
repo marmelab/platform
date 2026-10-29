@@ -23,7 +23,7 @@ import { backupView, type BackupRow, createManualBackup } from "../backups.ts";
 import { restoreBackup } from "../restore.ts";
 import { latestLints, lintApp, lintHistory } from "../lint.ts";
 import { platformVersion } from "../version.ts";
-import { deleteShadowUser, endOAuthSessions, revokeGrant } from "../platform-auth.ts";
+import { CONNECTOR_PATH, deleteShadowUser, endOAuthSessions, revokeGrant } from "../platform-auth.ts";
 import { githubServerUrl } from "../oidc.ts";
 import { listSchemaChanges, schemaDrift } from "../schema-changes.ts";
 import { listSecrets } from "../secrets.ts";
@@ -155,6 +155,7 @@ async function sendWelcome(email: string, role: "admin" | "developer") {
       adminUrl: adminUrl(),
       sso: ssoActive(sso) ? { name: sso.name, passwordToo: sso.passwordLogin === "everyone" || role === "admin" } : null,
       webStart,
+      connectPage: studioUrl(CONNECTOR_PATH),
     }),
   });
 }

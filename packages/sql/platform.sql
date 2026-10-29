@@ -301,3 +301,15 @@ alter table tokens alter column hash drop not null;
 alter table tokens add column if not exists oauth_session_id uuid unique;
 alter table tokens add column if not exists oauth_client_id uuid;
 alter table tokens add column if not exists parent_id uuid references tokens (id) on delete cascade;
+
+-- The OAuth clients of claude.ai connectors (Claude Code on the web, oauth.ts connectorClient): confidential clients of
+-- the platform's GoTrue whose only redirect URI is claude.ai's callback. user_id null: the organization's connector
+-- (claude.ai Team or Enterprise, cli.ts claude-connector), usable by every account; a builder: their own (Pro or Max,
+-- the Connect Claude page), usable by that builder only. A confidential client missing here signs nobody in: deleting
+-- a builder deletes the row, and so disables their client (its GoTrue row stays, unused).
+create table if not exists connector_clients (
+  client_id uuid primary key,
+  user_id uuid references users (id) on delete cascade,
+  created_at timestamptz not null default now(),
+  unique nulls not distinct (user_id)
+);

@@ -2,14 +2,18 @@
 // the running "plat" stack: a simulated OAuth client does what Claude Code does (discovery from the 401 of /mcp,
 // dynamic registration, authorization code with PKCE through the platform's login and consent pages, MCP calls,
 // refresh), then the admin revokes the connection and disables the account. Also: deploy tokens restricted to one app
-// (create_deploy_token, SEC-8) and PATs (Authorization and X-Platform-Token headers).
-// Disposable resources: one builder (created through the admin API) and two apps it creates, deleted by cleanup().
+// (create_deploy_token, SEC-8), PATs (Authorization and X-Platform-Token headers), and the claude.ai connectors'
+// confidential clients, the only ones that reach claude.ai's callback: the organization's (cli.ts claude-connector) and
+// a builder's own (the Connect Claude page), which signs in no one else.
+// Disposable resources: two builders (created through the admin API) and two apps, deleted by cleanup(). The
+// organization's connector client stays (one per platform): the test gives it a new secret.
 import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { createHash, randomBytes } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { cleanup, psql, runId, waitForControlPlane } from "./disposable.ts";
+import { CLAUDE_AI_REDIRECT } from "../src/oauth-policy.ts";
 
 const ROOT = new URL("../../../", import.meta.url);
 const env = Object.fromEntries(
@@ -23,6 +27,8 @@ const ID = runId();
 const APP = `e2e-${ID}-oa`;
 const OTHER_APP = `e2e-${ID}-ob`;
 const BUILDER = `e2e-${ID}-oauth@example.com`;
+/** Another builder, refused on BUILDER's own connector (test 11). */
+const OTHER_BUILDER = `e2e-${ID}-oauth2@example.com`;
 const PASSWORD = randomBytes(18).toString("base64url");
 const CLIENT_NAME = `Claude Code e2e ${ID}`;
 
@@ -139,6 +145,9 @@ async function authorize(meta: Metadata, client: Client, browser: Browser, optio
   state?: string;
   decision?: "approve" | "deny";
   expectConsentPage?: boolean;
+  clientName?: string;
+  /** Where the consent page says the client runs, from its redirect URI. */
+  where?: string;
 }) {
   const url = new URL(meta.authorization_endpoint);
   url.search = new URLSearchParams({
@@ -175,7 +184,8 @@ async function authorize(meta: Metadata, client: Client, browser: Browser, optio
   const html = await consent.text();
   assert.match(html, /Allow access to your apps\?/);
   assert.ok(html.includes(BUILDER), "the page names the account");
-  assert.ok(html.includes(CLIENT_NAME), "the page names the client");
+  assert.ok(html.includes(options.clientName ?? CLIENT_NAME), "the page names the client");
+  assert.ok(html.includes(options.where ?? "running on this computer"), "the page says where the client runs");
   const authorizationId = new URL(consentUrl).searchParams.get("authorization_id")!;
   // the decision is protected like the login form: a foreign origin is refused
   const forged = await browser.post(`${STUDIO}/_platform/oauth/consent`, { authorization_id: authorizationId, decision: "approve" }, "http://evil.example");
@@ -224,6 +234,7 @@ describe("OAuth e2e (browser sign-in for Claude Code)", () => {
   let meta: Metadata;
   let client: Client;
   let builderId: string;
+  let otherBuilderId: string;
   const browser = new Browser();
   let tokens: Tokens;
   /** Minted in test 6 from the connection that test 7 revokes. */
@@ -233,11 +244,13 @@ describe("OAuth e2e (browser sign-in for Claude Code)", () => {
     await waitForControlPlane(MCP_URL);
     const user = await admin("POST", "/users", { email: BUILDER, role: "developer", password: PASSWORD, active: true });
     builderId = user.id;
+    otherBuilderId = (await admin("POST", "/users", { email: OTHER_BUILDER, role: "developer", password: PASSWORD, active: true })).id;
   });
 
   after(async () => {
-    await cleanup([APP, OTHER_APP], [BUILDER]);
+    await cleanup([APP, OTHER_APP], [BUILDER, OTHER_BUILDER]);
     assert.equal(psql(`select count(*) from auth.users where email = '${BUILDER}'`), "0", "shadow user deleted with the account");
+    assert.equal(psql(`select count(*) from connector_clients where user_id = '${builderId}'`), "0", "own connector gone with the account");
   });
 
   test("1. discovery: the 401 of /mcp points to the resource metadata, then to the authorization server", async () => {
@@ -266,6 +279,9 @@ describe("OAuth e2e (browser sign-in for Claude Code)", () => {
     const refused = await register({ client_name: "web", redirect_uris: ["https://evil.example/callback"] });
     assert.equal(refused.status, 400);
     assert.equal((await refused.json() as any).error, "invalid_redirect_uri");
+    // anyone with a claude.ai account could register this one: the connector uses the admin's client instead (test 10)
+    const claudeAi = await register({ client_name: "Claude", redirect_uris: [CLAUDE_AI_REDIRECT] });
+    assert.equal(claudeAi.status, 400);
     const confidential = await register({ redirect_uris: [callback(41000)], token_endpoint_auth_method: "client_secret_basic" });
     assert.equal(confidential.status, 400);
     const created = await register({
@@ -469,5 +485,139 @@ describe("OAuth e2e (browser sign-in for Claude Code)", () => {
     // a PAT minting a deploy token: same restrictions
     const deploy = (await tool(pat, "create_deploy_token", { app: APP })).token as string;
     assert.match(await toolError(deploy, "get_app", { app: OTHER_APP }), /not found/);
+  });
+
+  test("10. the claude.ai connector: its confidential client alone reaches claude.ai's callback, and needs its secret", async () => {
+    // the admin's command (INSTALL.md §7); --new-secret gives this run a secret when the stack already has the client
+    const printed = execFileSync("docker", ["exec", "plat-control-plane", "node", "src/cli.ts", "claude-connector", "--new-secret"], {
+      encoding: "utf8",
+    });
+    const connector = { client_id: /^client ID: (\S+)$/m.exec(printed)![1]!, secret: /^client secret: (\S+)$/m.exec(printed)![1]! };
+    const { verifier, challenge } = pkce();
+
+    // never redirected: a public client to claude.ai's callback, the connector's client to a loopback URI
+    for (const [clientId, redirect] of [[client.client_id, CLAUDE_AI_REDIRECT], [connector.client_id, callback(41000)]]) {
+      const url = new URL(meta.authorization_endpoint);
+      url.search = new URLSearchParams({
+        response_type: "code",
+        client_id: clientId!,
+        redirect_uri: redirect!,
+        code_challenge: challenge,
+        code_challenge_method: "S256",
+        state: "s",
+      }).toString();
+      const response = await fetch(url, { redirect: "manual" });
+      assert.equal(response.status, 400, `${clientId} -> ${redirect}`);
+      assert.equal(response.headers.get("location"), null);
+    }
+
+    const callbackUrl = await authorize(meta, { client_id: connector.client_id, redirect_uris: [CLAUDE_AI_REDIRECT] }, new Browser(), {
+      redirect: CLAUDE_AI_REDIRECT,
+      challenge,
+      clientName: "Claude (claude.ai connector)",
+      where: "on claude.ai",
+    });
+    const code = codeOf(callbackUrl, CLAUDE_AI_REDIRECT);
+    const exchange = async (headers: Record<string, string>, fields: Record<string, string>) => {
+      const response = await fetch(meta.token_endpoint, {
+        method: "POST",
+        headers,
+        body: form({ grant_type: "authorization_code", code, redirect_uri: CLAUDE_AI_REDIRECT, code_verifier: verifier, ...fields }),
+      });
+      return { status: response.status, body: await response.json() as any };
+    };
+    // what a code obtained through another claude.ai account is worth: without this organization's secret, nothing
+    assert.equal((await exchange({}, { client_id: connector.client_id })).body.error, "invalid_client");
+    assert.equal((await exchange({}, { client_id: connector.client_id, client_secret: "wrong" })).body.error, "invalid_client");
+    // client_secret_basic, passed on to GoTrue as client_secret_post
+    const basic = `Basic ${Buffer.from(`${encodeURIComponent(connector.client_id)}:${encodeURIComponent(connector.secret)}`).toString("base64")}`;
+    const reply = await exchange({ authorization: basic }, {});
+    assert.equal(reply.status, 200, JSON.stringify(reply.body));
+    assert.equal((await tool(reply.body.access_token, "whoami")).email, BUILDER);
+    // client_secret_post, on a refresh
+    const refreshed = await tokenRequest(meta, {
+      grant_type: "refresh_token",
+      refresh_token: reply.body.refresh_token,
+      client_id: connector.client_id,
+      client_secret: connector.secret,
+    });
+    assert.equal(refreshed.status, 200, JSON.stringify(refreshed.body));
+    assert.ok((await connections()).some((t) => t.client_name === "Claude (claude.ai connector)" && t.status === "active"));
+  });
+
+  test("11. a builder's own connector (claude.ai Pro or Max): from the Connect Claude page, it signs in that builder only", async () => {
+    const page = `${STUDIO}/_platform/claude`;
+    assert.equal(location(await fetch(page, { redirect: "manual" })), `${STUDIO}/_platform/login?next=%2F_platform%2Fclaude`);
+    const own = new Browser();
+    await own.post(`${STUDIO}/_platform/login`, { email: BUILDER, password: PASSWORD, next: "/_platform/claude" });
+    assert.match(await (await own.get(page)).text(), /Create my client/);
+    // the form is protected like the login form
+    assert.equal((await own.post(page, {}, "http://evil.example")).status, 403);
+    const issue = async () => {
+      const html = await (await own.post(page, {})).text();
+      return { client_id: /Client ID: <code>([^<]+)<\/code>/.exec(html)![1]!, secret: /Client secret: <code>([^<]+)<\/code>/.exec(html)![1]! };
+    };
+    const connector = await issue();
+    const later = await (await own.get(page)).text();
+    assert.ok(later.includes(connector.client_id) && !later.includes(connector.secret), "the secret is shown once");
+    assert.match(later, /Replace the secret/);
+    const ownClient = { client_id: connector.client_id, redirect_uris: [CLAUDE_AI_REDIRECT] };
+    const signIn = { redirect: CLAUDE_AI_REDIRECT, clientName: `Claude (claude.ai connector of ${BUILDER})`, where: "on claude.ai" };
+    const start = (challenge: string) => {
+      const url = new URL(meta.authorization_endpoint);
+      url.search = new URLSearchParams({
+        response_type: "code",
+        client_id: connector.client_id,
+        redirect_uri: CLAUDE_AI_REDIRECT,
+        code_challenge: challenge,
+        code_challenge_method: "S256",
+        state: "s",
+      }).toString();
+      return fetch(url, { redirect: "manual" });
+    };
+
+    // another builder: refused at the consent, shown or decided
+    const other = new Browser();
+    await other.post(`${STUDIO}/_platform/login`, { email: OTHER_BUILDER, password: PASSWORD, next: "/projects" });
+    const consentUrl = location(await start(pkce().challenge));
+    const refused = await other.get(consentUrl);
+    assert.equal(refused.status, 400);
+    assert.match(await refused.text(), /Not your connector/);
+    const decided = await other.post(`${STUDIO}/_platform/oauth/consent`, {
+      authorization_id: new URL(consentUrl).searchParams.get("authorization_id")!,
+      decision: "approve",
+    });
+    assert.equal(decided.status, 400);
+
+    // and at the code exchange, should a code for them exist (its account moved to the other builder)
+    const basic = (secret: string) => ({ authorization: `Basic ${Buffer.from(`${connector.client_id}:${secret}`).toString("base64")}` });
+    const exchange = async (code: string, verifier: string, secret: string) => {
+      const response = await fetch(meta.token_endpoint, {
+        method: "POST",
+        headers: basic(secret),
+        body: form({ grant_type: "authorization_code", code, redirect_uri: CLAUDE_AI_REDIRECT, code_verifier: verifier }),
+      });
+      return { status: response.status, body: await response.json() as any };
+    };
+    const moved = pkce();
+    const movedCode = codeOf(await authorize(meta, ownClient, own, { ...signIn, challenge: moved.challenge }), CLAUDE_AI_REDIRECT);
+    psql(`update auth.oauth_authorizations set user_id = '${otherBuilderId}' where authorization_code = '${movedCode}'`);
+    const stolen = await exchange(movedCode, moved.verifier, connector.secret);
+    assert.equal(stolen.body.error, "invalid_grant");
+    assert.match(stolen.body.error_description, /another account/);
+
+    // the builder: signed in (consent remembered), then a new secret voids the former one
+    const mine = pkce();
+    const code = codeOf(await authorize(meta, ownClient, own, { ...signIn, challenge: mine.challenge, expectConsentPage: false }), CLAUDE_AI_REDIRECT);
+    const reply = await exchange(code, mine.verifier, connector.secret);
+    assert.equal(reply.status, 200, JSON.stringify(reply.body));
+    assert.equal((await tool(reply.body.access_token, "whoami")).email, BUILDER);
+    const renewed = await issue();
+    assert.equal(renewed.client_id, connector.client_id, "same client, new secret");
+    const refresh = (secret: string) =>
+      tokenRequest(meta, { grant_type: "refresh_token", refresh_token: reply.body.refresh_token, client_id: connector.client_id, client_secret: secret });
+    assert.equal((await refresh(connector.secret)).body.error, "invalid_client");
+    assert.equal((await refresh(renewed.secret)).status, 200);
+    assert.equal(psql(`select count(*) from audit_log where user_id = '${builderId}' and action = 'claude_connector_secret'`), "2");
   });
 });

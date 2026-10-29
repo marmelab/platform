@@ -12,6 +12,7 @@ const base = {
   adminUrl: "https://admin.example.com",
   sso: null,
   webStart: null,
+  connectPage: "https://example.com/_platform/claude",
 };
 const PLUGIN = /claude plugin install platform --marketplace https:\/\/api\.example\.com\/plugin\/marketplace\.json\n/;
 
@@ -20,15 +21,18 @@ test("without Claude Code on the web: the plugin, Node and gh", () => {
   assert.match(text, /^- Build and deploy apps with Claude Code\. You need Node\.js 22\.18/m);
   assert.match(text, PLUGIN);
   assert.ok(!text.includes("claude.ai"));
+  assert.ok(!text.includes(base.connectPage));
   assert.match(text, /password over a private channel/);
 });
 
-test("with Claude Code on the web: the connector and the first session first, the terminal as an alternative", () => {
+test("with Claude Code on the web: the connector's page, then the first session, the terminal as an alternative", () => {
   const webStart = "https://claude.ai/code?environment=Platform&repositories=acme%2Fplatform-starter";
   const { text } = welcomeMail({ ...base, webStart });
+  const connect = text.indexOf(`    ${base.connectPage}\n`);
   const web = text.indexOf(webStart);
-  assert.ok(web > 0 && web < text.search(PLUGIN), "the browser path comes first");
-  assert.match(text, /Settings, then Connectors, choose Platform, then Connect/);
+  assert.ok(connect > 0 && connect < web, "the connector before the session");
+  assert.ok(web < text.search(PLUGIN), "the browser path comes first");
+  assert.match(text, /one click on claude\.ai Team or Enterprise, three steps on Pro or Max/);
   assert.match(text, /^- Or with Claude Code on your computer, with Node\.js 22\.18/m);
 });
 

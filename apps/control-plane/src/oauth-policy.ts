@@ -28,7 +28,8 @@ function parse(uri: string): URL | null {
 
 /**
  * A native client's redirect URI (RFC 8252 §7.3): plain HTTP on the loopback interface, as Claude Code's
- * `http://localhost:<port>/callback`: the code never leaves the user's machine.
+ * `http://localhost:<port>/callback`. The only kind a client registering itself may use: the code never leaves the
+ * user's machine.
  */
 export function isLoopbackRedirect(uri: string): boolean {
   const url = parse(uri);
@@ -40,12 +41,34 @@ export function isLoopbackRedirect(uri: string): boolean {
 /**
  * The callback of Claude's hosted apps (claude.ai, Desktop, mobile), where claude.ai connectors sign in, including the
  * one Claude Code on the web uses (https://claude.com/docs/connectors/building/authentication): the code and the
- * refresh token then go to Anthropic's servers instead of the user's machine.
+ * refresh token then go to Anthropic's servers instead of the user's machine. Reserved to the organization's connector
+ * client: anyone can make a claude.ai account and register a client, while only the organization's claude.ai holds
+ * that client's secret, without which a code is worth nothing.
  */
 export const CLAUDE_AI_REDIRECT = "https://claude.ai/api/mcp/auth_callback";
 
-/** The redirect URIs a client may use: a native client's loopback URI, or claude.ai's callback. */
-export const isAllowedRedirect = (uri: string) => isLoopbackRedirect(uri) || uri === CLAUDE_AI_REDIRECT;
+/**
+ * The redirect URIs of a client: loopback ones for a public client (Claude Code, registered dynamically), claude.ai's
+ * callback for a confidential one (the connector's, the only one, created by the admin: oauth.ts claudeConnectorClient).
+ */
+export const isAllowedRedirect = (uri: string, clientType: string) =>
+  clientType === "confidential" ? uri === CLAUDE_AI_REDIRECT : isLoopbackRedirect(uri);
+
+export interface ClientAccess {
+  client_type: string;
+  /** Listed in connector_clients: a claude.ai connector's client. */
+  connector: boolean;
+  /** Its builder (Pro, Max); null: the organization's connector (Team, Enterprise). */
+  owner: string | null;
+}
+
+/**
+ * Whether an account may sign in with a client: any account with a public client (Claude Code) or the organization's
+ * connector, only its builder with a builder's own connector (whose secret that builder holds: a leak signs in nobody
+ * else). A confidential client that is not a connector's (its builder was deleted) signs nobody in.
+ */
+export const clientAllowed = (client: ClientAccess, userId: string) =>
+  client.client_type === "public" || (client.connector && (client.owner === null || client.owner === userId));
 
 /** Same loopback redirect URI except for the port: RFC 8252 §7.3 lets a native client pick its port at each sign-in. */
 export function sameLoopbackExceptPort(a: string, b: string): boolean {
@@ -77,9 +100,9 @@ export interface Registration {
 }
 
 /**
- * Dynamic client registration (RFC 7591), restricted to public clients of Claude: loopback redirect URIs (Claude Code)
- * or claude.ai's callback (connectors), no secret, authorization code and refresh token grants. Other metadata is
- * dropped.
+ * Dynamic client registration (RFC 7591), restricted to public native clients: loopback redirect URIs only, no secret,
+ * authorization code and refresh token grants. Other metadata is dropped. claude.ai connectors do not register: they
+ * use the client the admin created.
  */
 export function sanitizeRegistration(body: unknown): Registration {
   const input = (body && typeof body === "object" ? body : {}) as Record<string, unknown>;
@@ -88,10 +111,11 @@ export function sanitizeRegistration(body: unknown): Registration {
     throw new OAuthError("invalid_redirect_uri", `redirect_uris must list 1 to ${MAX_LOOPBACK_REDIRECTS} URIs`);
   }
   for (const uri of uris) {
-    if (typeof uri !== "string" || !isAllowedRedirect(uri)) {
+    if (typeof uri !== "string" || !isLoopbackRedirect(uri)) {
       throw new OAuthError(
         "invalid_redirect_uri",
-        `redirect URIs must be http://localhost, http://127.0.0.1, http://[::1] or ${CLAUDE_AI_REDIRECT}`,
+        "only native clients may register: redirect URIs must be http://localhost, http://127.0.0.1 or http://[::1] " +
+          "(a claude.ai connector uses the client ID and secret the platform admin gives)",
       );
     }
   }
@@ -142,6 +166,24 @@ export function errorRedirect(redirectUri: string, error: OAuthError, state: str
   url.searchParams.set("error_description", error.description);
   if (state) url.searchParams.set("state", state);
   return url.toString();
+}
+
+/**
+ * The client credentials of an `Authorization: Basic` header (client_secret_basic, RFC 6749 §2.3.1: both parts
+ * form-urlencoded, then base64), or null when the header is not one.
+ */
+export function basicCredentials(header: string | undefined): { client_id: string; client_secret: string } | null {
+  const match = /^Basic ([A-Za-z0-9+/]+=*)$/i.exec(header?.trim() ?? "");
+  if (!match) return null;
+  const decoded = Buffer.from(match[1]!, "base64").toString("utf8");
+  const colon = decoded.indexOf(":");
+  if (colon < 0) return null;
+  const part = (value: string) => decodeURIComponent(value.replaceAll("+", " "));
+  try {
+    return { client_id: part(decoded.slice(0, colon)), client_secret: part(decoded.slice(colon + 1)) };
+  } catch {
+    return null;
+  }
 }
 
 /** Whether a code approved at `approvedAt` may still be exchanged at `now`. */
