@@ -302,7 +302,7 @@ else
   if [ -z "$CI_ALLOWED" ] && [ "$INTERACTIVE" = 1 ]; then
     read -r -p "GitHub organization of the company (empty: set CI_ALLOWED_WORKFLOWS later): " ORG
     if [ -n "$ORG" ]; then
-      read -r -p "Repository of the plugin marketplace and the reusable workflow [platform]: " REPO
+      read -r -p "Repository of the reusable workflow (the copy of the platform repository) [platform]: " REPO
       CI_ALLOWED="$ORG/${REPO:-platform}/.github/workflows/deploy.yml@refs/heads/main"
     fi
   fi
@@ -434,7 +434,7 @@ grep -q '^SMTP_HOST=mailpit$' .env && echo "Emails:       http://localhost:8025 
 if [ "$MODE" = production ]; then
   echo
   echo "Next steps (docs/INSTALL.md): copy deploy/.env (PLATFORM_MASTER_KEY) to a safe place outside this host, publish"
-  echo "the plugin marketplace and the reusable workflow, set the organization variable PLATFORM_URL=$API_URL, then"
+  echo "the reusable workflow, set the organization variable PLATFORM_URL=$API_URL, then"
   echo "sign in to $ADMIN_URL and change the admin password."
 fi
 

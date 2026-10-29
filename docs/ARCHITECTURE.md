@@ -224,7 +224,7 @@ Each step must be idempotent, with resume on error and a symmetric `delete` oper
 ```
 plugin/
   .claude-plugin/plugin.json
-  .mcp.json                     # url: ${user_config.platform_url}, asked when the plugin is enabled; browser sign-in (OAuth), or a PAT in X-Platform-Token
+  .mcp.json                     # url: ${PLATFORM_URL:-<the platform's>}; browser sign-in (OAuth), or a PAT in X-Platform-Token
   deploy-cli/                   # platform-deploy shipped in the plugin, with its composite action (action.yml)
   skills/build/SKILL.md         # target architecture of the apps (Vite + React, supabase-js, migrations with RLS, functions)
   skills/deploy/SKILL.md        # CI setup, then push and run follow-up; direct deployment if allowed
@@ -233,7 +233,7 @@ plugin/
 packages/deploy-cli/            # package of platform-deploy (typecheck, tests): src -> ../../plugin/deploy-cli
 ```
 
-The plugin and the reusable workflow live in the **same internal repo** of the company (the plugin marketplace), whose Actions access is open to the organization's other repos: a copy of this repository pushed by the admin, with no change: each builder enters the instance's URL when the plugin is enabled (INSTALL.md §7). The workflow runs the composite action of its own repository at the running commit (`uses: $/plugin/deploy-cli`), so the copy needs no patching and upgrades are a pull and a push.
+The reusable workflow lives in the company's **internal copy of this repository**, whose Actions access is open to the organization's other repos: pushed by the admin, with no change (INSTALL.md §7). The plugin is not installed from it: each platform serves it on its API host, configured with its own URL (`/plugin/marketplace.json`, an archive source pointing to `/plugin/platform.zip`, `apps/control-plane/src/plugin.ts`), so the repository can stay private. The workflow runs the composite action of its own repository at the running commit (`uses: $/plugin/deploy-cli`), so the copy needs no patching and upgrades are a pull and a push.
 
 ### 6.1 `deploy` skill (builder)
 
@@ -249,7 +249,7 @@ The plugin and the reusable workflow live in the **same internal repo** of the c
 
 Path choice: CI if `whoami.ci` exists and the project has (or the user wants) a repo in `ci.github_org`; direct if `direct_deploy` and no repo nor CI, or on explicit request; otherwise, explanation and stop. The migration review (step 6) goes in both cases through `platform-deploy check` with the PAT (`dry_run` stays open to builders). The default branch must be protected for CI to publish: the skill checks it and offers a minimal protection (PR required). The calling workflow is written from the plugin's app template (`plugin/template/ci/.github/workflows/platform.yml`, by `init-app.sh`) with the `uses:` from `whoami.ci`.
 
-Distribution: a plugin marketplace internal to the customer (Git repo), installed in one command. The developer signs in through the browser at the first use (USER_JOURNEYS B1); PATs in `PLATFORM_TOKEN` stay for admins and scripts. The developer also needs the `gh` CLI logged in.
+Distribution: the marketplace the platform serves (public, no secret in it), installed in one command: `claude plugin install platform --marketplace https://api.<domain>/plugin/marketplace.json`. The developer signs in through the browser at the first use (USER_JOURNEYS B1); PATs in `PLATFORM_TOKEN` stay for admins and scripts. The developer also needs the `gh` CLI logged in.
 
 Local development stays standard (`supabase start` with the official CLI). Migrations are the contract between local and the platform.
 
@@ -313,7 +313,7 @@ Screens:
 
 - `deploy/` directory containing a `docker-compose.yml` for the core (Postgres, Caddy, control plane, admin, Storage, Realtime, Edge Runtime, multi-head Studio, postgres-meta, Loki, Vector) and an `install.sh` script, which checks the prerequisites, generates the secrets, initializes the template database and creates the first admin.
 - Customer prerequisites: a Linux VM (16 GB+ recommended for 50 apps), a wildcard DNS `*.<domain>`, ports 80/443, an SMTP, an S3 bucket for backups (optional; otherwise backups stay on the VM, to be copied elsewhere), a copy of `PLATFORM_MASTER_KEY` outside the VM (without it, the keys and secrets of backed-up apps are unreadable), a **GitHub organization** (github.com or GHES with OIDC). The API must be reachable by the GitHub Actions runners (otherwise, self-hosted runners in the customer's network), and the control plane must reach the OIDC issuer.
-- GitHub configuration at install: publication of the internal repo (marketplace + reusable workflow), addition of the company's checks to the workflow, list of allowed `job_workflow_ref` (`CI_ALLOWED_WORKFLOWS`), `DIRECT_DEPLOY=admins`, `PLATFORM_URL` organization variable.
+- GitHub configuration at install: publication of the internal repo (reusable workflow), addition of the company's checks to the workflow, list of allowed `job_workflow_ref` (`CI_ALLOWED_WORKFLOWS`), `DIRECT_DEPLOY=admins`, `PLATFORM_URL` organization variable.
 - **Supabase component versions pinned**, aligned with a release of the official Supabase `docker-compose`. Platform upgrades go through a control plane migration script, then a progressive recycling of the GoTrue and PostgREST containers, app by app.
 - **Done (M7, part 2)**: `install.sh --production --domain <domain>` (prerequisites, wildcard DNS checked, secrets, `DIRECT_DEPLOY=admins`, no test service nor flag, SMTP, GitHub OIDC, backup S3, first admin), on-demand TLS by Caddy with the control plane's `ask` endpoint (platform hosts and existing app hosts only), `deploy/upgrade.sh` (backups, images, migrations at startup, app-by-app recycling without downtime, `realtime-migrate`, linter, verification, rollback instructions), version recorded in `platform_versions` and shown in the admin. Guide: [INSTALL.md](INSTALL.md).
 

@@ -20,9 +20,10 @@ if [ -n "$uses" ]; then
   [[ "$branch" =~ ^[A-Za-z0-9_./-]+$ ]] || { echo "invalid branch: $branch" >&2; exit 2; }
   layers+=(ci)
 fi
-# ponytail: the reusable workflow's repository is also the plugin marketplace (the company's copy of the platform repo)
-marketplace="${uses%%/.github/*}"
 template="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# the marketplace the platform serves next to its MCP endpoint
+mcp_url="$("$template/../skills/deploy/scripts/platform-url.sh")"
+marketplace="${mcp_url%/mcp}/plugin/marketplace.json"
 for layer in "${layers[@]}"; do
   (cd "$template/$layer" && find . -type f | sort) | while read -r file; do
     file="${file#./}"

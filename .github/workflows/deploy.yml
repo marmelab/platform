@@ -4,8 +4,8 @@
 # accepts CI tokens whose `job_workflow_ref` is in CI_ALLOWED_WORKFLOWS, so the company checks below cannot be
 # skipped by editing the app repository's workflow.
 #
-# `workflow_call` only: it never runs on this repository. The company's internal copy of this repository (the plugin
-# marketplace, INSTALL.md §7), whose Actions access is open to the organization's repositories, serves it to the app
+# `workflow_call` only: it never runs on this repository. The company's internal copy of this repository (INSTALL.md
+# §7), whose Actions access is open to the organization's repositories, serves it to the app
 # repositories; `$/plugin/deploy-cli` below is the composite action of that same repository at the running commit, so
 # the copy needs no patching. See packages/deploy-cli/README.md.
 name: Platform

@@ -187,8 +187,8 @@ Deployments go through the company's GitHub Actions (ARCHITECTURE §5.1 and §6.
    git push -u origin main
    ```
 
-   Nothing needs to be changed in the copy. Builders enter the platform's URL when they enable the plugin
-   (step 7). The reusable workflow (`.github/workflows/deploy.yml`) is `workflow_call` only, so it never runs on
+   Nothing needs to be changed in the copy, and it can be private or internal: builders do not install the plugin
+   from it, the platform serves it (step 7). The reusable workflow (`.github/workflows/deploy.yml`) is `workflow_call` only, so it never runs on
    the repository itself, and it runs the `platform-deploy` action of its own repository at the running commit
    (`uses: $/plugin/deploy-cli`), whatever the organization is called. At every platform upgrade:
    `git pull upstream main && git push`.
@@ -204,9 +204,9 @@ Deployments go through the company's GitHub Actions (ARCHITECTURE §5.1 and §6.
 6. **Branch protection** (optional): every push to an app's default branch deploys, and the `deploy` skill does not
    protect the branches it creates. To require pull requests and reviews before a deployment, use organization
    rulesets on the default branch of every repository; the skill then opens a PR instead of pushing.
-7. **Builders** install the plugin: `claude plugin marketplace add <org>/platform`, then
-   `claude plugin install platform@platform-local`; Claude Code asks for the Platform MCP URL,
-   `https://api.<domain>/mcp` (the welcome email gives it). They also have the GitHub CLI logged in. At the first use, Claude Code
+7. **Builders** install the plugin the platform serves, with the command of their welcome email:
+   `claude plugin install platform --marketplace https://api.<domain>/plugin/marketplace.json`. Nothing to configure:
+   the served plugin carries the platform's URL. They also have the GitHub CLI logged in. At the first use, Claude Code
    asks them to sign in (`/mcp`, then Authenticate): the browser opens on the platform's login page, then a consent
    page. Admins who prefer a PAT export `PLATFORM_TOKEN` before starting Claude Code.
 

@@ -108,13 +108,14 @@ check "new app is named after its slug" grep -q '"name": "demo-app"' "$new/packa
 check "new app has the target architecture" grep -q "# demo-app" "$new/CLAUDE.md"
 check "no CI file without a workflow reference" test ! -e "$new/.github" -a ! -e "$new/.claude/settings.json"
 uses="acme/platform/.github/workflows/deploy.yml@v1"
-check "init-app.sh adds only the CI files to an app" bash -c "cd '$new' && test \"\$('$init' demo-app '$uses' trunk 2> /dev/null | tr '\n' ' ')\" = '.claude/settings.json .github/workflows/platform.yml '"
+check "init-app.sh adds only the CI files to an app" bash -c "cd '$new' && test \"\$(PLATFORM_URL=https://api.acme.test/mcp '$init' demo-app '$uses' trunk 2> /dev/null | tr '\n' ' ')\" = '.claude/settings.json .github/workflows/platform.yml '"
 check "caller calls the allowed workflow" grep -qx "    uses: $uses" "$new/.github/workflows/platform.yml"
 check "caller deploys from the default branch" grep -q "branches: \[trunk\]" "$new/.github/workflows/platform.yml"
 check "caller asks for an OIDC token" grep -q "id-token: write" "$new/.github/workflows/platform.yml"
-check "repository settings offer the plugin from the workflow's repository" node -e '
+check "repository settings offer the plugin the platform serves" node -e '
   const s = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
-  if (s.extraKnownMarketplaces["platform-local"].source.repo !== "acme/platform" || s.enabledPlugins["platform@platform-local"] !== true) process.exit(1);
+  const source = s.extraKnownMarketplaces.platform.source;
+  if (source.source !== "url" || source.url !== "https://api.acme.test/plugin/marketplace.json" || s.enabledPlugins["platform@platform"] !== true) process.exit(1);
 ' "$new/.claude/settings.json"
 check "no placeholder left" bash -c "! grep -rqE '__[A-Z]+__' '$new'"
 check "every template file is written" test "$(cd "$plugin/template" && find app project ci -type f | wc -l)" -eq "$(find "$new" -type f | wc -l)"
@@ -161,21 +162,14 @@ check "reusable workflow uses the plugin's action at the running commit" grep -q
 check "reusable workflow is workflow_call only" bash -c "grep -qx '  workflow_call:' '$workflow' && ! grep -qE '^  (push|pull_request|schedule|workflow_dispatch):' '$workflow'"
 if command -v actionlint > /dev/null; then check "actionlint accepts the reusable workflow" actionlint "$workflow"; fi
 
-# 9. The platform URL: the MCP server takes the plugin option Claude Code asks for when the plugin is enabled; the
-# scripts read the stored value (settings.json pluginConfigs), PLATFORM_URL wins, the local stack is the default
-check ".mcp.json takes its URL from the plugin option" grep -qF '"url": "${user_config.platform_url}"' "$plugin/.mcp.json"
-check "plugin.json declares the option with the local default" grep -q '"default": "http://api.localhost:8100/mcp"' "$plugin/.claude-plugin/plugin.json"
+# 9. The platform URL: PLATFORM_URL when exported, else the local stack. The platform serves the plugin with its own
+# URL in place of the local one (apps/control-plane/src/plugin.ts)
+check ".mcp.json takes PLATFORM_URL, the local stack by default" grep -qF '"url": "${PLATFORM_URL:-http://api.localhost:8100/mcp}"' "$plugin/.mcp.json"
+check "platform-url.sh has the same default" grep -qF 'echo "${PLATFORM_URL:-http://api.localhost:8100/mcp}"' "$scripts/platform-url.sh"
 if command -v claude > /dev/null; then check "claude plugin validate" claude plugin validate "$ROOT/plugin"; fi
-home="$tmp/home"
-mkdir -p "$home/.claude" "$tmp/proj/.claude"
-printf '{ "pluginConfigs": { "platform@platform-local": { "options": { "platform_url": "%s" } } } }\n' "$fake_url" > "$home/.claude/settings.json"
-printf '{ "pluginConfigs": { "platform@platform-local": { "options": { "platform_url": "http://proj.invalid/mcp" } } } }\n' > "$tmp/proj/.claude/settings.json"
-check "check-connection.sh uses the plugin option" bash -c "cd '$tmp' && env -u PLATFORM_URL -u PLATFORM_TOKEN HOME='$home' '$scripts/check-connection.sh' 2> '$tmp/api' | grep -qx NOT_SIGNED_IN && test \"\$(cat '$tmp/api')\" = 'api: $fake_url'"
 echo 'console.log(process.env.PLATFORM_URL)' > "$plugin/deploy-cli/main.ts"
-check "platform-deploy uses the plugin option" bash -c "cd '$tmp' && test \"\$(env -u PLATFORM_URL HOME='$home' PLATFORM_TOKEN=x '$scripts/platform-deploy' check)\" = '$fake_url'"
-check "the project's settings win over the user's" bash -c "cd '$tmp/proj' && test \"\$(env -u PLATFORM_URL HOME='$home' PLATFORM_TOKEN=x '$scripts/platform-deploy' check)\" = 'http://proj.invalid/mcp'"
-check "exported PLATFORM_URL wins over the option" bash -c "cd '$tmp' && test \"\$(HOME='$home' PLATFORM_URL=http://other.invalid/mcp PLATFORM_TOKEN=x '$scripts/platform-deploy' check)\" = 'http://other.invalid/mcp'"
-check "without any setting, the local stack" bash -c "cd '$tmp' && test \"\$(env -u PLATFORM_URL HOME='$tmp/nohome' PLATFORM_TOKEN=x '$scripts/platform-deploy' check)\" = 'http://api.localhost:8100/mcp'"
+check "platform-deploy uses an exported PLATFORM_URL" bash -c "cd '$tmp' && test \"\$(PLATFORM_URL=http://other.invalid/mcp PLATFORM_TOKEN=x '$scripts/platform-deploy' check)\" = 'http://other.invalid/mcp'"
+check "without it, the local stack" bash -c "cd '$tmp' && test \"\$(env -u PLATFORM_URL PLATFORM_TOKEN=x '$scripts/platform-deploy' check)\" = 'http://api.localhost:8100/mcp'"
 
 echo
 if [ "$failures" -gt 0 ]; then echo "$failures check(s) failed" >&2; exit 1; fi

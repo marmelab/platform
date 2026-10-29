@@ -21,34 +21,32 @@ plugin/
     platform-deploy                # runs deploy-cli/main.ts with a deploy token or the PAT (check | deploy [--reason])
     check-connection.sh            # step 0: OK | NOT_SIGNED_IN | ACCOUNT_REFUSED | UNREACHABLE, never a secret
     function-secrets.sh            # secrets read by supabase/functions (Deno.env.get), platform ones excluded
-    platform-url.sh                # the MCP URL the scripts use: PLATFORM_URL, else the plugin option, else the local stack
+    platform-url.sh                # the MCP URL the scripts use: PLATFORM_URL, else the local stack (the platform's, served)
   skills/admin-deploy/SKILL.md     # admins: audited direct deployment of a pushed commit, with a reason
   skills/admin-deploy/scripts/
     preflight.sh                   # refuses a dirty tree, an unpushed commit, a checkout of another repository
   test/scripts.test.sh             # checks the skills' scripts and the MCP tools they name, without the platform
 ```
 
-The marketplace (`platform-local`) is declared in `.claude-plugin/marketplace.json` at the repo root, so any clone of this repository is a marketplace: the company's internal copy (which also serves the reusable workflow) needs no change: each builder enters the platform's URL when the plugin is enabled ([INSTALL.md](../docs/INSTALL.md) §7). The plugin directory holds real files only (no symlink: a git marketplace ships none) and is self-contained once installed.
+Each platform serves this plugin on its API host, configured for itself: `https://api.<domain>/plugin/marketplace.json`, a marketplace named `platform` whose only entry is an archive source, `/plugin/platform.zip` (this directory zipped, with the platform's MCP URL in place of the local stack's in `.mcp.json` and `platform-url.sh`; pinned by its sha256; public, there is no secret in it). Builders need neither the repository nor any setting: the repository can stay private. For local development, the repo root also declares a marketplace, `platform-local` (`.claude-plugin/marketplace.json`), that installs this directory as is, with the local stack's URL. The plugin directory holds real files only (no symlink) and is self-contained once installed.
 
 ## Installation
 
 Prerequisites: Node.js ≥ 22.18 (`platform-deploy` runs TypeScript directly) and, for the CI path, the GitHub CLI (`gh`) logged in with the right to create repositories in the company organization (or an existing repository there). No token to get, no file to edit.
 
-1. Add the marketplace and install the plugin:
+1. Install the plugin the platform serves (the command is in your welcome email):
 
    ```bash
-   claude plugin marketplace add <org>/<platform repo>   # the company's marketplace repository; or a local checkout's path
-   claude plugin install platform@platform-local
+   claude plugin install platform --marketplace https://api.<domain>/plugin/marketplace.json
    ```
 
-   In an interactive session: `/plugin marketplace add <path or URL>` then `/plugin install platform@platform-local`.
-   Claude Code asks for the **Platform MCP URL**: `https://api.<domain>/mcp`, given in your welcome email (the
-   default is the local stack). Later: `/plugin configure platform@platform-local`, or from a shell
-   `claude plugin install platform@platform-local --config platform_url=<url>`.
+   Updates come with the platform's releases (the plugin's `version` is the platform's): `/plugin marketplace update platform`.
+   On a local stack (plain HTTP, which Claude Code refuses for archives), install from the checkout instead: `make plugin`,
+   i.e. `claude plugin marketplace add <checkout>` then `claude plugin install platform@platform-local`.
 
 2. Sign in, once: ask Claude to deploy (the `deploy` skill explains what to do), or type `/mcp`, choose `plugin:platform:platform` (shown as "needs authentication"), then **Authenticate** (from a shell: `claude mcp login plugin:platform:platform`). The browser opens on the platform's login page (password or company SSO), then asks to allow Claude Code to access your apps. Claude Code keeps the tokens in the system keychain and refreshes them; `/mcp` then shows the server as connected. When an admin revokes the connection, the server shows **Re-authenticate**.
 
-The platform URL is the plugin's `platform_url` option (`userConfig` in `plugin.json`, default `http://api.localhost:8100/mcp`, the local stack): `.mcp.json` references it as `${user_config.platform_url}`, and `check-connection.sh` and `platform-deploy` read the stored value (`pluginConfigs` in `settings.json`, through `platform-url.sh`). `PLATFORM_URL` exported in the environment overrides it for the scripts.
+The platform URL: `PLATFORM_URL` when exported in the environment, else the one in the plugin, the local stack's (`http://api.localhost:8100/mcp`) in this repository and the platform's own in the plugin it serves. `.mcp.json` reads it as `${PLATFORM_URL:-<url>}`, and `check-connection.sh` and `platform-deploy` through `platform-url.sh`.
 
 To try it without installing: `claude --plugin-dir /path/to/platform/plugin`.
 
@@ -58,7 +56,7 @@ Export a PAT (admin console, Tokens) before starting Claude Code:
 
 ```bash
 export PLATFORM_TOKEN=plat_...
-export PLATFORM_URL=https://api.<domain>/mcp   # optional: overrides the plugin option for the scripts
+export PLATFORM_URL=https://api.<domain>/mcp   # optional: overrides the plugin's URL
 ```
 
 `.mcp.json` sends it in the `X-Platform-Token` header, empty when `PLATFORM_TOKEN` is unset. Not in `Authorization`: Claude Code never falls back to the browser sign-in when a configured `Authorization` header is refused, and the plugin's `headersHelper` cannot read the user's environment (Claude Code runs it with a cleaned one). With a PAT set, the server connects at once and OAuth is not used; a revoked PAT makes it ask for the browser sign-in. `platform-deploy` uses `PLATFORM_TOKEN` directly. Without the plugin: `claude mcp add --transport http platform <url> --header "X-Platform-Token: $PLATFORM_TOKEN"`.
@@ -95,7 +93,8 @@ Expected repo conventions:
 
 ## Tests
 
-- `plugin/test/scripts.test.sh` (also run by `pnpm --filter @platform/control-plane test`): from a copy of the plugin, every `${CLAUDE_PLUGIN_ROOT}` path of the skills exists, every MCP tool they name exists in the control plane, `.mcp.json` has no `Authorization` header, and the scripts behave (secrets scan, app template: new app, existing app, CI files, never overwrites, preflight refusals, `platform-deploy` with a deploy token or a PAT, `check-connection.sh` against a fake platform; `actionlint` on the generated caller and the reusable workflow when installed), the reusable workflow (`$/plugin/deploy-cli`, `workflow_call` only), and the platform URL (`.mcp.json` references the plugin option, the scripts read the stored value, `PLATFORM_URL` wins, the local stack by default).
+- `plugin/test/scripts.test.sh` (also run by `pnpm --filter @platform/control-plane test`): from a copy of the plugin, every `${CLAUDE_PLUGIN_ROOT}` path of the skills exists, every MCP tool they name exists in the control plane, `.mcp.json` has no `Authorization` header, and the scripts behave (secrets scan, app template: new app, existing app, CI files, never overwrites, preflight refusals, `platform-deploy` with a deploy token or a PAT, `check-connection.sh` against a fake platform; `actionlint` on the generated caller and the reusable workflow when installed), the reusable workflow (`$/plugin/deploy-cli`, `workflow_call` only), and the platform URL (`.mcp.json` and `platform-url.sh` default to the local stack, `PLATFORM_URL` wins).
+- `apps/control-plane/test/plugin.test.ts`: the served zip (the platform's URL in place of the local one, the scripts' exec bit, a stable sha256 pinned by the marketplace); `admin.e2e.test.ts` fetches it from the running stack.
 - `apps/control-plane/test/plugin.e2e.test.ts` (`e2e:plugin`): the commands of the direct path of `deploy` (with a PAT, then with deploy tokens and `check-connection.sh`), then of `admin-deploy`, on a copy of `examples/todo-app` against the running stack.
 - `apps/control-plane/test/oauth.e2e.test.ts` (`e2e:oauth`): the browser sign-in, with a simulated client.
 - By hand, with Claude Code 2.1.290: `claude mcp list` shows "Needs authentication" without `PLATFORM_TOKEN` and "Connected" with it; `claude mcp login plugin:platform:platform` completes the browser sign-in, then `whoami` answers with `credential: "oauth"`.

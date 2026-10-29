@@ -53,9 +53,10 @@ move it to a private bucket (the commented `backend "s3"` block).
 
 ## Updating the platform
 
-Merge the change to the company copy's `main`. A change to the plugin or to `.github/workflows/deploy.yml` needs
-nothing more: CI runs the workflow of `main`, and builders get the plugin from the marketplace. A change to what runs
-on the VM is applied with the upgrade script (INSTALL.md §11: app backups, rollback image tags, app recycling without
+Merge the change to the company copy's `main`. A change to `.github/workflows/deploy.yml` or to the action it runs
+(`plugin/deploy-cli`) needs nothing more: CI runs the workflow of `main`. Anything else, including the plugin the
+control plane serves to builders (with a new `VERSION`, so that Claude Code offers the update), runs on the VM and is
+applied with the upgrade script (INSTALL.md §11: app backups, rollback image tags, app recycling without
 downtime, verification):
 
 1. Open a session on the VM (needs the Session Manager plugin of the AWS CLI and the IAM action `ssm:StartSession`,
