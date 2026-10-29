@@ -146,7 +146,7 @@ A Claude Code session on the web (§6) runs in a sandbox with no port forwarding
 
 - `frps` (`deploy/frps/frps.toml`), on the internal network only. Caddy sends `api.<domain>/~!frp` (frp's websocket path) to its bind port and the `preview-<slug>.<domain>` hosts to its vhost port; on-demand TLS covers the preview host of an existing app, and `preview-` is reserved in slugs.
 - In the sandbox, the `build` skill's `preview.sh` starts the dev server on 127.0.0.1 (it also relays the local Supabase API on the same host, `PREVIEW_SUPABASE_API` in the app's `vite.config.ts`) and `frpc`, which dials `wss://api.<domain>/~!frp` through the proxy. Idempotent, run again after a restart.
-- Credentials: `create_preview_token` (any member, audited) mints a token of kind `preview` (12 hours, one app, revoked with its parent). frps asks the control plane (server plugin, `POST /frp/plugin` on the internal listener, `previews.ts`) at login and for each proxy: only an `http` proxy on `preview-<the token's app>` is accepted. The MCP endpoint refuses preview tokens.
+- Credentials: `create_preview_token` (any member, audited) mints a token of kind `preview` (12 hours, one app, revoked with its parent, void once its builder leaves the app). frps asks the control plane (server plugin, `POST /frp/plugin` on the internal listener, `previews.ts`) at login, for each proxy and at each heartbeat (every 30 s): only an `http` proxy on `preview-<the token's app>` is accepted, and a token that expires or is revoked drops the tunnel; a client that stops pinging is dropped after 90 s. The MCP endpoint refuses preview tokens.
 - The preview holds made-up data (the session's local database) and its URL is public while the session runs (TECH_DEBT).
 
 ## 4. Control plane

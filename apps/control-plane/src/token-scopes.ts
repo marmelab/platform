@@ -32,12 +32,13 @@ export const frpToken = (request: FrpRequest) =>
 
 /**
  * The answer of the preview tunnel's frps plugin (previews.ts), given the slug of the client's preview token (null: no
- * valid token): a preview token logs in and opens an http proxy on preview-<its app>, nothing else.
+ * valid token): a preview token logs in and opens an http proxy on preview-<its app>, nothing else. Each heartbeat
+ * (Ping) checks the token again: a rejected one drops the tunnel.
  */
 export function frpDecision(request: FrpRequest, slug: string | null): { reject: boolean; reject_reason?: string; unchange?: boolean } {
   const reject = (reason: string) => ({ reject: true, reject_reason: reason });
   if (!slug) return reject("invalid or expired preview token: ask Claude for a new one (create_preview_token)");
-  if (request.op === "Login") return { reject: false, unchange: true };
+  if (request.op === "Login" || request.op === "Ping") return { reject: false, unchange: true };
   if (request.op !== "NewProxy") return reject(`operation ${String(request.op)} not allowed`);
   const proxy = request.content ?? {};
   if (proxy.proxy_type !== "http") return reject("only http proxies are allowed");

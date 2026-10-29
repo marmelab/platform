@@ -178,21 +178,26 @@ const proxy = (content: Record<string, unknown>) => ({
   op: "NewProxy",
   content: { user: { metas: { token: "plat_prv_x" } }, proxy_type: "http", subdomain: "preview-notes", ...content },
 });
+const ping = { op: "Ping", content: { user: { metas: { token: "plat_prv_x" } }, timestamp: 0 } };
 
 test("preview tunnel: frpc's token, in metas at login and user.metas afterwards", () => {
   assert.equal(frpToken(login), "plat_prv_x");
   assert.equal(frpToken(proxy({})), "plat_prv_x");
+  assert.equal(frpToken(ping), "plat_prv_x");
   assert.equal(frpToken({ op: "Login", content: { user: { metas: { token: "elsewhere" } } } }), "");
   assert.equal(frpToken({}), "");
 });
 
-test("a preview token logs in and opens an http proxy on preview-<its app> only", () => {
+test("a preview token logs in and opens an http proxy on preview-<its app> only, checked again at each heartbeat", () => {
   assert.deepEqual(frpDecision(login, "notes"), { reject: false, unchange: true });
   assert.deepEqual(frpDecision(proxy({}), "notes"), { reject: false, unchange: true });
+  assert.deepEqual(frpDecision(ping, "notes"), { reject: false, unchange: true });
 
   for (const [request, slug] of [
     [login, null],
     [proxy({}), null],
+    // expired, revoked, account disabled or builder removed from the app since the login: the tunnel drops
+    [ping, null],
     [proxy({ subdomain: "preview-other" }), "notes"],
     [proxy({ subdomain: "notes" }), "notes"],
     [proxy({ subdomain: undefined }), "notes"],

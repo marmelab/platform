@@ -2,9 +2,9 @@
 // builder tries the app running in the session's sandbox at <scheme>://preview-<slug>.<apps domain>, through frp.
 // frpc, in the sandbox, dials <api host>/~!frp over a websocket through the sandbox's HTTPS proxy (Caddy -> frps);
 // Caddy sends the preview hosts to frps's vhost port (router.ts). frps asks this module, its server plugin on the
-// internal listener, whether a client may log in (a preview token from create_preview_token) and open a proxy (http,
-// subdomain preview-<the token's app>, nothing else). Preview tokens open nothing else: the MCP endpoint refuses them
-// (auth.ts).
+// internal listener, whether a client may log in (a preview token from create_preview_token), open a proxy (http,
+// subdomain preview-<the token's app>, nothing else), and keep its tunnel at each heartbeat (frps.toml). Preview tokens
+// open nothing else: the MCP endpoint refuses them (auth.ts).
 import { PREVIEW_PREFIX } from "@platform/shared";
 import { Hono } from "hono";
 import { type AppRow, UserError } from "./apps.ts";
@@ -32,12 +32,16 @@ export async function createPreviewToken(user: User, app: AppRow) {
   return { token: value, app: app.slug, url: appUrl(`${PREVIEW_PREFIX}${app.slug}`), expires_at: expiresAt };
 }
 
-/** The app slug of a live preview token (same revocation rules as the other tokens, auth.ts), or null. */
+/**
+ * The app slug of a live preview token, or null: same revocation rules as the other tokens (auth.ts), and its builder
+ * still a member of the app, or an admin (as appForUser).
+ */
 async function previewTokenApp(value: string): Promise<string | null> {
   const row = await one<{ slug: string }>(
     `select a.slug from tokens t join users u on u.id = t.user_id join apps a on a.id = t.app_ids[1]
       where t.hash = $1 and t.kind = 'preview' and t.revoked_at is null and t.expires_at > now() and u.active
         and a.status <> 'deleted'
+        and (u.role = 'admin' or exists (select 1 from app_members m where m.app_id = a.id and m.user_id = u.id))
         and (t.parent_id is null or exists (select 1 from tokens p where p.id = t.parent_id and p.revoked_at is null))`,
     [sha256(value)],
   );

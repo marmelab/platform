@@ -5,10 +5,15 @@
 bindPort = 7000
 vhostHTTPPort = 8080
 subDomainHost = "{{ .Envs.PLATFORM_DOMAIN }}"
-# ponytail: frp's default keepalives; shorten them if a restarted sandbox waits long for its subdomain to free up
+# frpc pings every 30 s (preview.sh) and frps asks the control plane at each ping (Ping below): an expired or revoked
+# token, a disabled account or a builder removed from the app loses the tunnel. A client that stops pinging, or never
+# does, is dropped after this timeout, which also frees the subdomain of a sandbox that restarted.
+# ponytail: frp's heartbeats are off by default with tcpMux, hence the explicit timeout; shorten it if a restarted
+# sandbox waits too long for its subdomain
+transport.heartbeatTimeout = 90
 
 [[httpPlugins]]
 name = "platform"
 addr = "control-plane:3001"
 path = "/frp/plugin"
-ops = ["Login", "NewProxy"]
+ops = ["Login", "NewProxy", "Ping"]

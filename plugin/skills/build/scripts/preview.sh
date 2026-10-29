@@ -50,6 +50,8 @@ serverAddr = "$server"
 serverPort = $port
 transport.protocol = "$protocol"
 loginFailExit = false
+# frps checks the token again at each ping and drops a client that stops pinging (deploy/frps/frps.toml)
+transport.heartbeatInterval = 30
 metadatas.token = "{{ .Envs.PLATFORM_PREVIEW_TOKEN }}"
 
 [[proxies]]
