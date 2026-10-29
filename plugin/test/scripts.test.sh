@@ -95,6 +95,11 @@ check "preview.sh outside the web: LOCAL" bash -c "test \"\$(env -u CLAUDE_CODE_
 refuses "preview.sh on the web needs a preview token" "PLATFORM_PREVIEW_TOKEN is not set" env -u PLATFORM_PREVIEW_TOKEN CLAUDE_CODE_REMOTE=true "$preview" https://preview-demo.acme.test http://127.0.0.1:54321
 refuses "preview.sh refuses another host" "not a preview URL" bash -c "cd '$plugin/template/app' && CLAUDE_CODE_REMOTE=true PLATFORM_PREVIEW_TOKEN=x '$preview' https://demo.acme.test http://127.0.0.1:54321"
 refuses "preview.sh without frpc: NO_TUNNEL" "NO_TUNNEL" bash -c "cd '$plugin/template/app' && PATH=/usr/bin:/bin CLAUDE_CODE_REMOTE=true PLATFORM_PREVIEW_TOKEN=x '$preview' https://preview-demo.acme.test http://127.0.0.1:54321"
+old_vite="$tmp/old-vite"
+mkdir -p "$old_vite"
+echo '{}' > "$old_vite/package.json"
+echo 'export default defineConfig({ plugins: [react()] });' > "$old_vite/vite.config.ts"
+refuses "preview.sh on an app made before the preview: OLD_VITE_CONFIG" "^OLD_VITE_CONFIG$" bash -c "cd '$old_vite' && CLAUDE_CODE_REMOTE=true PLATFORM_PREVIEW_TOKEN=x '$preview' https://preview-demo.acme.test http://127.0.0.1:54321"
 
 # 5. function-secrets.sh
 app="$tmp/app"

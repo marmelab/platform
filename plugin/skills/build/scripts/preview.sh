@@ -5,8 +5,8 @@
 # which serves it through the platform's preview tunnel at <preview url> (https://preview-<slug>.<domain>). The dev
 # server also relays the local Supabase API on that host (PREVIEW_SUPABASE_API, vite.config.ts). Idempotent: run it
 # again after a container restart (every process is gone, files stay). Prints the URL once it answers, LOCAL outside a
-# session on the web (use the local preview), or NO_TUNNEL (the logs are in ~/.platform-preview/<subdomain>/). Never
-# prints or writes the token.
+# session on the web (use the local preview), OLD_VITE_CONFIG (the app's vite.config predates the preview: merge the
+# template's), or NO_TUNNEL (the logs are in ~/.platform-preview/<subdomain>/). Never prints or writes the token.
 set -euo pipefail
 [ "${CLAUDE_CODE_REMOTE:-}" = true ] || { echo LOCAL; exit 0; }
 url="${1:?usage: preview.sh <preview url> <local Supabase API url>}"
@@ -17,6 +17,13 @@ host="${url#*://}"
 host="${host%%[:/]*}"
 subdomain="${host%%.*}"
 [[ "$subdomain" =~ ^preview-[a-z][a-z0-9-]{1,30}[a-z0-9]$ ]] || { echo "not a preview URL: $url" >&2; exit 2; }
+# init-app.sh never overwrites: an app made before the preview keeps a vite.config that refuses the preview host and
+# does not relay the Supabase API
+grep -qs PREVIEW_SUPABASE_API vite.config.* || {
+  echo "vite.config does not read PREVIEW_SUPABASE_API: merge the template's vite.config.ts" >&2
+  echo OLD_VITE_CONFIG
+  exit 1
+}
 command -v frpc > /dev/null || { echo "frpc is not installed (the environment's setup script installs it)" >&2; echo NO_TUNNEL; exit 1; }
 
 # the tunnel server: the platform's API host, over a websocket (TLS on HTTPS platforms)
