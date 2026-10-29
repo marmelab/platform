@@ -1,7 +1,7 @@
 ---
 name: deploy
 description: Deploy the current Vite + Supabase project to the internal platform (database migrations, edge functions, static frontend), through the app's GitHub Actions CI or, when the platform allows it, directly from this machine. Use when the user asks to deploy, publish, ship or put the app online "on the platform", to set up its CI, or to redeploy after changes.
-allowed-tools: mcp__plugin_platform_platform__*, Bash(git *), Bash(gh *), Bash(npm *), Bash(curl *), Bash(${CLAUDE_PLUGIN_ROOT}/skills/deploy/scripts/*), Bash(${CLAUDE_PLUGIN_ROOT}/template/init-app.sh *), Bash(PLATFORM_DEPLOY_TOKEN=* ${CLAUDE_PLUGIN_ROOT}/skills/deploy/scripts/platform-deploy *), Read, Glob, Grep, Write, Edit
+allowed-tools: mcp__plugin_platform_platform__*, mcp__claude_ai_Platform__*, Bash(git *), Bash(gh *), Bash(npm *), Bash(curl *), Bash(${CLAUDE_PLUGIN_ROOT}/skills/deploy/scripts/*), Bash(${CLAUDE_PLUGIN_ROOT}/template/init-app.sh *), Bash(PLATFORM_DEPLOY_TOKEN=* ${CLAUDE_PLUGIN_ROOT}/skills/deploy/scripts/platform-deploy *), Read, Glob, Grep, Write, Edit
 ---
 
 # Deploy to the platform
@@ -18,6 +18,8 @@ Scripts (call them by absolute path, from the project root):
 - `${CLAUDE_PLUGIN_ROOT}/template/init-app.sh <slug> [<uses> <default_branch>]`: adds the missing files of the app template, never overwrites: `CLAUDE.md` (the target architecture); with `<uses>`, `.github/workflows/platform.yml` and `.claude/settings.json` (offers the platform plugin to whoever opens the repository).
 - `${CLAUDE_PLUGIN_ROOT}/skills/deploy/scripts/check-connection.sh [--after-auth-error]`: why the platform cannot be used, in one word (step 0), and the API URL it checked.
 
+The platform tools are `mcp__plugin_platform_platform__*` in Claude Code on a computer (this plugin), and `mcp__claude_ai_Platform__*` in a session on the web (`CLAUDE_CODE_REMOTE=true`), where the organization's claude.ai connector provides them.
+
 **Credentials of `platform-deploy`.** When `whoami` says `credential: "oauth"` (the user signed in through the browser, the usual case), `platform-deploy` has no token of its own: call `create_deploy_token` with the app (valid 15 minutes, this app only), then run the script with the token as an environment prefix, e.g. `PLATFORM_DEPLOY_TOKEN=<token> ${CLAUDE_PLUGIN_ROOT}/skills/deploy/scripts/platform-deploy check`. Get a new one for each command. When `credential` is `"pat"`, run the script without a prefix: it uses `PLATFORM_TOKEN` from the environment.
 
 Rules: one command per Bash call (no `&&`, `;`, pipes, redirections or `VAR=value` prefixes, except the `PLATFORM_DEPLOY_TOKEN=` prefix above); edit files with Write/Edit. Never print, repeat or write a platform token (in messages, files or commits), never ask the user for a password or a token, never pass archives through MCP, never invent a secret value. One short status line per step, in the user's language.
@@ -33,9 +35,10 @@ App builders are usually not developers. Speak about what the app does and what 
 
 ## 0. Connection
 
-Run this step when the `mcp__plugin_platform_platform__*` tools are missing, or when `whoami` fails. Run `${CLAUDE_PLUGIN_ROOT}/skills/deploy/scripts/check-connection.sh`, with `--after-auth-error` when the platform tools worked earlier in this conversation and now fail with an authentication error (401, "needs authentication"). It prints one word; explain it in the user's language, without technical terms, then stop:
+Run this step when the platform tools are missing, or when `whoami` fails. Run `${CLAUDE_PLUGIN_ROOT}/skills/deploy/scripts/check-connection.sh`, with `--after-auth-error` when the platform tools worked earlier in this conversation and now fail with an authentication error (401, "needs authentication"). It prints one word; explain it in the user's language, without technical terms, then stop:
 
 - `NOT_SIGNED_IN`: "Claude is not connected to the platform yet. Type `/mcp`, choose **platform**, then **Authenticate**, and sign in with your platform account in the browser that opens. Then ask me again." (If the server shows **Re-authenticate**, choose it.)
+- `NOT_CONNECTED_WEB`: "Claude is not connected to the platform yet. On claude.ai, open Settings, then Connectors, choose **Platform**, then **Connect**, and sign in with your platform account. Then start a new session and ask me again."
 - `ACCOUNT_REFUSED`: "The platform refuses your account: it was disabled, or its access was removed. Contact the platform administrator."
 - `UNREACHABLE`: "Claude cannot reach the platform. Check your network connection (VPN?); if it keeps failing, tell the platform administrator."
 - `OK`: the platform answers; retry `whoami` once, then report the error as is.
@@ -52,7 +55,7 @@ Add one line for the admin: "for your admin: <word>, <the `api:` line the script
 
 ## 2. Choose the path
 
-- **CI** if `ci` is not null and the repo has a GitHub remote in `ci.github_org`, or the user wants one (offer to create it). Requires `gh auth status` to succeed; otherwise ask the user to run `gh auth login`.
+- **CI** if `ci` is not null and the repo has a GitHub remote in `ci.github_org`, or the user wants one (offer to create it). Requires `gh api user --jq .login` to succeed (on the web, `gh` is already signed in); otherwise ask the user to run `gh auth login`.
 - **Direct** if `direct_deploy` is true and there is no repository or CI, or the user explicitly asks for a direct deployment. With no repository yet, ask once: "create the GitHub repository and deploy through CI (recommended), or deploy directly now?".
 - **Neither** (`direct_deploy` false and CI impossible): explain why (no `gh`, CI not set up on the platform: ask an admin) and stop. An admin with `direct_deploy_setting: "admins"` deploying outside CI must use the `admin-deploy` skill (reason, audited).
 
@@ -67,15 +70,22 @@ Run `function-secrets.sh`, then `list_secrets`. Ask the user for each missing va
 3. Add a lint to `.platform.json` `acceptedLints` (`{ "name", "object" }`) only if the user explicitly consents in this conversation; it is reviewed in the diff and audited.
 4. Fix build errors before going on.
 
+## Repository
+
+The app's repository is `<ci.github_org>/<slug>`, created with the user's own GitHub account; the build skill runs this section as soon as the app has its name. `gh` goes through GitHub's REST API only (on the web, other `gh` commands such as `gh repo create` or `gh pr` are refused).
+
+1. If the path of `git remote get-url origin` already ends with `<ci.github_org>/<slug>` (`.git` aside), go to 4.
+2. `gh api -X POST orgs/<ci.github_org>/repos -f name=<slug> -F private=true --jq .full_name` (commit first). If it already exists, use it when `gh api repos/<ci.github_org>/<slug>` answers. If the user may not create repositories there, ask them to: "Create the repository on GitHub: https://github.com/new?owner=<ci.github_org>&name=<slug>&visibility=private (leave it empty), then tell me."
+3. Point `origin` at it: the current origin URL with its trailing `<owner>/<repo>` replaced by `<ci.github_org>/<slug>` (on the web, origin goes through a local GitHub proxy: keep the rest of the URL as is), or `https://github.com/<ci.github_org>/<slug>.git` when there is no remote (`git remote set-url origin <url>`, or `git remote add origin <url>`). If the repository was just created, `git push origin HEAD:main`: without the CI workflow yet, nothing deploys.
+4. `gh api repos/<ci.github_org>/<slug> --jq '{id: .id, default_branch: .default_branch, full_name: .full_name}'`, then `link_repo` with `repo` (owner/name), `repository_id` (numeric `id`) and `default_branch` (owner of the app only; otherwise ask the owner).
+
 ## 5a. CI path
 
-1. Repository: if missing, `gh repo create <ci.github_org>/<slug> --private --source . --push` (commit first). Then `gh api repos/<owner>/<repo> --jq '{id: .id, default_branch: .default_branch, full_name: .full_name}'`.
-2. `link_repo` with `repo` (owner/name), `repository_id` (numeric `id`) and `default_branch` (owner of the app only; otherwise ask the owner).
-3. `PLATFORM_URL` variable: if neither `gh variable list --org <owner>` nor `gh variable list` shows it, `gh variable set PLATFORM_URL --body <api_url>` (repository level).
-4. Workflow: `init-app.sh <slug> <ci.uses> <default_branch>`. It never overwrites: if the workflow already existed, check it calls `ci.uses` with `id-token: write`; if `.claude/settings.json` already existed, add the template's `extraKnownMarketplaces` and `enabledPlugins` entries to it.
-5. Commit the changes (`.platform.json`, the template files, fixes) on the default branch and `git push`: every push to it deploys. Do not protect the branch: reviews, if the company wants them, come from its GitHub rulesets. Only if the push is refused by such a rule: `git switch -c platform-deploy`, `git push -u origin platform-deploy`, `gh pr create --fill`, `gh pr checks --watch`, then ask the user to get the PR merged (the merge is the push that deploys; `gh pr merge --squash` only if they say so).
-6. `gh run list --workflow platform.yml --branch <default_branch> --limit 1 --json databaseId,url,status`, then `gh run watch <id> --exit-status`.
-7. Report the app URL, the Studio link (`get_app` `studio_url`) and the run URL. On failure: `gh run view <id> --log-failed`, then `get_logs`, and diagnose.
+1. Repository: if the app has none yet (`get_app` shows no linked repository, or the remote is not in `ci.github_org`), the **Repository** section above.
+2. Workflow: `init-app.sh <slug> <ci.uses> <default_branch>` (the caller workflow names the platform's URL: no repository variable to set). It never overwrites: if the workflow already existed, check it calls `ci.uses` with `id-token: write`; if `.claude/settings.json` already existed, add the template's `extraKnownMarketplaces` and `enabledPlugins` entries to it.
+3. Commit the changes (`.platform.json`, the template files, fixes) and `git push origin HEAD:<default_branch>` (a session on the web works on its own branch): every push to the default branch deploys. Do not protect the branch: reviews, if the company wants them, come from its GitHub rulesets. Only if the push is refused by such a rule: `git push origin HEAD:refs/heads/platform-deploy`, `gh api repos/<repo>/pulls -f title="Deploy to the platform" -f head=platform-deploy -f base=<default_branch> --jq .html_url`, watch its checks run (step 4, on the `platform-deploy` branch), then ask the user to get the PR merged (the merge is the push that deploys; merge it with `gh api -X PUT repos/<repo>/pulls/<number>/merge -f merge_method=squash` only if they say so).
+4. `gh run list --workflow platform.yml --branch <default_branch> --limit 1 --json databaseId,url,status`, then `gh run watch <id> --exit-status`.
+5. Report the app URL, the Studio link (`get_app` `studio_url`) and the run URL; on the web, also `get_app` `claude_code_url`: "to change the app later, open this link". On failure: `gh run view <id> --log-failed`, then `get_logs`, and diagnose.
 
 ## 5b. Direct path
 

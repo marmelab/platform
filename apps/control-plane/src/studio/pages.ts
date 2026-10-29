@@ -1,3 +1,4 @@
+import { isLoopbackRedirect } from "../oauth-policy.ts";
 import { CONSENT_PATH as OAUTH_CONSENT_PATH } from "../platform-auth.ts";
 
 const escape = (value: string) =>
@@ -30,9 +31,9 @@ export interface SsoOption {
   passwordLogin: "everyone" | "admins";
 }
 
-/** Where the login leads: Studio, or the consent page of a Claude Code sign-in (oauth.ts). */
+/** Where the login leads: Studio, or the consent page of a Claude sign-in (oauth.ts). */
 const loginHeading = (next: string) =>
-  next.startsWith(OAUTH_CONSENT_PATH) ? "Sign in to connect Claude Code" : "Sign in to Studio";
+  next.startsWith(OAUTH_CONSENT_PATH) ? "Sign in to connect Claude" : "Sign in to Studio";
 
 export function loginPage(
   { next, email = "", error, sso }: { next: string; email?: string; error?: string; sso?: SsoOption | null },
@@ -66,16 +67,23 @@ export function refusedPage(reason: string) {
 }
 
 /**
- * Consent of a Claude Code sign-in (oauth.ts), in plain words: who asks, for which account. The client name is the one
- * the application registered itself with: the page says where it runs (this computer) rather than vouching for it.
+ * Consent of a Claude sign-in (oauth.ts), in plain words: who asks, for which account. The client name is the one the
+ * application registered itself with: the page says where it runs, from the redirect URI (this computer, or
+ * claude.ai), rather than vouching for it.
  */
 export function consentPage(
-  { authorizationId, clientName, email }: { authorizationId: string; clientName: string; email: string },
+  { authorizationId, clientName, redirectUri, email }: {
+    authorizationId: string;
+    clientName: string;
+    redirectUri: string;
+    email: string;
+  },
 ) {
+  const where = isLoopbackRedirect(redirectUri) ? "running on this computer" : `on ${URL.parse(redirectUri)?.host ?? "an unknown host"}`;
   return layout(
-    "Connect Claude Code · Platform",
+    "Connect Claude · Platform",
     `<h1>Allow access to your apps?</h1>
-<p><strong>${escape(clientName)}</strong>, running on this computer, asks to access your apps on the platform: deploy
+<p><strong>${escape(clientName)}</strong>, ${escape(where)}, asks to access your apps on the platform: deploy
 them, read their logs and data, and manage their users, as you would.</p>
 <p class="muted">Signed in as <strong>${escape(email)}</strong>.</p>
 <form method="post" action="${OAUTH_CONSENT_PATH}">
@@ -83,7 +91,7 @@ them, read their logs and data, and manage their users, as you would.</p>
   <button type="submit" name="decision" value="approve">Allow</button>
   <button type="submit" name="decision" value="deny" class="secondary">Deny</button>
 </form>
-<p class="muted">If you did not start this from Claude Code, deny. Your admin can revoke this access at any time.</p>
+<p class="muted">If you did not start this from Claude, deny. Your admin can revoke this access at any time.</p>
 <form method="post" action="/_platform/logout"><button type="submit" class="link">Not you? Sign out</button></form>`,
   );
 }

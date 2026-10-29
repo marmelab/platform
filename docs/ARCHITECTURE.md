@@ -140,6 +140,15 @@ The official Studio is open source (Apache 2.0) but **single-project in self-hos
 - Restore from the admin (into the same app or a new app). Also useful to clone an environment.
 - **Done (M7, part 1)**: daily backup of each app (`backup_hour` UTC, one at a time, advisory lock): `pg_dump -Fc`, Storage files, live versions of the frontend and functions (older versions can be rebuilt from the repo), app keys and secrets encrypted with the master key; `backups` table (types scheduled, manual, pre_restore, final; status, size, location, error). `backups` volume by default, or an S3-compatible bucket (`backup_s3_*` settings, SigV4 client `aws4fetch`, the volume then only serves as a staging area). Retention: N daily and M weekly, manual backups by age, final backups from `delete_app` kept separately. Failures: admin dashboard and email to admins. Restore (admins only, console and CLI, audited) into the same app, after a backup of the current state: `pg_restore` into a fresh database created from `template0` then name swap, files, live versions and secrets put back, app restarted; or re-creation of a deleted app under the same slug, with the same keys. MCP: `list_backups`, `create_backup`. See `apps/control-plane/README.md`, section "Backups". Remaining: restore into another app (cloning), PITR, client-side dump encryption (TECH_DEBT CP-19 to CP-22).
 
+### 3.10 Preview tunnel
+
+A Claude Code session on the web (§6) runs in a sandbox with no port forwarding and no inbound connection: its only way out is an HTTPS proxy (CONNECT) to allowlisted hosts, and the sandbox can restart at any time (processes killed, files kept). For the builder to try an app before it goes online, the platform hosts a tunnel, frp:
+
+- `frps` (`deploy/frps/frps.toml`), on the internal network only. Caddy sends `api.<domain>/~!frp` (frp's websocket path) to its bind port and the `preview-<slug>.<domain>` hosts to its vhost port; on-demand TLS covers the preview host of an existing app, and `preview-` is reserved in slugs.
+- In the sandbox, the `build` skill's `preview.sh` starts the dev server on 127.0.0.1 (it also relays the local Supabase API on the same host, `PREVIEW_SUPABASE_API` in the app's `vite.config.ts`) and `frpc`, which dials `wss://api.<domain>/~!frp` through the proxy. Idempotent, run again after a restart.
+- Credentials: `create_preview_token` (any member, audited) mints a token of kind `preview` (12 hours, one app, revoked with its parent). frps asks the control plane (server plugin, `POST /frp/plugin` on the internal listener, `previews.ts`) at login and for each proxy: only an `http` proxy on `preview-<the token's app>` is accepted. The MCP endpoint refuses preview tokens.
+- The preview holds made-up data (the session's local database) and its URL is public while the session runs (TECH_DEBT).
+
 ## 4. Control plane
 
 - **Stack**: Node + TypeScript, **Hono**, Postgres (`platform` database of the same cluster), Drizzle or Kysely, **dockerode** to drive the containers.
@@ -235,21 +244,30 @@ packages/deploy-cli/            # package of platform-deploy (typecheck, tests):
 
 The reusable workflow lives in the company's **internal copy of this repository**, whose Actions access is open to the organization's other repos: pushed by the admin, with no change (INSTALL.md §7). The plugin is not installed from it: each platform serves it on its API host, configured with its own URL (`/plugin/marketplace.json`, an archive source pointing to `/plugin/platform.zip`, `apps/control-plane/src/plugin.ts`), so the repository can stay private. The workflow runs the composite action of its own repository at the running commit (`uses: $/plugin/deploy-cli`), so the copy needs no patching and upgrades are a pull and a push.
 
+**Claude Code on the web.** Builders who are not developers use [claude.ai/code](https://claude.ai/code): nothing to install, any OS (INSTALL.md §7, "Claude Code on the web"). A cloud session differs from a local one in four ways, each with its answer:
+
+- It loads no plugin from settings: the organization's shared environment runs the setup script the platform serves (`/plugin/cloud-setup.sh`, `plugin/cloud/setup.sh`), which installs the plugin and the tools of the preview.
+- It reaches MCP servers that sign in through claude.ai connectors: the organization adds the platform as a custom connector (`Platform`), and the platform's OAuth accepts claude.ai's callback in addition to Claude Code's loopback redirects (`oauth-policy.ts`). The skills accept both tool prefixes.
+- It always opens on a GitHub repository, and `gh` there only reaches GitHub's REST API: a new app starts on the organization's `platform-starter`, the `build` skill creates the app's repository with the builder's account (`gh api -X POST orgs/<org>/repos`) as soon as the app has a name, and moves `origin` to it; pull requests also go through the REST API.
+- It has no local preview: the preview tunnel (§3.10).
+
+`get_app` returns `claude_code_url`, a link to a new session on the app's repository (`claude_web_environment` setting).
+
 ### 6.1 `deploy` skill (builder)
 
 "Deploy the app to the platform" goes through CI whenever possible: the skill checks and installs what is missing, then lets CI publish. Direct deployment from the developer's machine (`platform-deploy` with the PAT) remains available when `whoami` returns `direct_deploy: true` (`DIRECT_DEPLOY=everyone`, or an admin), if there is neither a repo nor CI, or if the user asks for it.
 
 1. Read `.platform.json` at the repo root (app id, `acceptedLints`). If absent, `create_app` then write the file.
 2. Check that the project is an SPA (Vite) and locate `supabase/migrations` and `supabase/functions`.
-3. GitHub repo: if there is no remote in the company's organization, create it (`gh repo create`). `link_repo` with `owner/name`, `repository_id` and the default branch.
+3. GitHub repo: if there is no remote in the company's organization, create it with the builder's account through GitHub's REST API (`gh api -X POST orgs/<org>/repos`, also what the `build` skill does once the app has a name), and point `origin` at it. `link_repo` with `owner/name`, `repository_id` and the default branch.
 4. Function secrets: find the `Deno.env.get(...)` calls, compare with `list_secrets`, ask the user for the missing values, `set_secrets`.
-5. CI, only if absent: `.github/workflows/platform.yml` that calls the reusable workflow on `push` (default branch) and `pull_request`, with `id-token: write`; `PLATFORM_URL` variable at the repo level if it does not exist at the organization level.
+5. CI, only if absent: `.github/workflows/platform.yml` that calls the reusable workflow on `push` (default branch) and `pull_request`, with `id-token: write` and the platform's URL (`platform-url`).
 6. Prior review of the new migrations, and `apply_migrations` in `dry_run`: report the lints, **stop if tables are exposed without RLS**. Add a lint to `acceptedLints` only with the user's explicit consent.
-7. Commit and push (or a PR if the default branch is protected), then `gh run watch`. Show the app URL, the Studio link and the run link. On failure: run logs (`gh run view --log-failed`), `get_logs`, diagnosis.
+7. Commit and push to the default branch (or a PR, through the REST API, if a ruleset refuses the push), then `gh run watch`. Show the app URL, the Studio link and the run link. On failure: run logs (`gh run view --log-failed`), `get_logs`, diagnosis.
 
 Path choice: CI if `whoami.ci` exists and the project has (or the user wants) a repo in `ci.github_org`; direct if `direct_deploy` and no repo nor CI, or on explicit request; otherwise, explanation and stop. The migration review (step 6) goes in both cases through `platform-deploy check` with the PAT (`dry_run` stays open to builders). The default branch must be protected for CI to publish: the skill checks it and offers a minimal protection (PR required). The calling workflow is written from the plugin's app template (`plugin/template/ci/.github/workflows/platform.yml`, by `init-app.sh`) with the `uses:` from `whoami.ci`.
 
-Distribution: the marketplace the platform serves (public, no secret in it), installed in one command: `claude plugin install platform --marketplace https://api.<domain>/plugin/marketplace.json`. The developer signs in through the browser at the first use (USER_JOURNEYS B1); PATs in `PLATFORM_TOKEN` stay for admins and scripts. The developer also needs the `gh` CLI logged in.
+Distribution: the marketplace the platform serves (public, no secret in it), installed in one command: `claude plugin install platform --marketplace https://api.<domain>/plugin/marketplace.json`. The developer signs in through the browser at the first use (USER_JOURNEYS B1); PATs in `PLATFORM_TOKEN` stay for admins and scripts. The developer also needs the `gh` CLI logged in. On the web, the environment's setup script installs the plugin and the claude.ai connector signs in (§6, "Claude Code on the web").
 
 Local development stays standard (`supabase start` with the official CLI). Migrations are the contract between local and the platform.
 

@@ -286,11 +286,15 @@ create table if not exists platform_versions (
 -- session of the platform's GoTrue (auth.sessions, in this database) opened by an OAuth client; its access tokens are
 -- GoTrue JWTs, not stored (hash null). 'deploy': short-lived token minted by create_deploy_token, restricted to one app
 -- (app_ids) and to the publishing tools (scopes = {deploy}), child of the credential that minted it (parent_id).
+-- 'preview': minted by create_preview_token for the preview tunnel of one app (previews.ts); the MCP endpoint refuses it.
 alter table tokens add column if not exists kind text not null default 'pat';
 do $$
 begin
+  if exists (select 1 from pg_constraint where conname = 'tokens_kind_check' and pg_get_constraintdef(oid) not like '%preview%') then
+    alter table tokens drop constraint tokens_kind_check;
+  end if;
   if not exists (select 1 from pg_constraint where conname = 'tokens_kind_check') then
-    alter table tokens add constraint tokens_kind_check check (kind in ('pat', 'oauth', 'deploy'));
+    alter table tokens add constraint tokens_kind_check check (kind in ('pat', 'oauth', 'deploy', 'preview'));
   end if;
 end $$;
 alter table tokens alter column hash drop not null;

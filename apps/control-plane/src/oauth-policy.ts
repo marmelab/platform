@@ -28,7 +28,7 @@ function parse(uri: string): URL | null {
 
 /**
  * A native client's redirect URI (RFC 8252 §7.3): plain HTTP on the loopback interface, as Claude Code's
- * `http://localhost:<port>/callback`. The only kind accepted: the code never leaves the user's machine.
+ * `http://localhost:<port>/callback`: the code never leaves the user's machine.
  */
 export function isLoopbackRedirect(uri: string): boolean {
   const url = parse(uri);
@@ -36,6 +36,16 @@ export function isLoopbackRedirect(uri: string): boolean {
     // canonical form only: GoTrue compares the strings
     !url.hash && url.href === uri;
 }
+
+/**
+ * The callback of Claude's hosted apps (claude.ai, Desktop, mobile), where claude.ai connectors sign in, including the
+ * one Claude Code on the web uses (https://claude.com/docs/connectors/building/authentication): the code and the
+ * refresh token then go to Anthropic's servers instead of the user's machine.
+ */
+export const CLAUDE_AI_REDIRECT = "https://claude.ai/api/mcp/auth_callback";
+
+/** The redirect URIs a client may use: a native client's loopback URI, or claude.ai's callback. */
+export const isAllowedRedirect = (uri: string) => isLoopbackRedirect(uri) || uri === CLAUDE_AI_REDIRECT;
 
 /** Same loopback redirect URI except for the port: RFC 8252 §7.3 lets a native client pick its port at each sign-in. */
 export function sameLoopbackExceptPort(a: string, b: string): boolean {
@@ -67,8 +77,9 @@ export interface Registration {
 }
 
 /**
- * Dynamic client registration (RFC 7591), restricted to public native clients: loopback redirect URIs only, no
- * secret, authorization code and refresh token grants. Other metadata is dropped.
+ * Dynamic client registration (RFC 7591), restricted to public clients of Claude: loopback redirect URIs (Claude Code)
+ * or claude.ai's callback (connectors), no secret, authorization code and refresh token grants. Other metadata is
+ * dropped.
  */
 export function sanitizeRegistration(body: unknown): Registration {
   const input = (body && typeof body === "object" ? body : {}) as Record<string, unknown>;
@@ -77,10 +88,10 @@ export function sanitizeRegistration(body: unknown): Registration {
     throw new OAuthError("invalid_redirect_uri", `redirect_uris must list 1 to ${MAX_LOOPBACK_REDIRECTS} URIs`);
   }
   for (const uri of uris) {
-    if (typeof uri !== "string" || !isLoopbackRedirect(uri)) {
+    if (typeof uri !== "string" || !isAllowedRedirect(uri)) {
       throw new OAuthError(
         "invalid_redirect_uri",
-        "only native clients are accepted: redirect URIs must be http://localhost, http://127.0.0.1 or http://[::1]",
+        `redirect URIs must be http://localhost, http://127.0.0.1, http://[::1] or ${CLAUDE_AI_REDIRECT}`,
       );
     }
   }

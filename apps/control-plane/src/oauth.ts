@@ -1,8 +1,9 @@
 // OAuth 2.1 authorization for the MCP endpoint (MCP specification, "Authorization"; journey B1): Claude Code finds the
 // authorization server from the 401 of /mcp, registers itself (RFC 7591), opens the browser on /oauth/authorize, and
-// gets tokens from /oauth/token, which it stores in the keychain and refreshes. The authorization server is the
+// gets tokens from /oauth/token, which it stores in the keychain and refreshes. claude.ai connectors (used by Claude Code
+// on the web) do the same from Anthropic's servers, with claude.ai's callback. The authorization server is the
 // platform's GoTrue (platform-auth.ts); these routes, on the API host, front it: they publish the metadata (RFC 9728,
-// RFC 8414) and apply the platform's rules before forwarding (oauth-policy.ts): native clients only, PKCE S256, the MCP
+// RFC 8414) and apply the platform's rules before forwarding (oauth-policy.ts): Claude's clients only, PKCE S256, the MCP
 // endpoint as the only resource, codes exchanged within 60 s by an active account, a connection row per GoTrue session
 // (`tokens`, kind 'oauth') that the admin console lists and revokes. The consent page is on the Studio host, behind
 // the platform's login (studio/routes.ts).
@@ -15,7 +16,7 @@ import {
   checkAuthorizeRequest,
   codeFresh,
   errorRedirect,
-  isLoopbackRedirect,
+  isAllowedRedirect,
   OAuthError,
   redirectsToRegister,
   sanitizeRegistration,
@@ -134,7 +135,7 @@ const authorizeFailure = (c: Context, message: string) =>
   c.html(
     `<!doctype html><meta charset="utf-8"><title>Sign-in failed</title><p>This sign-in request is invalid: ${
       message.replace(/[&<>"']/g, "")
-    }. Start again from Claude Code.</p>`,
+    }. Start again from Claude.</p>`,
     400,
   );
 
@@ -144,7 +145,7 @@ oauthRoutes.get("/oauth/authorize", async (c) => {
   const client = await findClient(query.client_id ?? "");
   if (!client) return authorizeFailure(c, "unknown client");
   const redirectUri = query.redirect_uri ?? "";
-  if (!isLoopbackRedirect(redirectUri)) return authorizeFailure(c, "redirect_uri must be a loopback URI");
+  if (!isAllowedRedirect(redirectUri)) return authorizeFailure(c, "redirect_uri is not allowed");
   try {
     // GoTrue matches redirect URIs exactly: a loopback URI on another port (RFC 8252) is added to the client first
     const redirects = redirectsToRegister(client.redirect_uris.split(","), redirectUri);
@@ -258,7 +259,7 @@ export async function consentRequest(user: User, authorizationId: string): Promi
     details = await gotrue(`/oauth/authorizations/${encodeURIComponent(authorizationId)}`, { as: user });
   } catch (error) {
     if (error instanceof PlatformAuthError && error.status < 500) {
-      throw new ConsentError("This sign-in request expired or was already used. Start again from Claude Code.");
+      throw new ConsentError("This sign-in request expired or was already used. Start again from Claude.");
     }
     throw error;
   }
@@ -282,10 +283,10 @@ const clientOf = (authorizationId: string) =>
     [authorizationId],
   );
 
-/** GoTrue only redirects to the client's registered URIs, all loopback: checked again before sending the browser. */
+/** GoTrue only redirects to the client's registered URIs, all allowed ones: checked again before sending the browser. */
 function checkedRedirect(url: string) {
   const parsed = new URL(url);
-  if (!isLoopbackRedirect(`${parsed.origin}${parsed.pathname}`)) throw new Error(`unexpected OAuth redirect ${parsed.origin}`);
+  if (!isAllowedRedirect(`${parsed.origin}${parsed.pathname}`)) throw new Error(`unexpected OAuth redirect ${parsed.origin}`);
   return url;
 }
 
@@ -302,7 +303,7 @@ export async function decideConsent(user: User, authorizationId: string, approve
     });
   } catch (error) {
     if (error instanceof PlatformAuthError && error.status < 500) {
-      throw new ConsentError("This sign-in request expired or was already used. Start again from Claude Code.");
+      throw new ConsentError("This sign-in request expired or was already used. Start again from Claude.");
     }
     throw error;
   }

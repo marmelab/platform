@@ -1,7 +1,8 @@
 // Unit tests of the OAuth front's rules (journey B1, src/oauth-policy.ts) and of the token scopes (SEC-8,
-// src/token-scopes.ts): native clients only, loopback port changes (RFC 8252), PKCE S256 only, the resource indicator,
-// the 60 s code lifetime, and the tools of a deploy token. The flows themselves (single-use code, PKCE verification,
-// refresh rotation and reuse, revocation) run against GoTrue in test/oauth.e2e.test.ts.
+// src/token-scopes.ts): Claude Code's loopback and claude.ai's callback only, loopback port changes (RFC 8252), PKCE
+// S256 only, the resource indicator, the 60 s code lifetime, the tools of a deploy token, and what a preview token
+// opens in the preview tunnel. The flows themselves (single-use code, PKCE verification, refresh rotation and reuse,
+// revocation) run against GoTrue in test/oauth.e2e.test.ts.
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { test } from "node:test";
@@ -9,7 +10,9 @@ import {
   checkAuthorizeRequest,
   CODE_TTL_SECONDS,
   codeFresh,
+  CLAUDE_AI_REDIRECT,
   errorRedirect,
+  isAllowedRedirect,
   isLoopbackRedirect,
   MAX_LOOPBACK_REDIRECTS,
   OAuthError,
@@ -17,7 +20,7 @@ import {
   sameLoopbackExceptPort,
   sanitizeRegistration,
 } from "../src/oauth-policy.ts";
-import { scopeTools, toolAllowed } from "../src/token-scopes.ts";
+import { frpDecision, frpToken, scopeTools, toolAllowed } from "../src/token-scopes.ts";
 
 const error = (fn: () => unknown) => {
   try {
@@ -73,7 +76,25 @@ test("a native client may pick another port at each sign-in (RFC 8252 §7.3), no
   assert.ok(!next.includes("http://localhost:1000/callback"));
 });
 
-test("dynamic registration: public native clients only, other metadata dropped", () => {
+test("allowed redirect URIs: loopback, or exactly claude.ai's callback (connectors, Claude Code on the web)", () => {
+  assert.ok(isAllowedRedirect("http://localhost:53987/callback"));
+  assert.ok(isAllowedRedirect(CLAUDE_AI_REDIRECT));
+  for (const uri of [
+    "https://claude.ai/api/mcp/auth_callback/",
+    "https://claude.ai/api/mcp/auth_callback?x=1",
+    "http://claude.ai/api/mcp/auth_callback",
+    "https://claude.ai.evil.example/api/mcp/auth_callback",
+    "https://claude.ai/elsewhere",
+  ]) {
+    assert.equal(isAllowedRedirect(uri), false, uri);
+  }
+  assert.deepEqual(sanitizeRegistration({ client_name: "Claude", redirect_uris: [CLAUDE_AI_REDIRECT] }).redirect_uris, [CLAUDE_AI_REDIRECT]);
+  // an exact match needs no new registration; port changes stay a loopback thing
+  assert.equal(redirectsToRegister([CLAUDE_AI_REDIRECT], CLAUDE_AI_REDIRECT), null);
+  assert.equal(error(() => redirectsToRegister(["http://localhost:1/callback"], CLAUDE_AI_REDIRECT)), "invalid_request");
+});
+
+test("dynamic registration: public clients of Claude only, other metadata dropped", () => {
   const claudeCode = {
     client_name: "Claude Code (platform)",
     redirect_uris: ["http://localhost:53987/callback"],
@@ -150,4 +171,36 @@ test("token scopes: none means every tool, deploy means what platform-deploy cal
   assert.ok(toolAllowed(user(null), "delete_app"));
   assert.ok(toolAllowed(user(deploy), "get_app"));
   assert.equal(toolAllowed(user(deploy), "execute_sql"), false);
+});
+
+const login = { op: "Login", content: { metas: { token: "plat_prv_x" } } };
+const proxy = (content: Record<string, unknown>) => ({
+  op: "NewProxy",
+  content: { user: { metas: { token: "plat_prv_x" } }, proxy_type: "http", subdomain: "preview-notes", ...content },
+});
+
+test("preview tunnel: frpc's token, in metas at login and user.metas afterwards", () => {
+  assert.equal(frpToken(login), "plat_prv_x");
+  assert.equal(frpToken(proxy({})), "plat_prv_x");
+  assert.equal(frpToken({ op: "Login", content: { user: { metas: { token: "elsewhere" } } } }), "");
+  assert.equal(frpToken({}), "");
+});
+
+test("a preview token logs in and opens an http proxy on preview-<its app> only", () => {
+  assert.deepEqual(frpDecision(login, "notes"), { reject: false, unchange: true });
+  assert.deepEqual(frpDecision(proxy({}), "notes"), { reject: false, unchange: true });
+
+  for (const [request, slug] of [
+    [login, null],
+    [proxy({}), null],
+    [proxy({ subdomain: "preview-other" }), "notes"],
+    [proxy({ subdomain: "notes" }), "notes"],
+    [proxy({ subdomain: undefined }), "notes"],
+    [proxy({ proxy_type: "tcp", remote_port: 2222 }), "notes"],
+    [proxy({ proxy_type: "https" }), "notes"],
+    [proxy({ custom_domains: ["evil.example"] }), "notes"],
+    [{ op: "NewUserConn", content: {} }, "notes"],
+  ] as const) {
+    assert.equal(frpDecision(request, slug).reject, true, JSON.stringify([request, slug]));
+  }
 });

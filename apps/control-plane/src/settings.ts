@@ -28,6 +28,11 @@ export interface Settings {
   sso: SsoSettings;
   /** Backups (M7, A4, backups.ts): schedule, retention and the optional S3 target. */
   backup: BackupSettings;
+  /**
+   * Name of the claude.ai cloud environment builders use with Claude Code on the web (INSTALL.md §7): links to a new
+   * session (welcome email, get_app claude_code_url). Empty: not set up, builders use Claude Code on their computer.
+   */
+  claudeWebEnvironment: string;
 }
 
 export interface BackupSettings {
@@ -187,6 +192,7 @@ export async function settingOverrides() {
 /** Keys accepted by set-setting, with their environment variable. */
 export const SETTING_KEYS = {
   direct_deploy: "DIRECT_DEPLOY",
+  claude_web_environment: "CLAUDE_WEB_ENVIRONMENT",
   ci_allowed_workflows: "CI_ALLOWED_WORKFLOWS",
   oidc_issuer: "OIDC_ISSUER",
   oidc_audience: "OIDC_AUDIENCE",
@@ -265,6 +271,7 @@ export function validateSetting(key: string, value: string): asserts key is Sett
   if (key === "direct_deploy" && !["admins", "everyone"].includes(value)) {
     throw new Error("direct_deploy must be admins or everyone");
   }
+  if (key === "claude_web_environment" && /[\r\n]/.test(value)) throw new Error("claude_web_environment: no line breaks");
   if (DAYS.includes(key)) days(key, value);
   if (key in INTEGERS) integer(key, value, ...INTEGERS[key]!);
   if (key === "backup_s3_endpoint" && value !== "") {
@@ -400,8 +407,21 @@ export async function getSettings(): Promise<Settings> {
       // usable only when complete: an empty backup_s3_endpoint row turns the environment's target off
       s3: s3.endpoint && s3.bucket && s3.accessKeyId && s3.secretAccessKey ? s3 : null,
     },
+    claudeWebEnvironment: get("claude_web_environment", d.claudeWebEnvironment).trim(),
   };
 }
+
+/** A new Claude Code session on the web, in the platform's environment, on `repo` (owner/name); null when not set up. */
+export const claudeCodeUrl = (settings: Pick<Settings, "claudeWebEnvironment">, repo: string, prompt?: string) =>
+  settings.claudeWebEnvironment
+    ? `https://claude.ai/code?${
+      // spaces as %20, as in claude.ai's documented links (a literal "+" is already %2B)
+      new URLSearchParams({
+        environment: settings.claudeWebEnvironment,
+        repositories: repo,
+        ...(prompt ? { prompt } : {}),
+      }).toString().replaceAll("+", "%20")}`
+    : null;
 
 export async function setSetting(key: string, value: string) {
   validateSetting(key, value);

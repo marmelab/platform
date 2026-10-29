@@ -30,6 +30,8 @@ import { listSecrets } from "../secrets.ts";
 import { MIN_PASSWORD_LENGTH, setPassword } from "../sessions.ts";
 import {
   backupSummary,
+  callerWorkflow,
+  claudeCodeUrl,
   getSettings,
   setSetting,
   settingOverrides,
@@ -42,6 +44,7 @@ import {
   validateSetting,
 } from "../settings.ts";
 import { syncCompanySso } from "../app-sso.ts";
+import { welcomeMail } from "../welcome-mail.ts";
 import { discover, ssoCallbackUrl, SsoError } from "../sso.ts";
 import { errorResponse, HttpError, includes, listInMemory, type ListParams, listParams, page, truthy } from "./rest.ts";
 
@@ -137,29 +140,22 @@ adminApi.post("/users", async (c) => {
 });
 
 async function sendWelcome(email: string, role: "admin" | "developer") {
-  const { sso } = await getSettings();
-  const ssoLogin = ssoActive(sso);
-  const passwordToo = !ssoLogin || sso.passwordLogin === "everyone" || role === "admin";
+  const settings = await getSettings();
+  const { sso } = settings;
+  const ci = callerWorkflow(settings);
+  // Claude Code on the web starts on the organization's shared starter repository (INSTALL.md §7)
+  const webStart = ci ? claudeCodeUrl(settings, `${ci.github_org}/platform-starter`, "Build me an app for the platform that ") : null;
   return sendPlatformMail({
     to: [email],
-    subject: "Your account on the app platform",
-    text: [
-      "Hello,",
-      "",
-      `An account was created for you (${email}) on the company's app platform${role === "admin" ? ", as an admin" : ""}.`,
-      "",
-      "- Build and deploy apps with Claude Code. You need Node.js 22.18 or later and the GitHub CLI (gh) logged in. " +
-      "Install the platform plugin from a terminal:",
-      "",
-      `    claude plugin install platform --marketplace ${apiUrl()}/plugin/marketplace.json`,
-      "",
-      "  Then start Claude Code, type /mcp, choose plugin:platform:platform, then Authenticate: your browser opens, " +
-      "sign in with your platform account and allow the access. You can now ask Claude to deploy your app.",
-      `- Inspect your apps' data in Studio: ${studioUrl()} (sign in ${ssoLogin ? `with ${sso.name}${passwordToo ? ", or with this email and the password your admin gives you" : ""}` : "with this email and the password your admin gives you"}).`,
-      ...(role === "admin" ? [`- Administration console: ${adminUrl()}`] : []),
-      "",
-      ...(passwordToo ? ["Your admin gives you your password over a private channel: it is never sent by email."] : []),
-    ].join("\n"),
+    ...welcomeMail({
+      email,
+      role,
+      apiUrl: apiUrl(),
+      studioUrl: studioUrl(),
+      adminUrl: adminUrl(),
+      sso: ssoActive(sso) ? { name: sso.name, passwordToo: sso.passwordLogin === "everyone" || role === "admin" } : null,
+      webStart,
+    }),
   });
 }
 

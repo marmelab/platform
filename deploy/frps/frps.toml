@@ -1,0 +1,14 @@
+# Preview tunnel (ARCHITECTURE §3.10): a Claude Code session on the web exposes the app it runs at
+# https://preview-<slug>.<domain>. frpc, in the session's sandbox, connects over a websocket to https://api.<domain>/~!frp
+# (Caddy -> bindPort); Caddy sends the preview hosts to vhostHTTPPort. Internal network only: no published port, no
+# dashboard. No shared frp token: the control plane checks each client's preview token and subdomain (previews.ts).
+bindPort = 7000
+vhostHTTPPort = 8080
+subDomainHost = "{{ .Envs.PLATFORM_DOMAIN }}"
+# ponytail: frp's default keepalives; shorten them if a restarted sandbox waits long for its subdomain to free up
+
+[[httpPlugins]]
+name = "platform"
+addr = "control-plane:3001"
+path = "/frp/plugin"
+ops = ["Login", "NewProxy"]

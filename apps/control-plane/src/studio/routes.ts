@@ -152,13 +152,13 @@ const consentFailure = (c: Context, error: unknown) => {
 
 studioPublicRoutes.get(CONSENT_PATH, async (c) => {
   const authorizationId = c.req.query("authorization_id") ?? "";
-  if (!authorizationId) return c.html(oauthMessagePage("Invalid request", "Start again from Claude Code."), 400);
+  if (!authorizationId) return c.html(oauthMessagePage("Invalid request", "Start again from Claude."), 400);
   const user = await userForSession(getCookie(c, SESSION_COOKIE));
   if (!user) return consentLogin(c, authorizationId);
   try {
     const request = await consentRequest(user, authorizationId);
     if ("redirect" in request) return c.redirect(request.redirect, 302);
-    return c.html(consentPage({ authorizationId, clientName: request.clientName, email: user.email }));
+    return c.html(consentPage({ authorizationId, clientName: request.clientName, redirectUri: request.redirectUri, email: user.email }));
   } catch (error) {
     return consentFailure(c, error);
   }

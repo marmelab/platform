@@ -157,7 +157,7 @@ async function authorize(meta: Metadata, client: Client, browser: Browser, optio
     const login = new URL(location(consent));
     assert.equal(login.searchParams.get("next"), consentUrl.slice(STUDIO.length));
     const page = await (await browser.get(login.toString())).text();
-    assert.match(page, /Sign in to connect Claude Code/);
+    assert.match(page, /Sign in to connect Claude</);
     const signedIn = await browser.post(`${STUDIO}/_platform/login`, {
       email: BUILDER,
       password: PASSWORD,

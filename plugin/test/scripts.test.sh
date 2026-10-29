@@ -34,7 +34,8 @@ tools="$(tr '\n' ' ' < "$ROOT/apps/control-plane/src/mcp.ts" | grep -oE 'registe
 # backticked snake_case words that are fields or options, not tools
 fields="direct_deploy direct_deploy_setting api_url github_org github_repo default_branch studio_url last_release
   admin_exception schema_drift since_minutes repository_id required_approving_review_count
-  email_confirmation_effective redirect_urls callback_url service_role user_metadata shadow_port email_confirm"
+  email_confirmation_effective redirect_urls callback_url service_role user_metadata shadow_port email_confirm
+  claude_code_url"
 for skill in "$plugin"/skills/*/SKILL.md; do
   name="$(basename "$(dirname "$skill")")"
   for word in $(grep -oE '`[a-z]+(_[a-z]+)+`' "$skill" | tr -d '`' | sort -u); do
@@ -81,11 +82,19 @@ expect() {
   test "$(cat "$tmp/word")" = "$word" && test "$(cat "$tmp/api")" = "api: $fake_url"
 }
 check "check-connection.sh: not signed in" expect NOT_SIGNED_IN ""
+check "check-connection.sh: connector not connected (web)" env CLAUDE_CODE_REMOTE=true bash -c "$(declare -f expect); scripts='$scripts' tmp='$tmp' fake_url='$fake_url' expect NOT_CONNECTED_WEB ''"
 check "check-connection.sh: refused after an auth error" expect ACCOUNT_REFUSED "" --after-auth-error
 check "check-connection.sh: PAT accepted" expect OK plat_good
 check "check-connection.sh: PAT refused" expect ACCOUNT_REFUSED plat_revoked
 check "check-connection.sh never prints the token" bash -c "! grep -q plat_ '$tmp/word' '$tmp/api'"
 check "check-connection.sh: unreachable" bash -c "test \"\$(env -u PLATFORM_TOKEN PLATFORM_URL=http://127.0.0.1:9/mcp '$scripts/check-connection.sh' 2> /dev/null)\" = UNREACHABLE"
+
+# 4d. preview.sh (build skill): the local preview outside the web; on the web, a token and frpc first
+preview="$plugin/skills/build/scripts/preview.sh"
+check "preview.sh outside the web: LOCAL" bash -c "test \"\$(env -u CLAUDE_CODE_REMOTE '$preview')\" = LOCAL"
+refuses "preview.sh on the web needs a preview token" "PLATFORM_PREVIEW_TOKEN is not set" env -u PLATFORM_PREVIEW_TOKEN CLAUDE_CODE_REMOTE=true "$preview" https://preview-demo.acme.test http://127.0.0.1:54321
+refuses "preview.sh refuses another host" "not a preview URL" bash -c "cd '$plugin/template/app' && CLAUDE_CODE_REMOTE=true PLATFORM_PREVIEW_TOKEN=x '$preview' https://demo.acme.test http://127.0.0.1:54321"
+refuses "preview.sh without frpc: NO_TUNNEL" "NO_TUNNEL" bash -c "cd '$plugin/template/app' && PATH=/usr/bin:/bin CLAUDE_CODE_REMOTE=true PLATFORM_PREVIEW_TOKEN=x '$preview' https://preview-demo.acme.test http://127.0.0.1:54321"
 
 # 5. function-secrets.sh
 app="$tmp/app"
@@ -112,6 +121,7 @@ check "init-app.sh adds only the CI files to an app" bash -c "cd '$new' && test 
 check "caller calls the allowed workflow" grep -qx "    uses: $uses" "$new/.github/workflows/platform.yml"
 check "caller deploys from the default branch" grep -q "branches: \[trunk\]" "$new/.github/workflows/platform.yml"
 check "caller asks for an OIDC token" grep -q "id-token: write" "$new/.github/workflows/platform.yml"
+check "caller targets the platform" grep -qx "      platform-url: https://api.acme.test" "$new/.github/workflows/platform.yml"
 check "repository settings offer the plugin the platform serves" node -e '
   const s = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
   const source = s.extraKnownMarketplaces.platform.source;
