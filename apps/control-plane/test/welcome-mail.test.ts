@@ -26,7 +26,7 @@ test("without Claude Code on the web: the plugin, Node and gh", () => {
 });
 
 test("with Claude Code on the web: the connector's page, then the first session, the terminal as an alternative", () => {
-  const webStart = "https://claude.ai/code?environment=Platform&repositories=acme%2Fplatform-starter";
+  const webStart = "https://claude.ai/code?environment=Platform&prompt=Build%20me%20an%20app";
   const { text } = welcomeMail({ ...base, webStart });
   const connect = text.indexOf(`    ${base.connectPage}\n`);
   const web = text.indexOf(webStart);

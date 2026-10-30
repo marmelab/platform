@@ -219,18 +219,19 @@ Builders build, try and deploy apps from [claude.ai/code](https://claude.ai/code
 nothing to install (USER_JOURNEYS B1). It needs claude.ai seats that include Claude Code, a GitHub account per
 builder, and a platform reachable from the Internet: claude.ai calls the MCP endpoint from Anthropic's servers
 (`160.79.104.0/21`). On claude.ai Team or Enterprise, an Owner sets up the connector and the environment once for
-everyone (steps 3 and 4). On Pro or Max, each builder does both for themselves, guided by the platform's Connect Claude
+everyone (steps 1 and 2). On Pro or Max, each builder does both for themselves, guided by the platform's Connect Claude
 page (`https://<domain>/_platform/claude`, linked from their welcome email), with a connector client of their own that
-signs in no one else. Once, by an owner of the GitHub organization and, on Team or Enterprise, an Owner of the claude.ai
-organization:
+signs in no one else.
 
-1. **Claude GitHub App**: install it on the organization for all repositories (sessions clone and push through it,
-   as the builder), and turn on the GitHub connector in claude.ai (Organization settings > Connectors).
-2. **Starter repository** `<org>/platform-starter`: private, with a README, readable by the organization's members
-   and writable by nobody. A session always opens on a repository: a new app starts there, and the `build` skill
-   creates the app's own repository, `<org>/<slug>`, as soon as the app has a name. Builders who may not create
-   repositories in the organization are asked to create it on GitHub (a prefilled link).
-3. **Connector**: on the platform, `docker exec plat-control-plane node src/cli.ts claude-connector` creates the
+Sessions start with no repository, and nothing reaches GitHub before an app's first deployment. A session cannot create
+a repository: at that deployment, the `deploy` skill asks the builder to create `<org>/<slug>` (a prefilled link) and
+to let the Claude GitHub App push to it, for that repository only. Builders therefore need the right to create
+repositories in the organization; if it restricts GitHub Apps, an owner approves each request (or installs the Claude
+GitHub App once for the repositories builders create).
+
+Once, by the platform admin and, on Team or Enterprise, an Owner of the claude.ai organization:
+
+1. **Connector**: on the platform, `docker exec plat-control-plane node src/cli.ts claude-connector` creates the
    connector's OAuth client and prints its ID and secret (the secret only this once). In claude.ai, Organization
    settings > Connectors, add a custom connector named `Platform` with the URL `https://api.<domain>/mcp` and, under
    Advanced settings (or "Use your own OAuth client"), that client ID and secret. Each builder connects it once
@@ -241,7 +242,7 @@ organization:
    to replace the secret (`claude-connector --new-secret`, which voids the former one), remove the connector and add
    it again, and builders connect again. On Pro or Max, skip this step: each builder gets their own client from the
    Connect Claude page (shown once, replaceable there), and adds the connector the same way in their own account.
-4. **Environment** (on Pro or Max, each builder creates the same one, as the Connect Claude page explains): in
+2. **Environment** (on Pro or Max, each builder creates the same one, as the Connect Claude page explains): in
    claude.ai, Organization settings > Claude Code, create a shared cloud environment named `Platform`:
    - network access: Custom, keeping the default list, plus `api.<domain>` and `*.<domain>` (the apps, and their
      previews at `preview-<slug>.<domain>`);
@@ -250,9 +251,9 @@ organization:
      the result for about a week: a platform upgrade reaches new sessions after that, or at once when you edit the
      environment.
    - no variable nor secret: builders connect with their own account.
-5. **On the platform**: `docker exec plat-control-plane node src/cli.ts set-setting claude_web_environment Platform`.
-   The welcome email then leads with the Connect Claude page and a link to a new session on the starter repository,
-   and `get_app` gives the link to an app's own repository (`claude_code_url`). On Pro or Max, the Connect Claude page
+3. **On the platform**: `docker exec plat-control-plane node src/cli.ts set-setting claude_web_environment Platform`.
+   The welcome email then leads with the Connect Claude page and a link to a first session, with no repository, and
+   `get_app` gives the link to a session on an app's repository once deployed (`claude_code_url`). On Pro or Max, the Connect Claude page
    asks builders to give their environment this name, so that these links open in it.
 
 GitHub Enterprise Server: install with `--oidc-issuer https://<host>/_services/token`; the control plane must reach

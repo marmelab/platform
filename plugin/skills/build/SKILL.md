@@ -22,7 +22,7 @@ The target architecture is in the project's `CLAUDE.md`, written from the plugin
 
 1. Ask at most one question when the request is ambiguous about who sees what; otherwise choose the most private reasonable default and say so.
 2. Run `init-app.sh <slug>` (a new app: a short name from the request, `^[a-z][a-z0-9-]{1,30}[a-z0-9]$`, also its web address; an existing app: its `package.json` `name`), then read `CLAUDE.md` and follow it. Build on the skeleton's files instead of rewriting them. If the folder is not a git repository yet, `git init -b main`.
-3. Once the app has its name, when the platform tools are available (`whoami` answers): `create_app` with the slug (idempotent), and `.platform.json` with `{ "app": "<slug>" }`. Then, if `whoami` `ci` is set and the project has no repository in `ci.github_org` yet (no remote, or the shared starter repository a session on the web opened), follow the **Repository** section of the deploy skill: the work is kept on GitHub from now on, and nothing deploys before the user asks. In a session on the web (`CLAUDE_CODE_REMOTE=true`) the platform tools are needed for the preview: without them, follow step 0 of the deploy skill.
+3. In a session on the web (`CLAUDE_CODE_REMOTE=true`), once the app has its name: `create_app` with the slug (idempotent), and `.platform.json` with `{ "app": "<slug>" }`; the preview needs them. Without the platform tools, follow step 0 of the deploy skill. Nothing goes to GitHub before the user deploys. On a computer, skip this step.
 4. Write the migration first, then the frontend, then the functions.
 5. Check with `npm install` and `npm run build`; fix every error. Commit (do not push: the deploy skill does).
 6. Preview, so the user tries the app before anyone else sees it:

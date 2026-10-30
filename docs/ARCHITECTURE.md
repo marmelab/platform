@@ -248,10 +248,10 @@ The reusable workflow lives in the company's **internal copy of this repository*
 
 - It loads no plugin from settings: the organization's shared environment runs the setup script the platform serves (`/plugin/cloud-setup.sh`, `plugin/cloud/setup.sh`), which installs the plugin and the tools of the preview.
 - It reaches MCP servers that sign in through claude.ai connectors: on claude.ai Team or Enterprise, the organization adds the platform as a custom connector (`Platform`) with the OAuth client the admin creates (`cli.ts claude-connector`: confidential, its secret held by the organization's claude.ai); on Pro or Max, each builder adds it with a client of their own, from the Connect Claude page (`/_platform/claude` on the Studio host), which signs in that builder only (`connector_clients`, `clientAllowed`, checked at the consent and at the code exchange). These connectors' clients are the only ones allowed claude.ai's callback, and dynamic registration stays limited to Claude Code's loopback redirects (`oauth-policy.ts`): anyone can make a claude.ai account, but a code obtained through it cannot be exchanged without a secret, and a builder's secret, leaked or misused, signs in nobody else. The skills accept both tool prefixes.
-- It always opens on a GitHub repository, and `gh` there only reaches GitHub's REST API: a new app starts on the organization's `platform-starter`, the `build` skill creates the app's repository with the builder's account (`gh api -X POST orgs/<org>/repos`) as soon as the app has a name, and moves `origin` to it; pull requests also go through the REST API.
+- It starts with no repository and no GitHub sign-in, and its network cannot create a GitHub repository: the code stays in the session until the first deployment, when the builder creates the app's repository from a prefilled link and lets the Claude GitHub App push to it (that repository only); the `deploy` skill then pushes, links the repository and follows the release through `get_app`, `gh` not reaching the run. Later sessions open on that repository.
 - It has no local preview: the preview tunnel (§3.10).
 
-`get_app` returns `claude_code_url`, a link to a new session on the app's repository (`claude_web_environment` setting).
+`get_app` returns `claude_code_url`, a link to a new session on the app's repository (`claude_web_environment` setting), and the welcome email a link to a first session with no repository.
 
 ### 6.1 `deploy` skill (builder)
 
@@ -259,11 +259,11 @@ The reusable workflow lives in the company's **internal copy of this repository*
 
 1. Read `.platform.json` at the repo root (app id, `acceptedLints`). If absent, `create_app` then write the file.
 2. Check that the project is an SPA (Vite) and locate `supabase/migrations` and `supabase/functions`.
-3. GitHub repo: if there is no remote in the company's organization, create it with the builder's account through GitHub's REST API (`gh api -X POST orgs/<org>/repos`, also what the `build` skill does once the app has a name), and point `origin` at it. `link_repo` with `owner/name`, `repository_id` and the default branch.
+3. GitHub repo: if there is no remote in the company's organization, create it (`gh repo create`; on the web, the builder creates it, see above). `link_repo` with `owner/name`, `repository_id` and the default branch.
 4. Function secrets: find the `Deno.env.get(...)` calls, compare with `list_secrets`, ask the user for the missing values, `set_secrets`.
 5. CI, only if absent: `.github/workflows/platform.yml` that calls the reusable workflow on `push` (default branch) and `pull_request`, with `id-token: write` and the platform's URL (`platform-url`).
 6. Prior review of the new migrations, and `apply_migrations` in `dry_run`: report the lints, **stop if tables are exposed without RLS**. Add a lint to `acceptedLints` only with the user's explicit consent.
-7. Commit and push to the default branch (or a PR, through the REST API, if a ruleset refuses the push), then `gh run watch`. Show the app URL, the Studio link and the run link. On failure: run logs (`gh run view --log-failed`), `get_logs`, diagnosis.
+7. Commit and push (or a PR if a ruleset refuses the push), then `gh run watch` (on the web, `get_app` until the release of the pushed commit ends). Show the app URL, the Studio link and the run link. On failure: run logs (`gh run view --log-failed`), `get_logs`, diagnosis.
 
 Path choice: CI if `whoami.ci` exists and the project has (or the user wants) a repo in `ci.github_org`; direct if `direct_deploy` and no repo nor CI, or on explicit request; otherwise, explanation and stop. The migration review (step 6) goes in both cases through `platform-deploy check` with the PAT (`dry_run` stays open to builders). The default branch must be protected for CI to publish: the skill checks it and offers a minimal protection (PR required). The calling workflow is written from the plugin's app template (`plugin/template/ci/.github/workflows/platform.yml`, by `init-app.sh`) with the `uses:` from `whoami.ci`.
 

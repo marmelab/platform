@@ -30,7 +30,6 @@ import { listSecrets } from "../secrets.ts";
 import { MIN_PASSWORD_LENGTH, setPassword } from "../sessions.ts";
 import {
   backupSummary,
-  callerWorkflow,
   claudeCodeUrl,
   getSettings,
   setSetting,
@@ -142,9 +141,8 @@ adminApi.post("/users", async (c) => {
 async function sendWelcome(email: string, role: "admin" | "developer") {
   const settings = await getSettings();
   const { sso } = settings;
-  const ci = callerWorkflow(settings);
-  // Claude Code on the web starts on the organization's shared starter repository (INSTALL.md §7)
-  const webStart = ci ? claudeCodeUrl(settings, `${ci.github_org}/platform-starter`, "Build me an app for the platform that ") : null;
+  // Claude Code on the web: a first session with no repository (INSTALL.md §7)
+  const webStart = claudeCodeUrl(settings, null, "Build me an app for the platform that ");
   return sendPlatformMail({
     to: [email],
     ...welcomeMail({

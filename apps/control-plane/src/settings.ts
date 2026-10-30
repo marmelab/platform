@@ -411,14 +411,17 @@ export async function getSettings(): Promise<Settings> {
   };
 }
 
-/** A new Claude Code session on the web, in the platform's environment, on `repo` (owner/name); null when not set up. */
-export const claudeCodeUrl = (settings: Pick<Settings, "claudeWebEnvironment">, repo: string, prompt?: string) =>
+/**
+ * A new Claude Code session on the web, in the platform's environment, on `repo` (owner/name) or with no repository;
+ * null when not set up.
+ */
+export const claudeCodeUrl = (settings: Pick<Settings, "claudeWebEnvironment">, repo: string | null, prompt?: string) =>
   settings.claudeWebEnvironment
     ? `https://claude.ai/code?${
       // spaces as %20, as in claude.ai's documented links (a literal "+" is already %2B)
       new URLSearchParams({
         environment: settings.claudeWebEnvironment,
-        repositories: repo,
+        ...(repo ? { repositories: repo } : {}),
         ...(prompt ? { prompt } : {}),
       }).toString().replaceAll("+", "%20")}`
     : null;
