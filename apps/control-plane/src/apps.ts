@@ -14,7 +14,7 @@ import {
   schemaChangesSql,
   terminateAppSessionsSql,
 } from "@platform/sql";
-import { type AppInfo, SLUG_RE } from "@platform/shared";
+import { type AppInfo, PREVIEW_PREFIX, SLUG_RE } from "@platform/shared";
 import { audit } from "./audit.ts";
 import type { User } from "./auth.ts";
 import { takeBackup } from "./backups.ts";
@@ -418,7 +418,7 @@ export async function provision(app: AppRow) {
 
 export async function createApp(user: User, name: string, requestedSlug?: string) {
   const slug = requestedSlug ?? slugify(name);
-  if (!SLUG_RE.test(slug) || ["api", "admin", "studio", "www", "default"].includes(slug)) {
+  if (!SLUG_RE.test(slug) || ["api", "admin", "studio", "www", "default"].includes(slug) || slug.startsWith(PREVIEW_PREFIX)) {
     throw new UserError(`invalid slug "${slug}": provide a slug matching ${SLUG_RE}`);
   }
   let app = await one<AppRow>("select * from apps where slug = $1", [slug]);

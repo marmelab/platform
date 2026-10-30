@@ -23,7 +23,12 @@ import { dataProvider } from "../providers";
 import { ActionButton } from "./actions";
 import { dateTime, StatusBadge } from "./fields";
 
-const KIND_LABELS: Record<string, string> = { pat: "PAT", oauth: "Claude Code connection", deploy: "Deploy token" };
+const KIND_LABELS: Record<string, string> = {
+  pat: "PAT",
+  oauth: "Claude Code connection",
+  deploy: "Deploy token",
+  preview: "Preview token",
+};
 
 export const TokenList = () => (
   <List

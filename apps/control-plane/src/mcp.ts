@@ -37,9 +37,10 @@ import {
   releaseForUser,
   requireDirectDeploy,
 } from "./releases.ts";
+import { createPreviewToken } from "./previews.ts";
 import { listSchemaChanges, schemaDrift } from "./schema-changes.ts";
 import { listSecrets, setSecrets } from "./secrets.ts";
-import { callerWorkflow, getSettings } from "./settings.ts";
+import { callerWorkflow, claudeCodeUrl, getSettings } from "./settings.ts";
 import { applyMigrations, executeSql, StructuredUserError } from "./sql.ts";
 
 async function run(fn: () => Promise<unknown>): Promise<CallToolResult> {
@@ -110,8 +111,9 @@ export function buildMcpServer(user: User): McpServer {
       description:
         "App details: URL, SUPABASE_URL and anon key (use them as VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY), live " +
         "versions, linked repository, last release, schema_drift: schema changes made outside a release since " +
-        "the last one (details with list_schema_changes), and auth: the app's auth policy (configure_auth) and " +
-        "whether emails can be sent",
+        "the last one (details with list_schema_changes), auth: the app's auth policy (configure_auth) and " +
+        "whether emails can be sent, and claude_code_url: a link that opens the linked repository in Claude Code on " +
+        "the web (null when the platform has no claude.ai environment or the app no repository)",
       inputSchema: t.get_app,
     },
     ({ app }) =>
@@ -121,7 +123,9 @@ export function buildMcpServer(user: User): McpServer {
           console.error(`schema drift of ${target.slug}`, error);
           return null;
         });
-        return { ...(await appInfo(target)), schema_drift: drift, auth: await appAuthView(target) };
+        const info = await appInfo(target);
+        const claude_code_url = info.github_repo ? claudeCodeUrl(await getSettings(), info.github_repo) : null;
+        return { ...info, claude_code_url, schema_drift: drift, auth: await appAuthView(target) };
       }),
   );
 
@@ -399,6 +403,18 @@ export function buildMcpServer(user: User): McpServer {
       inputSchema: t.create_deploy_token,
     },
     ({ app }) => run(async () => createDeployToken(user, await appForUser(user, app))),
+  );
+
+  server.registerTool(
+    "create_preview_token",
+    {
+      description: "Token (12 hours) for the preview tunnel of a Claude Code session on the web: it lets the build " +
+        "skill's preview.sh expose the app running in the session at the returned url (preview-<slug>), and nothing " +
+        "else. Any member gets one. Pass it to preview.sh in the PLATFORM_PREVIEW_TOKEN environment variable; never " +
+        "show it to the user nor write it to a file.",
+      inputSchema: t.create_preview_token,
+    },
+    ({ app }) => run(async () => createPreviewToken(user, await appForUser(user, app))),
   );
 
   server.registerTool(

@@ -8,6 +8,8 @@ Contents:
 plugin/
   .claude-plugin/plugin.json
   .mcp.json                        # "platform" MCP server (HTTP): browser sign-in (OAuth), or a PAT from PLATFORM_TOKEN
+  cloud/setup.sh                   # setup script of the claude.ai cloud environment (Claude Code on the web), served
+                                   # at /plugin/cloud-setup.sh: this plugin, the Supabase CLI and frpc
   deploy-cli/                      # platform-deploy, the CLI the CI runs, and its composite action (action.yml)
   template/                        # the app template, written by init-app.sh (missing files only, never overwrites)
     init-app.sh                    # <slug> [<uses> <default_branch>]
@@ -15,7 +17,8 @@ plugin/
     project/CLAUDE.md              # the target architecture, on any app
     ci/                            # with <uses>: .github/workflows/platform.yml (caller of the reusable workflow) and
                                    # .claude/settings.json (offers the plugin to whoever opens the repository)
-  skills/build/SKILL.md            # builder: creates or extends an app from the template, local preview
+  skills/build/SKILL.md            # builder: creates or extends an app from the template, preview
+  skills/build/scripts/preview.sh  # the preview of a session on the web, through the platform's tunnel (frp)
   skills/deploy/SKILL.md           # builder: sets up the CI and pushes, or deploys directly when allowed
   skills/deploy/scripts/
     platform-deploy                # runs deploy-cli/main.ts with a deploy token or the PAT (check | deploy [--reason])
@@ -32,7 +35,7 @@ Each platform serves this plugin on its API host, configured for itself: `https:
 
 ## Installation
 
-Prerequisites: Node.js ≥ 22.18 (`platform-deploy` runs TypeScript directly) and, for the CI path, the GitHub CLI (`gh`) logged in with the right to create repositories in the company organization (or an existing repository there). No token to get, no file to edit.
+Prerequisites, on a computer (nothing to install on the web, below): Node.js ≥ 22.18 (`platform-deploy` runs TypeScript directly) and, for the CI path, the GitHub CLI (`gh`) logged in with the right to create repositories in the company organization (or an existing repository there). No token to get, no file to edit.
 
 1. Install the plugin the platform serves (the command is in your welcome email):
 
@@ -49,6 +52,10 @@ Prerequisites: Node.js ≥ 22.18 (`platform-deploy` runs TypeScript directly) an
 The platform URL: `PLATFORM_URL` when exported in the environment, else the one in the plugin, the local stack's (`http://api.localhost:8100/mcp`) in this repository and the platform's own in the plugin it serves. `.mcp.json` reads it as `${PLATFORM_URL:-<url>}`, and `check-connection.sh` and `platform-deploy` through `platform-url.sh`.
 
 To try it without installing: `claude --plugin-dir /path/to/platform/plugin`.
+
+### Claude Code on the web
+
+Builders who are not developers install nothing: they use [claude.ai/code](https://claude.ai/code) (the admin's setup is in [INSTALL.md](../docs/INSTALL.md) §7, "Claude Code on the web"). A cloud session does not install plugins from settings: the organization's environment runs `cloud/setup.sh` (served with the platform's URL at `https://api.<domain>/plugin/cloud-setup.sh`), which installs this plugin, the Supabase CLI and `frpc`. The MCP server comes from the organization's claude.ai connector `Platform` instead of `.mcp.json`: the skills accept both tool prefixes (`mcp__plugin_platform_platform__*`, `mcp__claude_ai_Platform__*`), and `check-connection.sh` prints `NOT_CONNECTED_WEB` there (`CLAUDE_CODE_REMOTE=true`). A session starts with no repository; the `build` skill registers the app once it has a name, and its preview goes through the platform's tunnel (`preview.sh`, a `create_preview_token` token, `https://preview-<slug>.<domain>`). Not run in a real session yet (TECH_DEBT PLG-9).
 
 ### With a personal access token (admins, scripts, tests)
 
@@ -76,11 +83,11 @@ The `platform:deploy` skill:
 2. chooses the path: **CI** when the platform has CI and the project has (or the user wants) a repository in the organization; **direct** when `direct_deploy` is true and there is no repository or CI, or when the user asks for it; otherwise it explains why it cannot deploy;
 3. sets the function secrets the code reads and the platform does not have (asks the user for the values, `set_secrets`);
 4. reviews the new migrations and runs `platform-deploy check` (migrations dry run with the security linter, build); a blocking lint stops it, and a lint is added to `acceptedLints` only with the user's explicit consent;
-5. CI path: `gh repo create` if needed, `link_repo`, sets the `PLATFORM_URL` repository variable if the organization has none, adds the template's CI files (`init-app.sh` with `ci.uses`: `.github/workflows/platform.yml`, and `.claude/settings.json`, which declares the marketplace and enables the plugin for whoever opens the repository), commits, pushes to the default branch and watches the deploy run (`gh run watch`); a PR only when a ruleset of the organization refuses the push;
+5. CI path: `gh repo create` if needed (on the web, where a session cannot create a repository, the builder creates it from a prefilled link and lets the Claude GitHub App push to it), `link_repo`, adds the template's CI files (`init-app.sh` with `ci.uses`: `.github/workflows/platform.yml`, which names the platform's URL, and `.claude/settings.json`, which declares the marketplace and enables the plugin for whoever opens the repository), commits, pushes to the default branch and watches the deploy run (`gh run watch`; on the web, the release through `get_app`); a PR only when a ruleset of the organization refuses the push;
 6. direct path: `platform-deploy deploy` (release with the commit, migrations, functions, build, frontend, smoke test). Signed in through the browser, the skill first gets a deploy token (`create_deploy_token`: 15 minutes, this app and the publishing tools only) and passes it in `PLATFORM_DEPLOY_TOKEN`, a new one for each command; with a PAT, the script uses `PLATFORM_TOKEN`;
 7. reports the app URL, the Studio link and the run or release; on errors, reads the run logs and `get_logs`, and diagnoses.
 
-The `platform:build` skill is used before the first deployment, from an empty folder or an existing app ("build me a notes app for my team", "add file attachments to the notes"). It writes the app from the template (`init-app.sh`: skeleton for a new app, `CLAUDE.md` with the target architecture on any app, so the rules apply to any session in the repository): Vite + React + TypeScript single-page app with supabase-js, migrations in `supabase/migrations` with row level security on every table, edge functions only for what needs a secret or extra privileges, email and password auth that handles invitation and password reset links (app users are usually invited by the builder). It is written for builders who are not developers: it keeps every technical decision on Claude's side and talks about what the app does and who sees what, without jargon, commands to run or files to edit. It builds the app, checks `npm run build`, commits, then runs a local preview (`supabase start` on free ports, two demo accounts and sample data, the dev server declared in `.claude/launch.json` so that Claude Desktop shows it in its preview pane) and offers to deploy it with `platform:deploy`.
+The `platform:build` skill is used before the first deployment, from an empty folder or an existing app ("build me a notes app for my team", "add file attachments to the notes"). It writes the app from the template (`init-app.sh`: skeleton for a new app, `CLAUDE.md` with the target architecture on any app, so the rules apply to any session in the repository): Vite + React + TypeScript single-page app with supabase-js, migrations in `supabase/migrations` with row level security on every table, edge functions only for what needs a secret or extra privileges, email and password auth that handles invitation and password reset links (app users are usually invited by the builder). It is written for builders who are not developers: it keeps every technical decision on Claude's side and talks about what the app does and who sees what, without jargon, commands to run or files to edit. It builds the app, checks `npm run build`, commits, then runs a preview (`supabase start` on free ports, two demo accounts and sample data; on a computer, the dev server declared in `.claude/launch.json` so that Claude Desktop shows it in its preview pane; on the web, `preview.sh` and the platform's tunnel) and offers to deploy it with `platform:deploy`. In a session on the web, it registers the app once it has a name (`create_app`), for the preview; nothing goes to GitHub before the first deployment.
 
 The `platform:admin-deploy` skill (admins only) is the audited exception of ARCHITECTURE §6.3: it asks for a reason, runs `preflight.sh` (clean tree, commit on the remote, checkout of the linked repository), then `platform-deploy deploy --reason "..."`.
 
@@ -93,7 +100,7 @@ Expected repo conventions:
 
 ## Tests
 
-- `plugin/test/scripts.test.sh` (also run by `pnpm --filter @platform/control-plane test`): from a copy of the plugin, every `${CLAUDE_PLUGIN_ROOT}` path of the skills exists, every MCP tool they name exists in the control plane, `.mcp.json` has no `Authorization` header, and the scripts behave (secrets scan, app template: new app, existing app, CI files, never overwrites, preflight refusals, `platform-deploy` with a deploy token or a PAT, `check-connection.sh` against a fake platform; `actionlint` on the generated caller and the reusable workflow when installed), the reusable workflow (`$/plugin/deploy-cli`, `workflow_call` only), and the platform URL (`.mcp.json` and `platform-url.sh` default to the local stack, `PLATFORM_URL` wins).
+- `plugin/test/scripts.test.sh` (also run by `pnpm --filter @platform/control-plane test`): from a copy of the plugin, every `${CLAUDE_PLUGIN_ROOT}` path of the skills exists, every MCP tool they name exists in the control plane, `.mcp.json` has no `Authorization` header, and the scripts behave (secrets scan, app template: new app, existing app, CI files, never overwrites, preflight refusals, `platform-deploy` with a deploy token or a PAT, `check-connection.sh` against a fake platform, `preview.sh` outside the web and without a token or `frpc`; `actionlint` on the generated caller and the reusable workflow when installed), the reusable workflow (`$/plugin/deploy-cli`, `workflow_call` only), and the platform URL (`.mcp.json` and `platform-url.sh` default to the local stack, `PLATFORM_URL` wins).
 - `apps/control-plane/test/plugin.test.ts`: the served zip (the platform's URL in place of the local one, the scripts' exec bit, a stable sha256 pinned by the marketplace); `admin.e2e.test.ts` fetches it from the running stack.
 - `apps/control-plane/test/plugin.e2e.test.ts` (`e2e:plugin`): the commands of the direct path of `deploy` (with a PAT, then with deploy tokens and `check-connection.sh`), then of `admin-deploy`, on a copy of `examples/todo-app` against the running stack.
 - `apps/control-plane/test/oauth.e2e.test.ts` (`e2e:oauth`): the browser sign-in, with a simulated client.

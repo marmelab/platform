@@ -355,6 +355,21 @@ services:
     labels:
       platform.service: mailpit
 
+  # Preview tunnel of Claude Code sessions on the web (frps.toml): reached only through Caddy (api.<domain>/~!frp and
+  # the preview-<slug> hosts)
+  frps:
+    image: fatedier/frps:v0.71.1
+    container_name: plat-frps
+    restart: unless-stopped
+    command: ["-c", "/etc/frp/frps.toml"]
+    mem_limit: 64m
+    environment:
+      PLATFORM_DOMAIN: ${PLATFORM_DOMAIN:-localhost}
+    volumes:
+      - ./frps/frps.toml:/etc/frp/frps.toml:ro
+    labels:
+      platform.service: frps
+
   # Mock OpenID Connect provider (M6 part 2), local installs only: install.sh adds the sso-test profile to
   # COMPOSE_PROFILES. The company IdP of the local stack and of the e2e suites: platform SSO login and the apps'
   # "custom:company" provider. It signs in any email (deploy/idp/mock-idp.ts). Runs on the control plane image (Node).
