@@ -1,8 +1,9 @@
 // Unit tests of the OAuth front's rules (journey B1, src/oauth-policy.ts) and of the token scopes (SEC-8,
 // src/token-scopes.ts): native clients only in registration, claude.ai's callback for the connector's confidential
 // client only, loopback port changes (RFC 8252), Basic client credentials, PKCE S256 only, the resource indicator, the
-// 60 s code lifetime, the tools of a deploy token, and what a preview token opens in the preview tunnel. The flows themselves (single-use code, PKCE verification, refresh rotation and reuse,
-// revocation) run against GoTrue in test/oauth.e2e.test.ts.
+// 60 s code lifetime, the tools of a deploy token, what a preview token opens in the preview tunnel, and the signed
+// values of the preview's sign-in. The flows themselves (single-use code, PKCE verification, refresh rotation and
+// reuse, revocation) run against GoTrue in test/oauth.e2e.test.ts, the preview's in test/preview.e2e.test.ts.
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { test } from "node:test";
@@ -22,7 +23,7 @@ import {
   sameLoopbackExceptPort,
   sanitizeRegistration,
 } from "../src/oauth-policy.ts";
-import { frpDecision, frpToken, scopeTools, toolAllowed } from "../src/token-scopes.ts";
+import { frpDecision, frpToken, scopeTools, signPreview, toolAllowed, verifyPreview } from "../src/token-scopes.ts";
 
 const error = (fn: () => unknown) => {
   try {
@@ -235,5 +236,23 @@ test("a preview token logs in and opens an http proxy on preview-<its app> only,
     [{ op: "NewUserConn", content: {} }, "notes"],
   ] as const) {
     assert.equal(frpDecision(request, slug).reject, true, JSON.stringify([request, slug]));
+  }
+});
+
+test("the preview's sign-in: a ticket or a pass signs in one account on one app's preview, until it expires", () => {
+  const secret = "s3cret";
+  const user = "6f1c2a52-8a43-4c1e-9d6b-3c1f2b7e9a10";
+  const pass = signPreview("pass", "notes", user, 1000, secret);
+  assert.equal(verifyPreview("pass", "notes", pass, 999, secret), user);
+  assert.equal(verifyPreview("pass", "notes", pass, 1000, secret), null, "expired");
+  assert.equal(verifyPreview("pass", "other", pass, 999, secret), null, "another app's preview");
+  assert.equal(verifyPreview("ticket", "notes", pass, 999, secret), null, "a pass is no ticket");
+  assert.equal(verifyPreview("pass", "notes", pass, 999, "other secret"), null);
+  const [, , mac] = pass.split(".");
+  assert.equal(verifyPreview("pass", "notes", `${user}.9999.${mac}`, 999, secret), null, "expiry pushed back");
+  assert.equal(verifyPreview("pass", "notes", `00000000-0000-0000-0000-000000000000.1000.${mac}`, 999, secret), null);
+  assert.equal(verifyPreview("pass", "notes", `${user}.1e3.${mac}`, 999, secret), null, "the same expiry, written otherwise");
+  for (const value of [undefined, "", "x", `${user}.1000`, `${pass}.`]) {
+    assert.equal(verifyPreview("pass", "notes", value, 999, secret), null, String(value));
   }
 });

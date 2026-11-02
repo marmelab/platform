@@ -20,6 +20,8 @@ import type { ServiceSpec } from "./orchestrator.ts";
 export const CONSENT_PATH = "/_platform/oauth/consent";
 /** The Connect Claude page (Studio host, studio/routes.ts): the connector's setup, and a builder's own client. */
 export const CONNECTOR_PATH = "/_platform/claude";
+/** The preview's sign-in (previews.ts), on the Studio host (session and membership) then on the preview host (pass). */
+export const PREVIEW_PATH = "/_platform/preview";
 /** Lifetime of the OAuth access tokens (GoTrue JWTs). */
 export const ACCESS_TOKEN_SECONDS = 3600;
 

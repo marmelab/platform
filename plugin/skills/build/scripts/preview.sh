@@ -4,9 +4,10 @@
 # The app preview of a Claude Code session on the web, which has no port forwarding: starts the dev server and frpc,
 # which serves it through the platform's preview tunnel at <preview url> (https://preview-<slug>.<domain>). The dev
 # server also relays the local Supabase API on that host (PREVIEW_SUPABASE_API, vite.config.ts). Idempotent: run it
-# again after a container restart (every process is gone, files stay). Prints the URL once it answers, LOCAL outside a
-# session on the web (use the local preview), OLD_VITE_CONFIG (the app's vite.config predates the preview: merge the
-# template's), or NO_TUNNEL (the logs are in ~/.platform-preview/<subdomain>/). Never prints or writes the token.
+# again after a container restart (every process is gone, files stay). Prints the URL once the tunnel is up (the
+# browser then signs in with the platform account of a member of the app), LOCAL outside a session on the web (use the
+# local preview), OLD_VITE_CONFIG (the app's vite.config predates the preview: merge the template's), or NO_TUNNEL
+# (the logs are in ~/.platform-preview/<subdomain>/). Never prints or writes the token.
 set -euo pipefail
 [ "${CLAUDE_CODE_REMOTE:-}" = true ] || { echo LOCAL; exit 0; }
 url="${1:?usage: preview.sh <preview url> <local Supabase API url>}"
@@ -77,9 +78,14 @@ echo $! > "$dir/vite.pid"
 http_proxy="${HTTPS_PROXY:-${https_proxy:-}}" setsid nohup frpc -c "$dir/frpc.toml" < /dev/null > "$dir/frpc.log" 2>&1 &
 echo $! > "$dir/frpc.pid"
 
+# ready: the dev server answers and frps accepted the proxy (the preview host itself asks the browser to sign in)
 for _ in $(seq 45); do
   sleep 2
-  if [ "$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "$url/")" = 200 ]; then echo "$url"; exit 0; fi
+  if grep -qs "start proxy success" "$dir/frpc.log" &&
+    [ "$(curl -s --noproxy '*' -o /dev/null -w '%{http_code}' --max-time 5 http://127.0.0.1:5173/)" = 200 ]; then
+    echo "$url"
+    exit 0
+  fi
 done
 echo NO_TUNNEL
 exit 1

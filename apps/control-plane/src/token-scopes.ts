@@ -1,6 +1,7 @@
 // What a token may reach (SEC-8), pure: unit-tested in test/oauth-policy.test.ts. The apps of a token (tokens.app_ids)
-// are enforced by appForUser and appsForUser, its tools (tokens.scopes) by buildMcpServer, and what a preview token
-// opens in the preview tunnel by frpDecision (previews.ts).
+// are enforced by appForUser and appsForUser, its tools (tokens.scopes) by buildMcpServer, what a preview token opens
+// in the preview tunnel by frpDecision, and who sees a preview by the signed values of its sign-in (previews.ts).
+import { createHmac, timingSafeEqual } from "node:crypto";
 import { PREVIEW_PREFIX } from "@platform/shared";
 import type { User } from "./auth.ts";
 
@@ -45,4 +46,20 @@ export function frpDecision(request: FrpRequest, slug: string | null): { reject:
   if (proxy.custom_domains?.length) return reject("custom domains are not allowed");
   if (proxy.subdomain !== `${PREVIEW_PREFIX}${slug}`) return reject(`the subdomain must be ${PREVIEW_PREFIX}${slug}`);
   return { reject: false, unchange: true };
+}
+
+/**
+ * A signed value of the preview's sign-in (previews.ts), bound to one app: the `ticket` Studio hands to the preview
+ * host, or the `pass` cookie the preview host sets in exchange. `<user id>.<expiry, epoch seconds>.<HMAC>`.
+ */
+export const signPreview = (kind: "ticket" | "pass", slug: string, userId: string, expires: number, secret: string) =>
+  `${userId}.${expires}.${createHmac("sha256", secret).update(`${kind}\n${slug}\n${userId}\n${expires}`).digest("base64url")}`;
+
+/** The user ID of a valid, unexpired ticket or pass of this app at `now` (epoch seconds), or null. */
+export function verifyPreview(kind: "ticket" | "pass", slug: string, value: string | undefined, now: number, secret: string) {
+  const [userId, expires] = (value ?? "").split(".");
+  if (!userId || !(Number(expires) > now)) return null;
+  const expected = Buffer.from(signPreview(kind, slug, userId, Number(expires), secret));
+  const actual = Buffer.from(value!);
+  return actual.length === expected.length && timingSafeEqual(actual, expected) ? userId : null;
 }

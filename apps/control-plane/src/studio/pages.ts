@@ -1,5 +1,5 @@
 import { isLoopbackRedirect } from "../oauth-policy.ts";
-import { CONNECTOR_PATH, CONSENT_PATH as OAUTH_CONSENT_PATH } from "../platform-auth.ts";
+import { CONNECTOR_PATH, CONSENT_PATH as OAUTH_CONSENT_PATH, PREVIEW_PATH } from "../platform-auth.ts";
 
 const escape = (value: string) =>
   value.replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[ch]!);
@@ -34,9 +34,16 @@ export interface SsoOption {
   passwordLogin: "everyone" | "admins";
 }
 
-/** Where the login leads: Studio, or the consent page of a Claude sign-in (oauth.ts), or the Connect Claude page. */
+/**
+ * Where the login leads: Studio, the consent page of a Claude sign-in (oauth.ts), the Connect Claude page, or an app's
+ * preview (previews.ts).
+ */
 const loginHeading = (next: string) =>
-  next.startsWith(OAUTH_CONSENT_PATH) || next.startsWith(CONNECTOR_PATH) ? "Sign in to connect Claude" : "Sign in to Studio";
+  next.startsWith(OAUTH_CONSENT_PATH) || next.startsWith(CONNECTOR_PATH)
+    ? "Sign in to connect Claude"
+    : next.startsWith(PREVIEW_PATH)
+    ? "Sign in to see the preview"
+    : "Sign in to Studio";
 
 export function loginPage(
   { next, email = "", error, sso }: { next: string; email?: string; error?: string; sso?: SsoOption | null },

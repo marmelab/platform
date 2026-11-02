@@ -63,6 +63,27 @@ const RETRY = { retries: 3, try_interval: "250ms" };
 const FRP_PATH = "/~!frp";
 const FRPS_BIND = "frps:7000";
 const FRPS_VHOST = "frps:8080";
+/**
+ * Caddy's `forward_auth`: the request's method and URI go to `uri` on the control plane's internal listener; a 2xx
+ * answer lets the request go on (after `allowed`), any other one is sent back to the client.
+ */
+const forwardAuth = (dial: string, uri: string, allowed: CaddyRoute[] = []) => ({
+  handler: "reverse_proxy",
+  upstreams: [{ dial }],
+  rewrite: { method: "GET", uri },
+  headers: {
+    request: {
+      set: {
+        "X-Forwarded-Method": ["{http.request.method}"],
+        "X-Forwarded-Uri": ["{http.request.uri}"],
+      },
+    },
+  },
+  handle_response: [{
+    match: { status_code: [2] },
+    routes: [{ handle: [{ handler: "vars" }] }, ...allowed],
+  }],
+});
 /** HTTP -> HTTPS redirect server of the TLS modes (router.ensureEdge). */
 const REDIRECT_SERVER = "redirect";
 /** Routes to set (replaced in place, or appended) or remove (null), by `@id`, in the two dynamic subroutes. */
@@ -467,10 +488,14 @@ export class CaddyRouter implements Router {
             ],
           }],
         },
-        // frps routes on the host to the session that opened the subdomain (an unknown one gets frps's 404 page)
+        // for the app's members only (previews.ts), then frps routes on the host to the session that opened the
+        // subdomain (an unknown one gets frps's 404 page)
         "previews-by-host": {
           match: [{ header_regexp: { Host: { name: "preview", pattern: previewHost } } }],
-          handle: [{ handler: "reverse_proxy", upstreams: [{ dial: FRPS_VHOST }] }],
+          handle: [
+            forwardAuth(`control-plane:${config.internalPort}`, "/preview/verify"),
+            { handler: "reverse_proxy", upstreams: [{ dial: FRPS_VHOST }] },
+          ],
           terminal: true,
         },
       },
@@ -555,23 +580,7 @@ export class CaddyRouter implements Router {
               },
               {
                 handle: [
-                  {
-                    handler: "reverse_proxy",
-                    upstreams: [{ dial: route.forwardAuth }],
-                    rewrite: { method: "GET", uri: "/studio/verify" },
-                    headers: {
-                      request: {
-                        set: {
-                          "X-Forwarded-Method": ["{http.request.method}"],
-                          "X-Forwarded-Uri": ["{http.request.uri}"],
-                        },
-                      },
-                    },
-                    handle_response: [{
-                      match: { status_code: [2] },
-                      routes: [{ handle: [{ handler: "vars" }] }, ...copyIdentity],
-                    }],
-                  },
+                  forwardAuth(route.forwardAuth, "/studio/verify", copyIdentity),
                   { handler: "reverse_proxy", upstreams: [{ dial: route.upstream }] },
                 ],
               },

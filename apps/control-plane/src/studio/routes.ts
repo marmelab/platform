@@ -11,7 +11,8 @@ import { getSettings, ssoActive } from "../settings.ts";
 import { finishSsoLogin, SSO_COOKIE, SSO_PENDING_SECONDS, ssoCookiePath, SsoError, startSsoLogin } from "../sso.ts";
 import { passwordLoginRefused, safeNext as localPath } from "../sso-policy.ts";
 import { ConsentError, consentRequest, connectorClient, connectorClientId, decideConsent, mcpResource } from "../oauth.ts";
-import { CONNECTOR_PATH, CONSENT_PATH } from "../platform-auth.ts";
+import { CONNECTOR_PATH, CONSENT_PATH, PREVIEW_PATH } from "../platform-auth.ts";
+import { previewTicketUrl, previewViewer } from "../previews.ts";
 import {
   connectorPage,
   type ConnectorSetup,
@@ -217,6 +218,18 @@ studioPublicRoutes.post(CONNECTOR_PATH, async (c) => {
   const issued = await connectorClient(user, true);
   await audit(user.id, null, "claude_connector_secret", { client_id: issued.client_id, source: "connect_page" });
   return c.html(connectorPage(await connectorSetup(user, issued)));
+});
+
+// The preview's sign-in (previews.ts): a signed-in member of the app goes back to the preview host with a ticket
+studioPublicRoutes.get(PREVIEW_PATH, async (c) => {
+  const slug = c.req.query("app") ?? "";
+  const next = localPath(c.req.query("next"), "/");
+  const user = await userForSession(getCookie(c, SESSION_COOKIE));
+  if (!user) {
+    return c.redirect(`/_platform/login?next=${encodeURIComponent(`${PREVIEW_PATH}?${new URLSearchParams({ app: slug, next })}`)}`, 302);
+  }
+  if (!(await previewViewer(user.id, slug))) return c.html(refusedPage(`${user.email} is not a member of ${slug}`), 403);
+  return c.redirect(previewTicketUrl(user.id, slug, next), 302);
 });
 
 /** Internal listener: Caddy forward auth and Studio's project configs. Never routed by the public Caddy server. */
