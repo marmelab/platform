@@ -75,14 +75,16 @@ fake=$!
 trap 'kill $fake 2> /dev/null; wait $fake 2> /dev/null || true; rm -rf "$tmp"' EXIT
 for _ in $(seq 50); do [ -s "$port_file" ] && break; sleep 0.1; done
 fake_url="http://127.0.0.1:$(cat "$port_file")/mcp"
-# expect <word> <PLATFORM_TOKEN value, or ""> [script argument]
+# expect <word> <PLATFORM_TOKEN value, or ""> [script argument]; remote=true: in a session on the web (the suite's own
+# CLAUDE_CODE_REMOTE is ignored: it may run in one)
 expect() {
   local word="$1" token="$2"; shift 2
-  env -u PLATFORM_TOKEN PLATFORM_URL="$fake_url" ${token:+PLATFORM_TOKEN="$token"} "$scripts/check-connection.sh" "$@" > "$tmp/word" 2> "$tmp/api"
+  env -u PLATFORM_TOKEN PLATFORM_URL="$fake_url" CLAUDE_CODE_REMOTE="${remote:-}" ${token:+PLATFORM_TOKEN="$token"} \
+    "$scripts/check-connection.sh" "$@" > "$tmp/word" 2> "$tmp/api"
   test "$(cat "$tmp/word")" = "$word" && test "$(cat "$tmp/api")" = "api: $fake_url"
 }
 check "check-connection.sh: not signed in" expect NOT_SIGNED_IN ""
-check "check-connection.sh: connector not connected (web)" env CLAUDE_CODE_REMOTE=true bash -c "$(declare -f expect); scripts='$scripts' tmp='$tmp' fake_url='$fake_url' expect NOT_CONNECTED_WEB ''"
+remote=true check "check-connection.sh: connector not connected (web)" expect NOT_CONNECTED_WEB ""
 check "check-connection.sh: refused after an auth error" expect ACCOUNT_REFUSED "" --after-auth-error
 check "check-connection.sh: PAT accepted" expect OK plat_good
 check "check-connection.sh: PAT refused" expect ACCOUNT_REFUSED plat_revoked
