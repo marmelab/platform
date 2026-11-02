@@ -164,6 +164,7 @@ export const config = {
    */
   defaults: {
     directDeploy: optional("DIRECT_DEPLOY") ?? "admins",
+    claudeWebEnvironment: optional("CLAUDE_WEB_ENVIRONMENT") ?? "",
     ciAllowedWorkflows: optional("CI_ALLOWED_WORKFLOWS") ?? "",
     oidcIssuer: optional("OIDC_ISSUER") ?? "https://token.actions.githubusercontent.com",
     oidcAudience: optional("OIDC_AUDIENCE"),

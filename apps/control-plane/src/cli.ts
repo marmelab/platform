@@ -16,6 +16,10 @@
 //                                                  smtp_* change recreates the GoTrue of every running app, one at a
 //                                                  time; an sso_* provider change updates the apps using company SSO)
 //   node src/cli.ts unset-setting <key>            (back to the environment's value)
+//   node src/cli.ts claude-connector [--new-secret]   (the OAuth client of the organization's claude.ai connector,
+//                                                  Team or Enterprise, INSTALL.md §7: prints its ID, and its secret
+//                                                  when it creates it or with --new-secret, which voids the former one;
+//                                                  on Pro or Max, builders get their own on the Connect Claude page)
 //   node src/cli.ts sync-auth                      (recreates the GoTrue of running apps whose environment changed)
 //   node src/cli.ts sample-metrics                 (samples app_metrics now, as the control plane does every minute)
 //   node src/cli.ts realtime-migrate <slug>|--all  (after a Realtime upgrade: recreates the app's Realtime tenant, which
@@ -43,6 +47,7 @@ import { initCluster } from "./init.ts";
 import { registerRealtime } from "./storage-realtime.ts";
 import { sampleMetrics } from "./metrics.ts";
 import { addMember, removeMember } from "./members.ts";
+import { connectorClient } from "./oauth.ts";
 import { deleteShadowUser } from "./platform-auth.ts";
 import { setPassword } from "./sessions.ts";
 import {
@@ -65,7 +70,7 @@ import { platformVersion } from "./version.ts";
 
 const USAGE = "usage: cli.ts init | create-user <email> [admin|developer] [token-name] | delete-user <email> | " +
   "set-password <email> [--generate] | add-member <slug> <email> [owner|collaborator] | remove-member <slug> <email> | stop-app <slug> | start-app <slug> | delete-app <slug> [--no-backup] | " +
-  "settings | set-setting <key> <value> | unset-setting <key> | sync-auth | sample-metrics | realtime-migrate <slug>|--all | " +
+  "settings | set-setting <key> <value> | unset-setting <key> | claude-connector [--new-secret] | sync-auth | sample-metrics | realtime-migrate <slug>|--all | " +
   "backup-app <slug> | list-backups [<slug>] | restore-app <backup-id> --confirm <slug> [--no-safety-backup] | " +
   "run-backups [<slug>...] | prune-backups [--now <iso date>] | lint-apps [--source manual|upgrade] [<slug>...] | " +
   "recycle-apps [--force] [<slug>...] | verify [--json] | version";
@@ -149,6 +154,13 @@ if (command === "init") {
   console.log(`${args[0]} unset`);
   if (SMTP_KEYS.includes(args[0])) await syncAuth();
   if (SSO_PROVIDER_KEYS.includes(args[0])) await syncSso();
+} else if (command === "claude-connector" && args.every((a) => a === "--new-secret")) {
+  const { client_id, client_secret } = await connectorClient(null, args.includes("--new-secret"));
+  if (client_secret) await audit(null, null, "claude_connector_secret", { client_id, source: "cli" });
+  console.log(`client ID: ${client_id}`);
+  console.log(client_secret
+    ? `client secret: ${client_secret}`
+    : "client secret: given when the client was created (--new-secret replaces it, then add the connector again in claude.ai)");
 } else if (command === "sync-auth") {
   await syncAuth();
 } else if (command === "sample-metrics") {

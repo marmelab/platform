@@ -1,6 +1,7 @@
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
+import { PREVIEW_PREFIX } from "@platform/shared";
 import { config, loopbackTokenHost } from "./config.ts";
 
 export interface StudioRoute {
@@ -55,6 +56,13 @@ interface CaddyConfig {
  * retries a request whose body it can replay and that the upstream did not start answering.
  */
 const RETRY = { retries: 3, try_interval: "250ms" };
+/**
+ * frps (preview tunnel, previews.ts): frpc's websocket on frp's fixed path of the API host, and the vhost port that
+ * serves the preview hosts.
+ */
+const FRP_PATH = "/~!frp";
+const FRPS_BIND = "frps:7000";
+const FRPS_VHOST = "frps:8080";
 /** HTTP -> HTTPS redirect server of the TLS modes (router.ensureEdge). */
 const REDIRECT_SERVER = "redirect";
 /** Routes to set (replaced in place, or appended) or remove (null), by `@id`, in the two dynamic subroutes. */
@@ -161,7 +169,16 @@ export class CaddyRouter implements Router {
       const api = pub.routes?.find((r) => r["@id"] === "api");
       // local installs: the OAuth token endpoint is also served on localhost (config.loopbackTokenHost)
       const loopback = loopbackTokenHost();
-      if (api) api.match = [{ host: [config.apiHost] }, ...(loopback ? [{ host: [loopback], path: ["/oauth/token"] }] : [])];
+      if (api) {
+        api.match = [{ host: [config.apiHost] }, ...(loopback ? [{ host: [loopback], path: ["/oauth/token"] }] : [])];
+        api.handle = [{
+          handler: "subroute",
+          routes: [
+            { match: [{ path: [FRP_PATH] }], handle: [{ handler: "reverse_proxy", upstreams: [{ dial: FRPS_BIND }] }], terminal: true },
+            { handle: [{ handler: "reverse_proxy", upstreams: [{ dial: `control-plane:${config.port}` }] }] },
+          ],
+        }];
+      }
       if (config.tls.mode === "off") {
         pub.listen = [`:${config.publicPort}`];
         pub.automatic_https = { disable: true };
@@ -417,12 +434,14 @@ export class CaddyRouter implements Router {
 
   /**
    * The two generic routes (not terminal: an unknown slug falls through to the next routes, e.g. Studio, then to the
-   * server's 404). Installed once; the former per-app routes are removed in the same change.
+   * server's 404), and the preview hosts' route to frps. Installed once; the former per-app routes are removed in the
+   * same change.
    */
   private async ensureRoutes() {
     if (this.routesInstalled) return;
     const { page, api } = this.maintenance();
     const host = `^(${SLUG_PATTERN})\\.${escapeRegExp(config.appsDomain)}(?::[0-9]+)?$`;
+    const previewHost = `^${PREVIEW_PREFIX}${SLUG_PATTERN}\\.${escapeRegExp(config.appsDomain)}(?::[0-9]+)?$`;
     await this.change({
       public: {
         "apps-by-host": {
@@ -447,6 +466,12 @@ export class CaddyRouter implements Router {
               }]),
             ],
           }],
+        },
+        // frps routes on the host to the session that opened the subdomain (an unknown one gets frps's 404 page)
+        "previews-by-host": {
+          match: [{ header_regexp: { Host: { name: "preview", pattern: previewHost } } }],
+          handle: [{ handler: "reverse_proxy", upstreams: [{ dial: FRPS_VHOST }] }],
+          terminal: true,
         },
       },
       // Edge functions reach their own app through http://caddy:8180/<slug> (SUPABASE_URL)

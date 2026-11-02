@@ -24,6 +24,13 @@ test("the zip holds the plugin with the platform's MCP URL instead of the local 
   }
 });
 
+test("the cloud setup script is served with the platform's URL", () => {
+  const { setup } = buildPlugin(API);
+  assert.match(setup, /^#!\/usr\/bin\/env bash\n/);
+  assert.ok(setup.includes('mcp="${PLATFORM_URL:-https://api.example.com/mcp}"'));
+  assert.ok(!setup.includes(LOCAL_MCP_URL));
+});
+
 test("the scripts stay executable once unzipped", () => {
   const dir = mkdtempSync(join(tmpdir(), "plugin-zip-"));
   writeFileSync(join(dir, "platform.zip"), buildPlugin(API).zip);

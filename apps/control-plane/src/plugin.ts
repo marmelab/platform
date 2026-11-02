@@ -11,18 +11,20 @@ import { type Zippable, zipSync } from "fflate";
 const PLUGIN_DIR = fileURLToPath(new URL("../../../plugin/", import.meta.url));
 /** The MCP URL of the repository's plugin (local stack), replaced in the files that name it. */
 export const LOCAL_MCP_URL = "http://api.localhost:8100/mcp";
-const WITH_URL = new Set([".mcp.json", "skills/deploy/scripts/platform-url.sh"]);
+const WITH_URL = new Set([".mcp.json", "skills/deploy/scripts/platform-url.sh", "cloud/setup.sh"]);
 // a fixed date: the same plugin gives the same zip, hence the same sha256, across restarts
 const MTIME = new Date("2000-01-01T00:00:00Z");
 
 /** `api` is the platform's API URL, https://api.<domain> */
 export function buildPlugin(api: string, dir = PLUGIN_DIR) {
   const files: Zippable = {};
+  let setup = "";
   for (const name of readdirSync(dir, { recursive: true, encoding: "utf8" }).sort()) {
     const stat = statSync(join(dir, name));
     if (!stat.isFile()) continue;
     let data: Uint8Array = readFileSync(join(dir, name));
     if (WITH_URL.has(name)) data = Buffer.from(data.toString().replaceAll(LOCAL_MCP_URL, `${api}/mcp`));
+    if (name === "cloud/setup.sh") setup = data.toString();
     // Unix mode in the external attributes: the scripts stay executable (only the exec bit, as git, whatever the umask)
     files[name] = [data, { os: 3, attrs: (stat.mode & 0o111 ? 0o100755 : 0o100644) * 0x10000, mtime: MTIME }];
   }
@@ -39,5 +41,6 @@ export function buildPlugin(api: string, dir = PLUGIN_DIR) {
       source: { source: "archive", url: `${api}/plugin/platform.zip`, sha256: createHash("sha256").update(zip).digest("hex") },
     }],
   };
-  return { zip, marketplace };
+  // `setup`: the setup script of the claude.ai cloud environment (Claude Code on the web), served on its own
+  return { zip, marketplace, setup };
 }

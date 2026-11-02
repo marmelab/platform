@@ -1,0 +1,19 @@
+# Preview tunnel (ARCHITECTURE §3.10): a Claude Code session on the web exposes the app it runs at
+# https://preview-<slug>.<domain>. frpc, in the session's sandbox, connects over a websocket to https://api.<domain>/~!frp
+# (Caddy -> bindPort); Caddy sends the preview hosts to vhostHTTPPort. Internal network only: no published port, no
+# dashboard. No shared frp token: the control plane checks each client's preview token and subdomain (previews.ts).
+bindPort = 7000
+vhostHTTPPort = 8080
+subDomainHost = "{{ .Envs.PLATFORM_DOMAIN }}"
+# frpc pings every 30 s (preview.sh) and frps asks the control plane at each ping (Ping below): an expired or revoked
+# token, a disabled account or a builder removed from the app loses the tunnel. A client that stops pinging, or never
+# does, is dropped after this timeout, which also frees the subdomain of a sandbox that restarted.
+# ponytail: frp's heartbeats are off by default with tcpMux, hence the explicit timeout; shorten it if a restarted
+# sandbox waits too long for its subdomain
+transport.heartbeatTimeout = 90
+
+[[httpPlugins]]
+name = "platform"
+addr = "control-plane:3001"
+path = "/frp/plugin"
+ops = ["Login", "NewProxy", "Ping"]

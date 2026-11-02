@@ -18,6 +18,8 @@ import type { ServiceSpec } from "./orchestrator.ts";
 
 /** Where GoTrue sends the browser after /oauth/authorize (on the Studio host, with the platform's login). */
 export const CONSENT_PATH = "/_platform/oauth/consent";
+/** The Connect Claude page (Studio host, studio/routes.ts): the connector's setup, and a builder's own client. */
+export const CONNECTOR_PATH = "/_platform/claude";
 /** Lifetime of the OAuth access tokens (GoTrue JWTs). */
 export const ACCESS_TOKEN_SECONDS = 3600;
 
