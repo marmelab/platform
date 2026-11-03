@@ -1,9 +1,5 @@
 // Unit tests of the OAuth front's rules (journey B1, src/oauth-policy.ts) and of the token scopes (SEC-8,
-// src/token-scopes.ts): native clients only in registration, claude.ai's callback for the connector's confidential
-// client only, loopback port changes (RFC 8252), Basic client credentials, PKCE S256 only, the resource indicator, the
-// 60 s code lifetime, the tools of a deploy token, what a preview token opens in the preview tunnel, and the signed
-// values of the preview's sign-in. The flows themselves (single-use code, PKCE verification, refresh rotation and
-// reuse, revocation) run against GoTrue in test/oauth.e2e.test.ts, the preview's in test/preview.e2e.test.ts.
+// src/token-scopes.ts). The flows themselves run in test/oauth.e2e.test.ts and test/preview.e2e.test.ts.
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { test } from "node:test";
@@ -82,7 +78,7 @@ test("a native client may pick another port at each sign-in (RFC 8252 §7.3), no
 test("claude.ai's callback is the connector's confidential client's only redirect, and only it may use it", () => {
   assert.ok(isAllowedRedirect("http://localhost:53987/callback", "public"));
   assert.ok(isAllowedRedirect(CLAUDE_AI_REDIRECT, "confidential"));
-  // anyone can make a claude.ai account and register a client: a public client never reaches claude.ai's callback
+  // anyone can register a public client: it never reaches claude.ai's callback
   assert.equal(isAllowedRedirect(CLAUDE_AI_REDIRECT, "public"), false);
   assert.equal(isAllowedRedirect("http://localhost:53987/callback", "confidential"), false);
   for (const uri of [
@@ -95,7 +91,6 @@ test("claude.ai's callback is the connector's confidential client's only redirec
     assert.equal(isAllowedRedirect(uri, "confidential"), false, uri);
   }
   assert.equal(error(() => sanitizeRegistration({ client_name: "Claude", redirect_uris: [CLAUDE_AI_REDIRECT] })), "invalid_redirect_uri");
-  // an exact match needs no new registration; port changes stay a loopback thing
   assert.equal(redirectsToRegister([CLAUDE_AI_REDIRECT], CLAUDE_AI_REDIRECT), null);
   assert.equal(error(() => redirectsToRegister(["http://localhost:1/callback"], CLAUDE_AI_REDIRECT)), "invalid_request");
 });
@@ -225,7 +220,7 @@ test("a preview token logs in and opens an http proxy on preview-<its app> only,
   for (const [request, slug] of [
     [login, null],
     [proxy({}), null],
-    // expired, revoked, account disabled or builder removed from the app since the login: the tunnel drops
+    // the token is no longer valid since the login: the tunnel drops
     [ping, null],
     [proxy({ subdomain: "preview-other" }), "notes"],
     [proxy({ subdomain: "notes" }), "notes"],

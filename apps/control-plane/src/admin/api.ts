@@ -141,7 +141,6 @@ adminApi.post("/users", async (c) => {
 async function sendWelcome(email: string, role: "admin" | "developer") {
   const settings = await getSettings();
   const { sso } = settings;
-  // Claude Code on the web: a first session with no repository (INSTALL.md §7)
   const webStart = claudeCodeUrl(settings, null, "Build me an app for the platform that ");
   return sendPlatformMail({
     to: [email],

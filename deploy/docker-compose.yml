@@ -355,8 +355,7 @@ services:
     labels:
       platform.service: mailpit
 
-  # Preview tunnel of Claude Code sessions on the web (frps.toml): reached only through Caddy (api.<domain>/~!frp and
-  # the preview-<slug> hosts)
+  # Preview tunnel (frps.toml): no published port, Caddy routes to it
   frps:
     image: fatedier/frps:v0.71.1
     container_name: plat-frps

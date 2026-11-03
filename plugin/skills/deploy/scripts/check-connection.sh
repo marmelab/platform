@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
 # Usage: check-connection.sh [--after-auth-error]
 # Why Claude cannot use the platform, in one word (step 0 of the deploy skill): OK, NOT_SIGNED_IN (Claude Code is not
-# signed in to the platform yet), NOT_CONNECTED_WEB (the same in a session on the web, CLAUDE_CODE_REMOTE=true: the
-# claude.ai connector is not connected), ACCOUNT_REFUSED (the platform refuses the account: disabled, or its access
-# revoked) or UNREACHABLE (network, VPN, platform down), on stdout; the API URL it checked on stderr, for the admin. Never
-# prints a token.
+# signed in to the platform yet), NOT_CONNECTED_WEB (the same on the web: the claude.ai connector is not connected),
+# ACCOUNT_REFUSED (the platform refuses the account: disabled, or its access revoked) or UNREACHABLE (network, VPN,
+# platform down), on stdout; the API URL it checked on stderr, for the admin. Never prints a token.
 # --after-auth-error: the platform tools were rejected after working (Claude Code then needs to sign in again): with a
 # browser sign-in, only an admin's revocation or a disabled account does that.
 set -uo pipefail

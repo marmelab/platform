@@ -1,8 +1,8 @@
 import { defineConfig, loadEnv } from "vite";
 import react from "@vitejs/plugin-react";
 
-// PREVIEW_SUPABASE_API: set by the platform's preview (a Claude Code session on the web), whose tunnel only reaches
-// this dev server; the dev server then also relays the local Supabase API, on the same host.
+// PREVIEW_SUPABASE_API: set by the platform's preview on the web, whose tunnel reaches this dev server only, so it
+// also relays the local Supabase API.
 export default defineConfig(({ mode }) => {
   const api = loadEnv(mode, process.cwd(), "PREVIEW_").PREVIEW_SUPABASE_API;
   const proxy = Object.fromEntries(

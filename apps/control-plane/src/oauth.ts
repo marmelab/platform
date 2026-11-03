@@ -1,15 +1,13 @@
 // OAuth 2.1 authorization for the MCP endpoint (MCP specification, "Authorization"; journey B1): Claude Code finds the
 // authorization server from the 401 of /mcp, registers itself (RFC 7591), opens the browser on /oauth/authorize, and
-// gets tokens from /oauth/token, which it stores in the keychain and refreshes. A claude.ai connector (used by Claude
-// Code on the web) does the same from Anthropic's servers, with claude.ai's callback and a confidential client whose
-// secret only that connector holds (connectorClient): the organization's (Team, Enterprise), or a builder's own (Pro,
-// Max), which signs in that builder only. The
-// authorization server is the platform's GoTrue (platform-auth.ts); these routes, on the API host, front it: they
-// publish the metadata (RFC 9728, RFC 8414) and apply the platform's rules before forwarding (oauth-policy.ts): native
-// clients only in registration, claude.ai's callback for the connector's client only, PKCE S256, the MCP endpoint as
-// the only resource, codes exchanged within 60 s by an active account, a connection row per GoTrue session
-// (`tokens`, kind 'oauth') that the admin console lists and revokes. The consent page is on the Studio host, behind
-// the platform's login (studio/routes.ts).
+// gets tokens from /oauth/token, which it stores in the keychain and refreshes. A claude.ai connector (Claude Code on
+// the web) does the same from Anthropic's servers, with a confidential client (connectorClient). The authorization
+// server is the platform's GoTrue (platform-auth.ts); these routes, on the API host, front it: they publish the
+// metadata (RFC 9728, RFC 8414) and apply the platform's rules before forwarding (oauth-policy.ts): native clients only
+// in registration, claude.ai's callback for connector clients only, PKCE S256, the MCP endpoint as the only resource,
+// codes exchanged within 60 s by an active account, a connection row per GoTrue session (`tokens`, kind 'oauth') that
+// the admin console lists and revokes. The consent page is on the Studio host, behind the platform's login
+// (studio/routes.ts).
 import { type Context, Hono } from "hono";
 import type { User } from "./auth.ts";
 import { audit } from "./audit.ts";
@@ -84,7 +82,7 @@ oauthRoutes.get("/.well-known/oauth-authorization-server", (c) =>
     response_types_supported: ["code"],
     grant_types_supported: ["authorization_code", "refresh_token"],
     code_challenge_methods_supported: ["S256"],
-    // none: Claude Code (public clients); a secret: the claude.ai connector's client
+    // none: Claude Code; a secret: claude.ai connectors
     token_endpoint_auth_methods_supported: ["none", "client_secret_basic", "client_secret_post"],
     service_documentation: `${studioUrl()}/_platform/login`,
   }));
@@ -109,7 +107,7 @@ async function tokenFailure(c: Context, response: Response) {
   if (response.status >= 500 || response.status === 429) {
     return c.json({ error: "temporarily_unavailable", error_description: String(body.msg ?? "try again later") }, 503);
   }
-  // a missing or wrong client secret (the connector's client): signing in again would not help, unlike invalid_grant
+  // a bad client secret: signing in again would not help, unlike invalid_grant
   if (body.error_code === "invalid_credentials") {
     return oauthError(c, new OAuthError("invalid_client", String(body.msg ?? "client authentication failed")), 401);
   }
@@ -133,11 +131,8 @@ oauthRoutes.post("/oauth/register", async (c) => {
 });
 
 /**
- * The client of a claude.ai connector (Claude Code on the web, INSTALL.md §7): confidential, claude.ai's callback
- * only. `owner` null: the organization's (claude.ai Team or Enterprise, cli.ts claude-connector), for every account; a
- * builder: their own (Pro or Max, the Connect Claude page), for them only (clientAllowed). Created when missing;
- * `newSecret` replaces the secret of an existing one (claude.ai then needs the connector added again: it cannot change
- * it in place). The secret is returned when created or replaced, never stored in clear.
+ * A claude.ai connector's client, created when missing: the organization's (`owner` null) or a builder's own.
+ * `newSecret` replaces its secret, which claude.ai cannot update in place: the connector must be added again.
  */
 export async function connectorClient(
   owner: Pick<User, "id" | "email"> | null,
@@ -163,18 +158,16 @@ export async function connectorClient(
       grant_types: ["authorization_code", "refresh_token"],
     },
   });
-  // ponytail: a concurrent creation for the same owner fails on the unique user_id, its GoTrue client left unlisted,
-  // hence refused (clientAllowed)
+  // ponytail: of two concurrent creations for one owner, the loser's GoTrue client stays unlisted, hence refused
   await platform.query("insert into connector_clients (client_id, user_id) values ($1, $2)", [client_id, owner?.id ?? null]);
   return { client_id, client_secret };
 }
 
-/** The connector client of a builder (null: the organization's), if it exists. */
+/** ownerId null: the organization's connector. */
 export const connectorClientId = async (ownerId: string | null) =>
   (await one<{ client_id: string }>("select client_id from connector_clients where user_id is not distinct from $1", [ownerId]))
     ?.client_id ?? null;
 
-/** Who may sign in with a client (clientAllowed): its type, and its connector row if any. */
 const CLIENT_ACCESS = "c.client_type, k.client_id is not null as connector, k.user_id as owner";
 
 interface ClientRow extends ClientAccess {
@@ -206,7 +199,7 @@ oauthRoutes.get("/oauth/authorize", async (c) => {
   c.header("Cache-Control", "no-store");
   const query = c.req.query();
   const client = await findClient(query.client_id ?? "");
-  // a confidential client that is no connector's (a deleted builder's) is unknown; the owner is checked at the consent
+  // a deleted builder's client is unknown; the owner is checked at the consent (checkOwner)
   if (!client || (client.client_type !== "public" && !client.connector)) return authorizeFailure(c, "unknown client");
   const redirectUri = query.redirect_uri ?? "";
   if (!isAllowedRedirect(redirectUri, client.client_type)) return authorizeFailure(c, "redirect_uri is not allowed");
@@ -274,8 +267,7 @@ oauthRoutes.post("/oauth/token", async (c) => {
   c.header("Cache-Control", "no-store");
   c.header("Pragma", "no-cache");
   const form = new URLSearchParams(await c.req.text());
-  // the connector's client sends its secret: client_secret_basic goes on as client_secret_post (the method it was
-  // created with), so that GoTrue sees one method whichever one claude.ai uses
+  // into the form: GoTrue accepts only the method the client was created with, client_secret_post
   if (c.req.header("authorization")) {
     const credentials = basicCredentials(c.req.header("authorization"));
     if (!credentials) return oauthError(c, new OAuthError("invalid_client", "Authorization must hold Basic client credentials"), 401);
@@ -332,10 +324,7 @@ export class ConsentError extends Error {
   }
 }
 
-/**
- * A builder's own connector, for another account: refused before GoTrue sees the request (it would approve a
- * remembered consent at once).
- */
+/** Before GoTrue sees the request: it would approve a remembered consent at once. */
 function checkOwner(user: User, client: ClientAccess | undefined) {
   if (client && !clientAllowed(client, user.id)) {
     throw new ConsentError(

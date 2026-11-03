@@ -187,9 +187,6 @@ studioPublicRoutes.post(CONSENT_PATH, async (c) => {
   }
 });
 
-// The Connect Claude page (Claude Code on the web, INSTALL.md §7), behind the platform's login: the connector's setup,
-// and a builder's own connector client (claude.ai Pro or Max), created or given a new secret by its form (protected
-// like the login form)
 const connectorLogin = (c: Context) => c.redirect(`/_platform/login?next=${encodeURIComponent(CONNECTOR_PATH)}`, 302);
 
 async function connectorSetup(user: User, issued?: { client_id: string; client_secret?: string }): Promise<ConnectorSetup> {
@@ -201,7 +198,6 @@ async function connectorSetup(user: User, issued?: { client_id: string; client_s
     mcpUrl: mcpResource(),
     hosts: [config.apiHost, `*.${config.appsDomain}`],
     setupScript: `curl -fsSL ${apiUrl()}/plugin/cloud-setup.sh | bash`,
-    // the name the platform's links open (claude_web_environment)
     environment: claudeWebEnvironment || "Platform",
   };
 }
@@ -220,7 +216,6 @@ studioPublicRoutes.post(CONNECTOR_PATH, async (c) => {
   return c.html(connectorPage(await connectorSetup(user, issued)));
 });
 
-// The preview's sign-in (previews.ts): a signed-in member of the app goes back to the preview host with a ticket
 studioPublicRoutes.get(PREVIEW_PATH, async (c) => {
   const slug = c.req.query("app") ?? "";
   const next = localPath(c.req.query("next"), "/");

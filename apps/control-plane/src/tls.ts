@@ -1,9 +1,9 @@
 // On-demand TLS (ARCHITECTURE §3.5, A1): with TLS_MODE=acme (or internal), Caddy obtains a certificate the first time a
 // client asks for a host (SNI), after asking the control plane whether that host is one of the platform's. Approved:
-// the platform hosts (API, admin console, Studio), and <slug>.<apps domain> and preview-<slug>.<apps domain> (preview
-// tunnel, previews.ts) of an existing app (stopped ones included: they serve a maintenance page). Anything else is refused, so that a client sending random names through the
-// wildcard DNS record cannot make Caddy request certificates for them (ACME rate limits, disk). Internal listener only
-// (never routed publicly): GET /caddy/ask?domain=<host>, 200 or 404.
+// the platform hosts (API, admin console, Studio), and <slug>.<apps domain> and preview-<slug>.<apps domain> of an
+// existing app (stopped ones included: they serve a maintenance page). Anything else is refused, so that a client
+// sending random names through the wildcard DNS record cannot make Caddy request certificates for them (ACME rate
+// limits, disk). Internal listener only (never routed publicly): GET /caddy/ask?domain=<host>, 200 or 404.
 import { PREVIEW_PREFIX, SLUG_RE } from "@platform/shared";
 import { Hono } from "hono";
 import { config } from "./config.ts";

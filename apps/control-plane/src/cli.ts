@@ -16,10 +16,9 @@
 //                                                  smtp_* change recreates the GoTrue of every running app, one at a
 //                                                  time; an sso_* provider change updates the apps using company SSO)
 //   node src/cli.ts unset-setting <key>            (back to the environment's value)
-//   node src/cli.ts claude-connector [--new-secret]   (the OAuth client of the organization's claude.ai connector,
-//                                                  Team or Enterprise, INSTALL.md §7: prints its ID, and its secret
-//                                                  when it creates it or with --new-secret, which voids the former one;
-//                                                  on Pro or Max, builders get their own on the Connect Claude page)
+//   node src/cli.ts claude-connector [--new-secret]   (the organization's claude.ai connector client: prints its ID,
+//                                                  and its secret when created or with --new-secret, which voids the
+//                                                  former one)
 //   node src/cli.ts sync-auth                      (recreates the GoTrue of running apps whose environment changed)
 //   node src/cli.ts sample-metrics                 (samples app_metrics now, as the control plane does every minute)
 //   node src/cli.ts realtime-migrate <slug>|--all  (after a Realtime upgrade: recreates the app's Realtime tenant, which

@@ -1,5 +1,4 @@
-// The welcome email of an account created in the admin console (M6, sent by admin/api.ts). Never a password nor a
-// token: the admin hands them over.
+// Never a password nor a token in the welcome email: the admin hands them over.
 
 export interface WelcomeMail {
   email: string;
@@ -7,11 +6,10 @@ export interface WelcomeMail {
   apiUrl: string;
   studioUrl: string;
   adminUrl: string;
-  /** Company SSO for Studio: its name, and whether the password also works for this account; null: password only. */
+  /** Company SSO for Studio; null: password only. */
   sso: { name: string; passwordToo: boolean } | null;
-  /** Claude Code on the web (claude_web_environment, INSTALL.md §7): the link to a first session; null: not set up. */
+  /** A first Claude Code session on the web; null: not set up. */
   webStart: string | null;
-  /** The Connect Claude page: the claude.ai connector's setup (Team or Enterprise, or Pro or Max). */
   connectPage: string;
 }
 

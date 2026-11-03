@@ -41,6 +41,6 @@ export function buildPlugin(api: string, dir = PLUGIN_DIR) {
       source: { source: "archive", url: `${api}/plugin/platform.zip`, sha256: createHash("sha256").update(zip).digest("hex") },
     }],
   };
-  // `setup`: the setup script of the claude.ai cloud environment (Claude Code on the web), served on its own
+  // `setup`: served on its own, as the claude.ai cloud environment's setup script
   return { zip, marketplace, setup };
 }

@@ -1,9 +1,5 @@
 // End-to-end test of the preview tunnel's rules (ARCHITECTURE §3.10, src/previews.ts) against the running "plat"
-// stack: preview tokens (any member of the app, refused by the MCP endpoint, a new one voids the builder's former
-// ones), frps's server plugin (login, proxy and heartbeat checks: a removed member, an expired token or a revoked
-// parent loses the tunnel), and the preview host's sign-in (the app's members only, through Studio's login, a pass
-// checked against the membership at each request). Without frpc: a request let through reaches frps, whose 404 page
-// says that no session opened the subdomain.
+// stack. Without frpc: a request let through reaches frps, whose 404 page says that no session opened the subdomain.
 // Disposable resources: three builders (created through the admin API) and an app, deleted by cleanup().
 import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
@@ -42,7 +38,6 @@ async function admin(method: string, path: string, body?: unknown) {
   return json;
 }
 
-/** An account with a password (the browser's sign-in) and a PAT (the MCP calls). */
 async function builder(email: string) {
   const user = await admin("POST", "/users", { email, role: "developer", password: PASSWORD, active: true });
   return { id: user.id as string, pat: (await admin("POST", "/tokens", { user_id: user.id, name: "e2e" })).token as string };
@@ -80,7 +75,6 @@ function plugin(op: string, content: Record<string, unknown>): { reject: boolean
 }
 const heartbeat = (token: string) => !plugin("Ping", { user: { metas: { token } } }).reject;
 
-/** The browser on the Studio host: its session cookie, and requests that never follow redirects. */
 class Browser {
   cookie = "";
 

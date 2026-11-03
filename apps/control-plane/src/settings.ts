@@ -28,10 +28,7 @@ export interface Settings {
   sso: SsoSettings;
   /** Backups (M7, A4, backups.ts): schedule, retention and the optional S3 target. */
   backup: BackupSettings;
-  /**
-   * Name of the claude.ai cloud environment builders use with Claude Code on the web (INSTALL.md §7): links to a new
-   * session (welcome email, get_app claude_code_url). Empty: not set up, builders use Claude Code on their computer.
-   */
+  /** The claude.ai cloud environment of Claude Code on the web (INSTALL.md §7); empty: not set up. */
   claudeWebEnvironment: string;
 }
 
@@ -411,10 +408,7 @@ export async function getSettings(): Promise<Settings> {
   };
 }
 
-/**
- * A new Claude Code session on the web, in the platform's environment, on `repo` (owner/name) or with no repository;
- * null when not set up.
- */
+/** `repo`: owner/name, or null for a session with no repository. */
 export const claudeCodeUrl = (settings: Pick<Settings, "claudeWebEnvironment">, repo: string | null, prompt?: string) =>
   settings.claudeWebEnvironment
     ? `https://claude.ai/code?${

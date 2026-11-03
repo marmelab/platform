@@ -34,10 +34,6 @@ export interface SsoOption {
   passwordLogin: "everyone" | "admins";
 }
 
-/**
- * Where the login leads: Studio, the consent page of a Claude sign-in (oauth.ts), the Connect Claude page, or an app's
- * preview (previews.ts).
- */
 const loginHeading = (next: string) =>
   next.startsWith(OAUTH_CONSENT_PATH) || next.startsWith(CONNECTOR_PATH)
     ? "Sign in to connect Claude"
@@ -77,9 +73,8 @@ export function refusedPage(reason: string) {
 }
 
 /**
- * Consent of a Claude sign-in (oauth.ts), in plain words: who asks, for which account. The client name is the one the
- * application registered itself with: the page says where it runs, from the redirect URI (this computer, or
- * claude.ai), rather than vouching for it.
+ * The client name is self-declared at registration: the page says where the client runs, from its redirect URI,
+ * rather than vouching for it.
  */
 export function consentPage(
   { authorizationId, clientName, redirectUri, email }: {
@@ -121,7 +116,6 @@ export interface ConnectorSetup {
 
 const code = (value: string) => `<code>${escape(value)}</code>`;
 
-/** The builder's own connector client: none yet, just issued (its secret shown once), or issued earlier. */
 function ownClient({ clientId, secret }: ConnectorSetup) {
   if (!clientId) {
     return `<form method="post" action="${CONNECTOR_PATH}">
@@ -145,11 +139,6 @@ function ownClient({ clientId, secret }: ConnectorSetup) {
 </p>`;
 }
 
-/**
- * The Connect Claude page (CONNECTOR_PATH, INSTALL.md §7): on claude.ai Team or Enterprise, the organization's
- * connector is one click away; on Pro or Max, the builder adds it with a client of their own (its secret shown once)
- * and creates the Claude Code environment.
- */
 export function connectorPage(s: ConnectorSetup) {
   return layout(
     "Connect Claude · Platform",

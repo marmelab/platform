@@ -31,9 +31,7 @@ startBackupScheduler();
 startLintSweeper(config.lintSweepIntervalHours);
 startSchemaRelayReconciler();
 serve({ fetch: app.fetch, port: config.port }, (info) => console.log(`control plane listening on :${info.port}`));
-// internal listener (never routed publicly): Studio's forward auth and project configs, Caddy's TLS `ask` endpoint,
-// the apps' email templates (fetched by their GoTrue), the preview tunnel's frps plugin and the preview hosts' forward
-// auth
+// internal listener, never routed publicly
 const internal = new Hono();
 internal.route("/", studioInternalRoutes);
 internal.route("/", tlsRoutes);

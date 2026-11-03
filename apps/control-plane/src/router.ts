@@ -56,16 +56,13 @@ interface CaddyConfig {
  * retries a request whose body it can replay and that the upstream did not start answering.
  */
 const RETRY = { retries: 3, try_interval: "250ms" };
-/**
- * frps (preview tunnel, previews.ts): frpc's websocket on frp's fixed path of the API host, and the vhost port that
- * serves the preview hosts.
- */
+/** frps: frpc's websocket on frp's fixed path, and the vhost port serving the preview hosts. */
 const FRP_PATH = "/~!frp";
 const FRPS_BIND = "frps:7000";
 const FRPS_VHOST = "frps:8080";
 /**
- * Caddy's `forward_auth`: the request's method and URI go to `uri` on the control plane's internal listener; a 2xx
- * answer lets the request go on (after `allowed`), any other one is sent back to the client.
+ * Caddy's `forward_auth`, expanded: a 2xx answer from `uri` lets the request go on (after `allowed`), any other one is
+ * sent back to the client.
  */
 const forwardAuth = (dial: string, uri: string, allowed: CaddyRoute[] = []) => ({
   handler: "reverse_proxy",
@@ -488,8 +485,6 @@ export class CaddyRouter implements Router {
             ],
           }],
         },
-        // for the app's members only (previews.ts), then frps routes on the host to the session that opened the
-        // subdomain (an unknown one gets frps's 404 page)
         "previews-by-host": {
           match: [{ header_regexp: { Host: { name: "preview", pattern: previewHost } } }],
           handle: [

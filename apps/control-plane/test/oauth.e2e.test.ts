@@ -3,10 +3,9 @@
 // dynamic registration, authorization code with PKCE through the platform's login and consent pages, MCP calls,
 // refresh), then the admin revokes the connection and disables the account. Also: deploy tokens restricted to one app
 // (create_deploy_token, SEC-8), PATs (Authorization and X-Platform-Token headers), and the claude.ai connectors'
-// confidential clients, the only ones that reach claude.ai's callback: the organization's (cli.ts claude-connector) and
-// a builder's own (the Connect Claude page), which signs in no one else.
+// clients: the organization's and a builder's own.
 // Disposable resources: two builders (created through the admin API) and two apps, deleted by cleanup(). The
-// organization's connector client stays (one per platform): the test gives it a new secret.
+// organization's connector client stays: the test gives it a new secret.
 import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { createHash, randomBytes } from "node:crypto";
@@ -146,7 +145,7 @@ async function authorize(meta: Metadata, client: Client, browser: Browser, optio
   decision?: "approve" | "deny";
   expectConsentPage?: boolean;
   clientName?: string;
-  /** Where the consent page says the client runs, from its redirect URI. */
+  /** Where the consent page says the client runs. */
   where?: string;
 }) {
   const url = new URL(meta.authorization_endpoint);
@@ -279,7 +278,7 @@ describe("OAuth e2e (browser sign-in for Claude Code)", () => {
     const refused = await register({ client_name: "web", redirect_uris: ["https://evil.example/callback"] });
     assert.equal(refused.status, 400);
     assert.equal((await refused.json() as any).error, "invalid_redirect_uri");
-    // anyone with a claude.ai account could register this one: the connector uses the admin's client instead (test 10)
+    // anyone could register this one: connectors use a client the platform creates (test 10)
     const claudeAi = await register({ client_name: "Claude", redirect_uris: [CLAUDE_AI_REDIRECT] });
     assert.equal(claudeAi.status, 400);
     const confidential = await register({ redirect_uris: [callback(41000)], token_endpoint_auth_method: "client_secret_basic" });
@@ -488,7 +487,7 @@ describe("OAuth e2e (browser sign-in for Claude Code)", () => {
   });
 
   test("10. the claude.ai connector: its confidential client alone reaches claude.ai's callback, and needs its secret", async () => {
-    // the admin's command (INSTALL.md §7); --new-secret gives this run a secret when the stack already has the client
+    // --new-secret: the stack may already have the client, whose secret is shown only once
     const printed = execFileSync("docker", ["exec", "plat-control-plane", "node", "src/cli.ts", "claude-connector", "--new-secret"], {
       encoding: "utf8",
     });
@@ -526,7 +525,7 @@ describe("OAuth e2e (browser sign-in for Claude Code)", () => {
       });
       return { status: response.status, body: await response.json() as any };
     };
-    // what a code obtained through another claude.ai account is worth: without this organization's secret, nothing
+    // a code obtained through another claude.ai account is worthless without this organization's secret
     assert.equal((await exchange({}, { client_id: connector.client_id })).body.error, "invalid_client");
     assert.equal((await exchange({}, { client_id: connector.client_id, client_secret: "wrong" })).body.error, "invalid_client");
     // client_secret_basic, passed on to GoTrue as client_secret_post

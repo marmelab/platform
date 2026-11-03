@@ -1,5 +1,3 @@
-// The welcome email of a new account (src/welcome-mail.ts): Claude Code on the web first when the platform has a
-// claude.ai environment, the terminal path otherwise; never a password.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { welcomeMail } from "../src/welcome-mail.ts";

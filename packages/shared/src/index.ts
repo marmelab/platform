@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 export const SLUG_RE = /^[a-z][a-z0-9-]{1,30}[a-z0-9]$/;
-/** Host prefix of an app's preview tunnel, preview-<slug>.<apps domain>: reserved, no app slug starts with it. */
+/** preview-<slug>.<apps domain>; reserved in slugs. */
 export const PREVIEW_PREFIX = "preview-";
 export const FUNCTION_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 export const SECRET_NAME_RE = /^[A-Z_][A-Z0-9_]{0,63}$/;

@@ -75,8 +75,8 @@ fake=$!
 trap 'kill $fake 2> /dev/null; wait $fake 2> /dev/null || true; rm -rf "$tmp"' EXIT
 for _ in $(seq 50); do [ -s "$port_file" ] && break; sleep 0.1; done
 fake_url="http://127.0.0.1:$(cat "$port_file")/mcp"
-# expect <word> <PLATFORM_TOKEN value, or ""> [script argument]; remote=true: in a session on the web (the suite's own
-# CLAUDE_CODE_REMOTE is ignored: it may run in one)
+# expect <word> <PLATFORM_TOKEN value, or ""> [script argument]; remote=true: on the web (the suite's own
+# CLAUDE_CODE_REMOTE is ignored)
 expect() {
   local word="$1" token="$2"; shift 2
   env -u PLATFORM_TOKEN PLATFORM_URL="$fake_url" CLAUDE_CODE_REMOTE="${remote:-}" ${token:+PLATFORM_TOKEN="$token"} \
