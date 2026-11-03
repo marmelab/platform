@@ -302,9 +302,7 @@ alter table tokens add column if not exists oauth_session_id uuid unique;
 alter table tokens add column if not exists oauth_client_id uuid;
 alter table tokens add column if not exists parent_id uuid references tokens (id) on delete cascade;
 
--- The OAuth clients of claude.ai connectors (oauth.ts connectorClient). user_id null: the organization's connector, for
--- every account; else a builder's own, for that builder only. A confidential client missing here signs nobody in, so
--- deleting a builder disables their client.
+-- user_id null: the organization's connector.
 create table if not exists connector_clients (
   client_id uuid primary key,
   user_id uuid references users (id) on delete cascade,
