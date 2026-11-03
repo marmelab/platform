@@ -119,39 +119,73 @@ export interface ConnectorSetup {
   environment: string;
 }
 
+const code = (value: string) => `<code>${escape(value)}</code>`;
+
+/** The builder's own connector client: none yet, just issued (its secret shown once), or issued earlier. */
+function ownClient({ clientId, secret }: ConnectorSetup) {
+  if (!clientId) {
+    return `<form method="post" action="${CONNECTOR_PATH}">
+  <button type="submit">Create my client</button>
+</form>`;
+  }
+  if (secret) {
+    return `<p>
+  Client ID: ${code(clientId)}<br>
+  Client secret: ${code(secret)}
+</p>
+<p class="error" role="alert">Copy the secret now: it is not shown again.</p>`;
+  }
+  return `<p>Client ID: ${code(clientId)}. Its secret was shown when it was created.</p>
+<form method="post" action="${CONNECTOR_PATH}">
+  <button type="submit" class="secondary">Replace the secret</button>
+</form>
+<p class="muted">
+  The former secret stops working: remove the connector from claude.ai, add it again with the new secret, and connect
+  again.
+</p>`;
+}
+
 /**
  * The Connect Claude page (CONNECTOR_PATH, INSTALL.md §7): on claude.ai Team or Enterprise, the organization's
  * connector is one click away; on Pro or Max, the builder adds it with a client of their own (its secret shown once)
  * and creates the Claude Code environment.
  */
 export function connectorPage(s: ConnectorSetup) {
-  const code = (value: string) => `<code>${escape(value)}</code>`;
-  const client = s.secret
-    ? `<p>Client ID: ${code(s.clientId!)}<br>Client secret: ${code(s.secret)}</p>
-<p class="error" role="alert">Copy the secret now: it is not shown again.</p>`
-    : s.clientId
-    ? `<p>Client ID: ${code(s.clientId)}. Its secret was shown when it was created.</p>
-<form method="post" action="${CONNECTOR_PATH}"><button type="submit" class="secondary">Replace the secret</button></form>
-<p class="muted">The former secret stops working: remove the connector from claude.ai, add it again with the new
-secret, and connect again.</p>`
-    : `<form method="post" action="${CONNECTOR_PATH}"><button type="submit">Create my client</button></form>`;
   return layout(
     "Connect Claude · Platform",
     `<h1>Connect Claude to the platform</h1>
 <p>Claude Code on the web reaches the platform through a claude.ai connector, set up once.</p>
+
 <h2>On claude.ai Team or Enterprise</h2>
-<p>Your organization's <strong>Platform</strong> connector is ready: on claude.ai, open Customize, then Connectors,
-choose Platform, then Connect, and sign in with your platform account.</p>
+<p>
+  Your organization's <strong>Platform</strong> connector is ready: on claude.ai, open Customize, then Connectors,
+  choose Platform, then Connect, and sign in with your platform account.
+</p>
+
 <h2>On claude.ai Pro or Max</h2>
 <ol>
-<li><p>Your connector's client, which signs in ${escape(s.email)} only:</p>${client}</li>
-<li><p>On claude.ai, open Customize, then Connectors, then Add custom connector: name ${code("Platform")}, URL
-${code(s.mcpUrl)}, and under Advanced settings (or OAuth client: Use your own OAuth client) the client ID and secret
-above. Then Connect, and sign in with your platform account.</p></li>
-<li><p>On claude.ai/code, create an environment named ${code(s.environment)}: network access Custom, keeping the
-default list, plus ${s.hosts.map(code).join(" and ")}; setup script ${code(s.setupScript)}.</p></li>
+  <li>
+    <p>Your connector's client, which signs in ${escape(s.email)} only:</p>
+    ${ownClient(s)}
+  </li>
+  <li>
+    <p>
+      On claude.ai, open Customize, then Connectors, then Add custom connector: name ${code("Platform")}, URL
+      ${code(s.mcpUrl)}, and under Advanced settings (or OAuth client: Use your own OAuth client) the client ID and
+      secret above. Then Connect, and sign in with your platform account.
+    </p>
+  </li>
+  <li>
+    <p>
+      On claude.ai/code, create an environment named ${code(s.environment)}: network access Custom, keeping the
+      default list, plus ${s.hosts.map(code).join(" and ")}; setup script ${code(s.setupScript)}.
+    </p>
+  </li>
 </ol>
-<form method="post" action="/_platform/logout"><button type="submit" class="link">Not ${escape(s.email)}? Sign out</button></form>`,
+
+<form method="post" action="/_platform/logout">
+  <button type="submit" class="link">Not ${escape(s.email)}? Sign out</button>
+</form>`,
     true,
   );
 }
