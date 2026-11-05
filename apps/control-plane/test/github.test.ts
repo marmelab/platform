@@ -1,5 +1,6 @@
-// Unit tests of the code relay of web sessions (src/github-policy.ts): the push stream that becomes the GraphQL request,
-// the paths a pull may read, the "behind" answer. The GitHub calls themselves are checked by hand (TECH_DEBT PLG-9).
+// Unit tests of the code relay of web sessions (src/github-policy.ts, src/push-frame.ts): the push stream that becomes
+// the GraphQL request, the paths a pull may read, the "behind" answer. The GitHub calls themselves are checked by hand
+// (TECH_DEBT PLG-9).
 import assert from "node:assert/strict";
 import { Readable } from "node:stream";
 import { text } from "node:stream/consumers";
