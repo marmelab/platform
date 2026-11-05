@@ -205,13 +205,17 @@ Deployments go through the company's GitHub Actions (ARCHITECTURE §5.1 and §6.
 6. **Branch protection** (optional): every push to an app's default branch deploys, and the `deploy` skill does not
    protect the branches it creates. To require pull requests and reviews before a deployment, use organization
    rulesets on the default branch of every repository; the skill then opens a PR instead of pushing.
-7. **Builders** use Claude Code on the web (below: nothing to install, the usual choice for builders who are not
-   developers), or Claude Code on their computer, with Node.js 22.18 or later and the GitHub CLI logged in: they
-   install the plugin the platform serves, with the command of their welcome email:
-   `claude plugin install platform --marketplace https://api.<domain>/plugin/marketplace.json`. Nothing to configure:
-   the served plugin carries the platform's URL. At the first use, Claude Code asks them to sign in (`/mcp`, then
-   Authenticate): the browser opens on the platform's login page, then a consent page. Admins who prefer a PAT export
-   `PLATFORM_TOKEN` before starting Claude Code.
+7. **Builders** use either:
+   - Claude Code on the web (below). Nothing to install. The usual choice for non-developers.
+   - Claude Code on their computer. They need Node.js 22.18+ and the GitHub CLI logged in. They install the plugin
+     with the command from their welcome email:
+     `claude plugin install platform --marketplace https://api.<domain>/plugin/marketplace.json`. Nothing to
+     configure. At first use, they sign in (`/mcp`, then Authenticate).
+
+   Admins can skip the browser sign-in with a personal access token (PAT):
+   - The installer saves the first admin's PAT in `deploy/.env.local` (`PLATFORM_TOKEN`).
+   - Export it as `PLATFORM_TOKEN` before starting Claude Code.
+   - Details: [plugin/README.md](../plugin/README.md).
 
 ### Claude Code on the web
 
