@@ -1,0 +1,15 @@
+# Preview tunnel (ARCHITECTURE §3.10), internal network only: Caddy routes api.<domain>/~!frp to bindPort and the
+# preview hosts to vhostHTTPPort. No shared frp token: the control plane checks each client's preview token.
+bindPort = 7000
+vhostHTTPPort = 8080
+subDomainHost = "{{ .Envs.PLATFORM_DOMAIN }}"
+# frp's heartbeats are off by default with tcpMux: drops a client that stops pinging (every 30 s, preview.sh), which
+# frees the subdomain of a restarted sandbox.
+# ponytail: shorten it if a restarted sandbox waits too long for its subdomain
+transport.heartbeatTimeout = 90
+
+[[httpPlugins]]
+name = "platform"
+addr = "control-plane:3001"
+path = "/frp/plugin"
+ops = ["Login", "NewProxy", "Ping"]

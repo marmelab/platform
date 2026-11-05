@@ -28,6 +28,8 @@ export interface Settings {
   sso: SsoSettings;
   /** Backups (M7, A4, backups.ts): schedule, retention and the optional S3 target. */
   backup: BackupSettings;
+  /** The claude.ai cloud environment of Claude Code on the web (INSTALL.md §7); empty: not set up. */
+  claudeWebEnvironment: string;
 }
 
 export interface BackupSettings {
@@ -187,6 +189,7 @@ export async function settingOverrides() {
 /** Keys accepted by set-setting, with their environment variable. */
 export const SETTING_KEYS = {
   direct_deploy: "DIRECT_DEPLOY",
+  claude_web_environment: "CLAUDE_WEB_ENVIRONMENT",
   ci_allowed_workflows: "CI_ALLOWED_WORKFLOWS",
   oidc_issuer: "OIDC_ISSUER",
   oidc_audience: "OIDC_AUDIENCE",
@@ -265,6 +268,7 @@ export function validateSetting(key: string, value: string): asserts key is Sett
   if (key === "direct_deploy" && !["admins", "everyone"].includes(value)) {
     throw new Error("direct_deploy must be admins or everyone");
   }
+  if (key === "claude_web_environment" && /[\r\n]/.test(value)) throw new Error("claude_web_environment: no line breaks");
   if (DAYS.includes(key)) days(key, value);
   if (key in INTEGERS) integer(key, value, ...INTEGERS[key]!);
   if (key === "backup_s3_endpoint" && value !== "") {
@@ -400,8 +404,21 @@ export async function getSettings(): Promise<Settings> {
       // usable only when complete: an empty backup_s3_endpoint row turns the environment's target off
       s3: s3.endpoint && s3.bucket && s3.accessKeyId && s3.secretAccessKey ? s3 : null,
     },
+    claudeWebEnvironment: get("claude_web_environment", d.claudeWebEnvironment).trim(),
   };
 }
+
+/** `repo`: owner/name, or null for a session with no repository. */
+export const claudeCodeUrl = (settings: Pick<Settings, "claudeWebEnvironment">, repo: string | null, prompt?: string) =>
+  settings.claudeWebEnvironment
+    ? `https://claude.ai/code?${
+      // spaces as %20, as in claude.ai's documented links (a literal "+" is already %2B)
+      new URLSearchParams({
+        environment: settings.claudeWebEnvironment,
+        ...(repo ? { repositories: repo } : {}),
+        ...(prompt ? { prompt } : {}),
+      }).toString().replaceAll("+", "%20")}`
+    : null;
 
 export async function setSetting(key: string, value: string) {
   validateSetting(key, value);

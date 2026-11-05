@@ -28,7 +28,8 @@ function parse(uri: string): URL | null {
 
 /**
  * A native client's redirect URI (RFC 8252 §7.3): plain HTTP on the loopback interface, as Claude Code's
- * `http://localhost:<port>/callback`. The only kind accepted: the code never leaves the user's machine.
+ * `http://localhost:<port>/callback`. The only kind a client registering itself may use: the code never leaves the
+ * user's machine.
  */
 export function isLoopbackRedirect(uri: string): boolean {
   const url = parse(uri);
@@ -36,6 +37,27 @@ export function isLoopbackRedirect(uri: string): boolean {
     // canonical form only: GoTrue compares the strings
     !url.hash && url.href === uri;
 }
+
+export const CLAUDE_AI_REDIRECT = "https://claude.ai/api/mcp/auth_callback";
+
+/** claude.ai's callback is for connector clients (confidential) only: anyone can register a public client. */
+export const isAllowedRedirect = (uri: string, clientType: string) =>
+  clientType === "confidential" ? uri === CLAUDE_AI_REDIRECT : isLoopbackRedirect(uri);
+
+export interface ClientAccess {
+  client_type: string;
+  /** Listed in connector_clients. */
+  connector: boolean;
+  /** null: the organization's connector. */
+  owner: string | null;
+}
+
+/**
+ * A builder's own connector signs in that builder only, so a leaked secret exposes nobody else. A confidential client
+ * that is not a connector's belonged to a deleted builder.
+ */
+export const clientAllowed = (client: ClientAccess, userId: string) =>
+  client.client_type === "public" || (client.connector && (client.owner === null || client.owner === userId));
 
 /** Same loopback redirect URI except for the port: RFC 8252 §7.3 lets a native client pick its port at each sign-in. */
 export function sameLoopbackExceptPort(a: string, b: string): boolean {
@@ -67,8 +89,8 @@ export interface Registration {
 }
 
 /**
- * Dynamic client registration (RFC 7591), restricted to public native clients: loopback redirect URIs only, no
- * secret, authorization code and refresh token grants. Other metadata is dropped.
+ * Dynamic client registration (RFC 7591), restricted to public native clients: loopback redirect URIs only, no secret,
+ * authorization code and refresh token grants. Other metadata is dropped.
  */
 export function sanitizeRegistration(body: unknown): Registration {
   const input = (body && typeof body === "object" ? body : {}) as Record<string, unknown>;
@@ -80,7 +102,8 @@ export function sanitizeRegistration(body: unknown): Registration {
     if (typeof uri !== "string" || !isLoopbackRedirect(uri)) {
       throw new OAuthError(
         "invalid_redirect_uri",
-        "only native clients are accepted: redirect URIs must be http://localhost, http://127.0.0.1 or http://[::1]",
+        "only native clients may register: redirect URIs must be http://localhost, http://127.0.0.1 or http://[::1] " +
+          "(a claude.ai connector uses a client from the platform's Connect Claude page)",
       );
     }
   }
@@ -131,6 +154,21 @@ export function errorRedirect(redirectUri: string, error: OAuthError, state: str
   url.searchParams.set("error_description", error.description);
   if (state) url.searchParams.set("state", state);
   return url.toString();
+}
+
+/** client_secret_basic (RFC 6749 §2.3.1): both parts are form-urlencoded, then base64-encoded together. */
+export function basicCredentials(header: string | undefined): { client_id: string; client_secret: string } | null {
+  const match = /^Basic ([A-Za-z0-9+/]+=*)$/i.exec(header?.trim() ?? "");
+  if (!match) return null;
+  const decoded = Buffer.from(match[1]!, "base64").toString("utf8");
+  const colon = decoded.indexOf(":");
+  if (colon < 0) return null;
+  const part = (value: string) => decodeURIComponent(value.replaceAll("+", " "));
+  try {
+    return { client_id: part(decoded.slice(0, colon)), client_secret: part(decoded.slice(colon + 1)) };
+  } catch {
+    return null;
+  }
 }
 
 /** Whether a code approved at `approvedAt` may still be exchanged at `now`. */

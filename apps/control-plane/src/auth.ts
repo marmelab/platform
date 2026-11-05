@@ -58,7 +58,7 @@ export async function authenticate(authorization: string | undefined): Promise<U
     )
     : await one<TokenRow>(
       `${TOKEN_USER}
-        where t.hash = $1 and t.kind <> 'oauth' and t.revoked_at is null and (t.expires_at is null or t.expires_at > now())
+        where t.hash = $1 and t.kind not in ('oauth', 'preview') and t.revoked_at is null and (t.expires_at is null or t.expires_at > now())
           and u.active and (t.parent_id is null or exists (
             select 1 from tokens p where p.id = t.parent_id and p.revoked_at is null))`,
       [sha256(value)],

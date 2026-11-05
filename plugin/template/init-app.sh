@@ -30,6 +30,7 @@ for layer in "${layers[@]}"; do
     if [ -e "$file" ]; then echo "$file already exists: left unchanged" >&2; continue; fi
     mkdir -p "$(dirname "$file")"
     sed -e "s|__APP__|$slug|g" -e "s|__USES__|$uses|g" -e "s|__BRANCH__|$branch|g" -e "s|__MARKETPLACE__|$marketplace|g" \
+      -e "s|__PLATFORM_URL__|${mcp_url%/mcp}|g" \
       "$template/$layer/$file" > "$file"
     echo "$file"
   done

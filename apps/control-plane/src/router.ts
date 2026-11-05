@@ -1,6 +1,7 @@
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
+import { PREVIEW_PREFIX } from "@platform/shared";
 import { config, loopbackTokenHost } from "./config.ts";
 
 export interface StudioRoute {
@@ -55,6 +56,31 @@ interface CaddyConfig {
  * retries a request whose body it can replay and that the upstream did not start answering.
  */
 const RETRY = { retries: 3, try_interval: "250ms" };
+/** frps: frpc's websocket on frp's fixed path, and the vhost port serving the preview hosts. */
+const FRP_PATH = "/~!frp";
+const FRPS_BIND = "frps:7000";
+const FRPS_VHOST = "frps:8080";
+/**
+ * Caddy's `forward_auth`, expanded: a 2xx answer from `uri` lets the request go on (after `allowed`), any other one is
+ * sent back to the client.
+ */
+const forwardAuth = (dial: string, uri: string, allowed: CaddyRoute[] = []) => ({
+  handler: "reverse_proxy",
+  upstreams: [{ dial }],
+  rewrite: { method: "GET", uri },
+  headers: {
+    request: {
+      set: {
+        "X-Forwarded-Method": ["{http.request.method}"],
+        "X-Forwarded-Uri": ["{http.request.uri}"],
+      },
+    },
+  },
+  handle_response: [{
+    match: { status_code: [2] },
+    routes: [{ handle: [{ handler: "vars" }] }, ...allowed],
+  }],
+});
 /** HTTP -> HTTPS redirect server of the TLS modes (router.ensureEdge). */
 const REDIRECT_SERVER = "redirect";
 /** Routes to set (replaced in place, or appended) or remove (null), by `@id`, in the two dynamic subroutes. */
@@ -161,7 +187,16 @@ export class CaddyRouter implements Router {
       const api = pub.routes?.find((r) => r["@id"] === "api");
       // local installs: the OAuth token endpoint is also served on localhost (config.loopbackTokenHost)
       const loopback = loopbackTokenHost();
-      if (api) api.match = [{ host: [config.apiHost] }, ...(loopback ? [{ host: [loopback], path: ["/oauth/token"] }] : [])];
+      if (api) {
+        api.match = [{ host: [config.apiHost] }, ...(loopback ? [{ host: [loopback], path: ["/oauth/token"] }] : [])];
+        api.handle = [{
+          handler: "subroute",
+          routes: [
+            { match: [{ path: [FRP_PATH] }], handle: [{ handler: "reverse_proxy", upstreams: [{ dial: FRPS_BIND }] }], terminal: true },
+            { handle: [{ handler: "reverse_proxy", upstreams: [{ dial: `control-plane:${config.port}` }] }] },
+          ],
+        }];
+      }
       if (config.tls.mode === "off") {
         pub.listen = [`:${config.publicPort}`];
         pub.automatic_https = { disable: true };
@@ -417,12 +452,14 @@ export class CaddyRouter implements Router {
 
   /**
    * The two generic routes (not terminal: an unknown slug falls through to the next routes, e.g. Studio, then to the
-   * server's 404). Installed once; the former per-app routes are removed in the same change.
+   * server's 404), and the preview hosts' route to frps. Installed once; the former per-app routes are removed in the
+   * same change.
    */
   private async ensureRoutes() {
     if (this.routesInstalled) return;
     const { page, api } = this.maintenance();
     const host = `^(${SLUG_PATTERN})\\.${escapeRegExp(config.appsDomain)}(?::[0-9]+)?$`;
+    const previewHost = `^${PREVIEW_PREFIX}${SLUG_PATTERN}\\.${escapeRegExp(config.appsDomain)}(?::[0-9]+)?$`;
     await this.change({
       public: {
         "apps-by-host": {
@@ -447,6 +484,14 @@ export class CaddyRouter implements Router {
               }]),
             ],
           }],
+        },
+        "previews-by-host": {
+          match: [{ header_regexp: { Host: { name: "preview", pattern: previewHost } } }],
+          handle: [
+            forwardAuth(`control-plane:${config.internalPort}`, "/preview/verify"),
+            { handler: "reverse_proxy", upstreams: [{ dial: FRPS_VHOST }] },
+          ],
+          terminal: true,
         },
       },
       // Edge functions reach their own app through http://caddy:8180/<slug> (SUPABASE_URL)
@@ -530,23 +575,7 @@ export class CaddyRouter implements Router {
               },
               {
                 handle: [
-                  {
-                    handler: "reverse_proxy",
-                    upstreams: [{ dial: route.forwardAuth }],
-                    rewrite: { method: "GET", uri: "/studio/verify" },
-                    headers: {
-                      request: {
-                        set: {
-                          "X-Forwarded-Method": ["{http.request.method}"],
-                          "X-Forwarded-Uri": ["{http.request.uri}"],
-                        },
-                      },
-                    },
-                    handle_response: [{
-                      match: { status_code: [2] },
-                      routes: [{ handle: [{ handler: "vars" }] }, ...copyIdentity],
-                    }],
-                  },
+                  forwardAuth(route.forwardAuth, "/studio/verify", copyIdentity),
                   { handler: "reverse_proxy", upstreams: [{ dial: route.upstream }] },
                 ],
               },

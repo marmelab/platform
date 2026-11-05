@@ -26,6 +26,7 @@ let plugin: ReturnType<typeof buildPlugin> | undefined;
 const served = () => (plugin ??= buildPlugin(apiUrl()));
 app.get("/plugin/marketplace.json", (c) => c.json(served().marketplace));
 app.get("/plugin/platform.zip", (c) => c.body(served().zip, 200, { "content-type": "application/zip" }));
+app.get("/plugin/cloud-setup.sh", (c) => c.text(served().setup, 200, { "content-type": "text/x-shellscript; charset=utf-8" }));
 app.route("/", studioPublicRoutes);
 app.route("/ci", ciRoutes);
 app.route("/", oauthRoutes);
