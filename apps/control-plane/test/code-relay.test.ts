@@ -1,5 +1,5 @@
 // push / pull of web sessions (packages/deploy-cli/src/code.ts) against a fake GitHub backed by a local
-// repository. The fake runs the platform's own pushRequest and readAllowed (src/github-policy.ts), so the session's
+// repository. The fake runs the platform's own commitRequestBody and pullPathAllowed (src/github-policy.ts), so the session's
 // frames go through the same rules as on the platform. No stack needed.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
@@ -9,13 +9,13 @@ import { dirname, join } from "node:path";
 import { Readable } from "node:stream";
 import { text } from "node:stream/consumers";
 import { after, test } from "node:test";
-import { type CodeRemote, pull, push } from "../../../packages/deploy-cli/src/code.ts";
-import { pushRequest, readAllowed } from "../src/github-policy.ts";
+import { type CodeRelay, pull, push } from "../../../packages/deploy-cli/src/code.ts";
+import { commitRequestBody, pullPathAllowed } from "../src/github-policy.ts";
 
 const IDENT = { GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@example.com", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@example.com" };
 const dirs: string[] = [];
 after(() => dirs.forEach((dir) => rmSync(dir, { recursive: true, force: true })));
-const temp = (prefix: string) => {
+const tempDir = (prefix: string) => {
   const dir = mkdtempSync(join(tmpdir(), prefix));
   dirs.push(dir);
   return dir;
@@ -25,23 +25,23 @@ const git = (dir: string, args: string[], options: { input?: string | Buffer; en
 
 /** GitHub as the platform relays it: one repository, createCommitOnBranch and the read-only Git Data paths. */
 function fakeGithub() {
-  const repo = temp("relay-github-");
+  const repo = tempDir("relay-github-");
   git(repo, ["init", "-q", "-b", "main"]); // not bare: update-index needs a work tree, even unused
   let created = false;
-  const requests: { deletions: { path: string }[]; additions: { path: string }[] }[] = [];
+  const pushedChanges: { deletions: { path: string }[]; additions: { path: string }[] }[] = [];
   const head = () => git(repo, ["rev-parse", "refs/heads/main"]);
-  const remote: CodeRemote = {
-    branch: async () => (created ? "main" : null),
-    create: async () => {
+  const relay: CodeRelay = {
+    defaultBranch: async () => (created ? "main" : null),
+    createRepository: async () => {
       const readme = git(repo, ["hash-object", "-w", "--stdin"], { input: "# app\n" });
       const tree = git(repo, ["mktree"], { input: `100644 blob ${readme}\tREADME.md\n` });
       git(repo, ["update-ref", "refs/heads/main", git(repo, ["commit-tree", tree, "-m", "Initial commit"], { env: IDENT })]);
       created = true;
       return { default_branch: "main", head: head() };
     },
-    get: async (url) => {
+    readGit: async (url) => {
       const [path, query] = url.split("?") as [string, string | undefined];
-      if (!readAllowed(path, query ? `?${query}` : "", "main")) return Response.json({ error: "not allowed" }, { status: 404 });
+      if (!pullPathAllowed(path, query ? `?${query}` : "", "main")) return Response.json({ error: "not allowed" }, { status: 404 });
       const [, kind, arg] = path.split("/") as [string, string, string];
       if (kind === "ref") return Response.json({ object: { sha: head() } });
       if (kind === "commits") return Response.json({ tree: { sha: git(repo, ["rev-parse", `${arg}^{tree}`]) } });
@@ -57,9 +57,9 @@ function fakeGithub() {
     },
     commit: async (frames) => {
       const target = { repo: "acme/todo", branch: "main", coAuthor: { name: "Dana", email: "dana@example.com" } };
-      const { expectedHeadOid, message, fileChanges } = JSON.parse(await text(Readable.from(frames).pipe(pushRequest(target))))
+      const { expectedHeadOid, message, fileChanges } = JSON.parse(await text(Readable.from(frames).pipe(commitRequestBody(target))))
         .variables.input;
-      requests.push(fileChanges);
+      pushedChanges.push(fileChanges);
       if (expectedHeadOid !== head()) return Response.json({ error: "behind" }, { status: 409 });
       const env = { GIT_INDEX_FILE: join(repo, "fake-index") };
       git(repo, ["read-tree", expectedHeadOid], { env });
@@ -75,19 +75,19 @@ function fakeGithub() {
       return Response.json({ commit_sha: head(), tree_sha: tree });
     },
   };
-  return { remote, repo, head, requests };
+  return { relay, repo, head, pushedChanges };
 }
 
 function session(app: string | null = "todo") {
-  const dir = temp("relay-session-");
+  const dir = tempDir("relay-session-");
   if (app) {
     git(dir, ["init", "-q", "-b", "main"]);
-    identity(dir);
+    setIdentity(dir);
     write(dir, ".platform.json", JSON.stringify({ app }));
   }
   return dir;
 }
-const identity = (dir: string) => {
+const setIdentity = (dir: string) => {
   git(dir, ["config", "user.email", "t@example.com"]);
   git(dir, ["config", "user.name", "t"]);
 };
@@ -95,64 +95,64 @@ const write = (dir: string, path: string, content: string | Buffer) => {
   mkdirSync(dirname(join(dir, path)), { recursive: true });
   writeFileSync(join(dir, path), content);
 };
-const commit = (dir: string, message: string) => {
+const commitAll = (dir: string, message: string) => {
   git(dir, ["add", "-A"]);
   git(dir, ["commit", "-q", "-m", message]);
 };
-const tree = (dir: string, rev = "HEAD") => git(dir, ["rev-parse", `${rev}^{tree}`]);
+const treeOf = (dir: string, rev = "HEAD") => git(dir, ["rev-parse", `${rev}^{tree}`]);
 
 test("push and pull through the relay", async (t) => {
   const github = fakeGithub();
   const a = session();
   write(a, "src/app.ts", "export const app = 1;\n");
   write(a, "public/logo.bin", Buffer.from(Array.from({ length: 256 }, (_, i) => i)));
-  commit(a, "Create the app");
+  commitAll(a, "Create the app");
 
   await t.test("the first push creates the repository and replaces its README with the folder's files", async () => {
-    const result = await push(a, "todo", github.remote);
+    const result = await push(a, "todo", github.relay);
     assert.equal(result.status, "PUSHED");
-    assert.equal(git(github.repo, ["rev-parse", "main^{tree}"]), tree(a));
+    assert.equal(git(github.repo, ["rev-parse", "main^{tree}"]), treeOf(a));
     assert.match(git(github.repo, ["log", "-1", "--format=%B", "main"]), /^Create the app\n\nCo-authored-by: Dana <dana@example\.com>/);
     assert.equal(git(a, ["config", "platform.app"]), "todo");
-    assert.equal(git(a, ["config", "platform.remote"]), github.head());
+    assert.equal(git(a, ["config", "platform.synced"]), github.head());
   });
 
   await t.test("a later push sends only the changed files, nothing when nothing changed", async () => {
     write(a, "src/app.ts", "export const app = 2;\n");
-    commit(a, "Change the app");
-    assert.equal((await push(a, "todo", github.remote)).status, "PUSHED");
-    assert.deepEqual(github.requests.at(-1)!.additions.map((f) => f.path), ["src/app.ts"]);
-    assert.deepEqual(await push(a, "todo", github.remote), { status: "UNCHANGED" });
+    commitAll(a, "Change the app");
+    assert.equal((await push(a, "todo", github.relay)).status, "PUSHED");
+    assert.deepEqual(github.pushedChanges.at(-1)!.additions.map((f) => f.path), ["src/app.ts"]);
+    assert.deepEqual(await push(a, "todo", github.relay), { status: "UNCHANGED" });
   });
 
   await t.test("a big push is split in several commits", async () => {
     const before = Number(git(github.repo, ["rev-list", "--count", "main"]));
     write(a, "one.txt", "1".repeat(30));
     write(a, "two.txt", "2".repeat(30));
-    commit(a, "Two files");
-    assert.equal((await push(a, "todo", github.remote, 16)).status, "PUSHED");
+    commitAll(a, "Two files");
+    assert.equal((await push(a, "todo", github.relay, 16)).status, "PUSHED");
     assert.equal(Number(git(github.repo, ["rev-list", "--count", "main"])), before + 2);
-    assert.equal(git(github.repo, ["rev-parse", "main^{tree}"]), tree(a));
+    assert.equal(git(github.repo, ["rev-parse", "main^{tree}"]), treeOf(a));
     assert.match(git(github.repo, ["log", "-1", "--format=%s", "main"]), /\(part 2\/2\)$/);
   });
 
   const b = session(null);
   await t.test("an empty folder gets the app's code back", async () => {
-    assert.equal((await pull(b, "todo", github.remote)).status, "PULLED");
-    assert.equal(tree(b), tree(a));
+    assert.equal((await pull(b, "todo", github.relay)).status, "PULLED");
+    assert.equal(treeOf(b), treeOf(a));
     assert.deepEqual(readFileSync(join(b, "public/logo.bin")), readFileSync(join(a, "public/logo.bin")));
-    identity(b);
+    setIdentity(b);
   });
 
   await t.test("a folder behind the app pulls (rebase) and pushes again", async () => {
     write(b, "src/b.ts", "b\n");
-    commit(b, "From b");
-    assert.equal((await push(b, "todo", github.remote)).status, "PUSHED");
+    commitAll(b, "From b");
+    assert.equal((await push(b, "todo", github.relay)).status, "PUSHED");
     write(a, "src/a.ts", "a\n");
-    commit(a, "From a");
-    assert.deepEqual(await push(a, "todo", github.remote), { status: "BEHIND" });
-    assert.equal((await pull(a, "todo", github.remote)).status, "PULLED");
-    assert.equal((await push(a, "todo", github.remote)).status, "PUSHED");
+    commitAll(a, "From a");
+    assert.deepEqual(await push(a, "todo", github.relay), { status: "BEHIND" });
+    assert.equal((await pull(a, "todo", github.relay)).status, "PULLED");
+    assert.equal((await push(a, "todo", github.relay)).status, "PUSHED");
     const online = git(github.repo, ["ls-tree", "-r", "--name-only", "main"]).split("\n");
     assert.ok(online.includes("src/a.ts") && online.includes("src/b.ts"), online.join(","));
   });
@@ -160,15 +160,15 @@ test("push and pull through the relay", async (t) => {
   await t.test("a new folder never pushes over an app that already has code", async () => {
     const c = session();
     write(c, "index.html", "other app\n");
-    commit(c, "Another app named the same");
-    assert.deepEqual(await push(c, "todo", github.remote), { status: "EXISTING_CODE" });
+    commitAll(c, "Another app named the same");
+    assert.deepEqual(await push(c, "todo", github.relay), { status: "EXISTING_CODE" });
   });
 
   await t.test("a folder holds one app only", async () => {
     const other = session("other");
     write(other, "x", "x\n");
-    commit(other, "x");
-    await assert.rejects(push(other, "todo", github.remote), /holds the app "other", not "todo"/);
-    await assert.rejects(pull(a, "other", github.remote), /holds the app "todo", not "other"/);
+    commitAll(other, "x");
+    await assert.rejects(push(other, "todo", github.relay), /holds the app "other", not "todo"/);
+    await assert.rejects(pull(a, "other", github.relay), /holds the app "todo", not "other"/);
   });
 });

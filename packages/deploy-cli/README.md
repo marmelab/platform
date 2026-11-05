@@ -60,7 +60,7 @@ Every step is printed, and a markdown report (steps, blocking / accepted / other
 
 - `push` creates the app's repository at the first push. It then sends the files of `HEAD` that differ from the app's branch, and the deleted ones, as one commit per ~10 MiB, streamed (base64 straight from `git cat-file`). Each commit goes on top of the head the folder last synced. It prints `PUSHED <commit>`, `UNCHANGED`, `BEHIND` (exit 3: `pull`, then push again) or `EXISTING_CODE` (exit 4: the app already has code this folder never synced; it never merges by itself). Symlinks, submodules and executable files are refused, since GitHub's `createCommitOnBranch` sets no file mode.
 - `pull` downloads only the files the folder lacks, straight into its git, and checks the tree against the app's. It restores a folder with no commit, and otherwise rebases the folder's commits on the app's code. It prints `PULLED <commit>` or `CONFLICT` (exit 5: resolve, then `git rebase --continue`).
-- The folder's state is in its git: `refs/platform/base` (the local commit matching the last synced one), `platform.remote` and `platform.app`. A folder holds one app: both commands refuse another app than its `.platform.json` and `platform.app`.
+- The folder's state is in its git: `refs/platform/base` (the local commit matching the last synced one), `platform.synced` (that commit of the app) and `platform.app`. A folder holds one app: both commands refuse another app than its `.platform.json` and `platform.app`.
 
 ## In GitHub Actions
 

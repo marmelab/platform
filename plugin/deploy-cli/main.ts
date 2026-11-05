@@ -5,7 +5,7 @@ import "./localhost-dns.ts";
 import { appendFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { parseArgs } from "node:util";
-import { codeRemote, pull, push } from "./code.ts";
+import { codeRelay, pull, push } from "./code.ts";
 import { apiBase, ciPlatform, githubOidc, mcpPlatform, type Platform } from "./platform.ts";
 import { readConfig } from "./project.ts";
 import { type Mode, run } from "./run.ts";
@@ -76,9 +76,9 @@ async function main() {
   if (mode === "push" || mode === "pull") {
     const pat = process.env.PLATFORM_TOKEN;
     if (auth !== "token" || !pat) usage(`${mode} needs PLATFORM_TOKEN`);
-    const app = mcpPlatform(api, config.app, pat);
-    const remote = codeRemote(api, config.app, pat, async () => (await app.getApp()).default_branch ?? null);
-    const result = mode === "push" ? await push(dir, config.app, remote) : await pull(dir, config.app, remote);
+    const mcp = mcpPlatform(api, config.app, pat);
+    const relay = codeRelay(api, config.app, pat, async () => (await mcp.getApp()).default_branch ?? null);
+    const result = mode === "push" ? await push(dir, config.app, relay) : await pull(dir, config.app, relay);
     console.log("commit_sha" in result ? `${result.status} ${result.commit_sha}` : result.status);
     process.exitCode = { PUSHED: 0, PULLED: 0, UNCHANGED: 0, BEHIND: 3, EXISTING_CODE: 4, CONFLICT: 5 }[result.status];
     return;
