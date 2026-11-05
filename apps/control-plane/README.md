@@ -127,6 +127,7 @@ Platform settings come from the control plane's environment (`deploy/docker-comp
 | `oidc_jwks_url` | `OIDC_JWKS_URL` | `<issuer>/.well-known/jwks` | |
 | `oidc_jwks` | none | unset | **test only**: inline JWKS (JSON) trusted instead of `oidc_jwks_url`; the e2e suite uses it as a fake issuer. Honoured (and accepted by `set-setting`) only when the control plane runs with `ALLOW_TEST_OIDC_JWKS=1`, which `install.sh` writes into `deploy/.env` for local installs; never set that variable in production |
 | `claude_web_environment` | `CLAUDE_WEB_ENVIRONMENT` | empty: not set up | name of the claude.ai cloud environment builders use with Claude Code on the web ([INSTALL.md](../../docs/INSTALL.md) §7): the welcome email then leads with the browser path, and `get_app` returns `claude_code_url` |
+| `github_token` | `GITHUB_TOKEN` | empty: web sessions cannot deploy through CI | fine-grained PAT of the GitHub bot through which web sessions create and commit to their apps' repositories ([INSTALL.md](../../docs/INSTALL.md) §7, "GitHub bot"); stored encrypted with the master key, never printed nor returned. `set-setting github_token -` reads it from stdin |
 | `abandoned_after_days` | `ABANDONED_AFTER_DAYS` | `30` | an app without request nor release for this many days is flagged `abandoned` in the admin console (A6, see [Load metrics](#load-metrics)) |
 | `metrics_retention_days` | `METRICS_RETENTION_DAYS` | `30` | `app_metrics` rows older than this are deleted by the sampler |
 | `smtp_host` | `SMTP_HOST` | empty: no SMTP | the platform SMTP ([Email](#email)); `mailpit` on local installs. An empty `smtp_host` row disables the environment's SMTP |
@@ -464,6 +465,7 @@ docker exec plat-control-plane node src/cli.ts set-setting smtp_host smtp.exampl
 docker exec -i plat-control-plane node src/cli.ts set-setting smtp_password - < smtp-password.txt  # stored encrypted
 docker exec plat-control-plane node src/cli.ts sync-auth                              # recreates the GoTrue of running apps whose environment changed
 docker exec -i plat-control-plane node src/cli.ts set-setting sso_client_secret - < secret.txt  # company SSO (usually from the admin console)
+docker exec -i plat-control-plane node src/cli.ts set-setting github_token - < token.txt  # GitHub bot of web sessions
 docker exec plat-control-plane node src/cli.ts backup-app demo                         # backups and restore: see "Backups"
 docker exec plat-control-plane node src/cli.ts lint-apps [demo...]                    # security linter now, results recorded (--source upgrade)
 docker exec plat-control-plane node src/cli.ts recycle-apps [--force] [demo...]       # A8: recreates changed GoTrue/PostgREST containers, no downtime

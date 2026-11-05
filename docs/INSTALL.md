@@ -226,11 +226,29 @@ Builders build, try and deploy apps from [claude.ai/code](https://claude.ai/code
 
 - claude.ai seats that include Claude Code.
 - The platform is reachable from the Internet. claude.ai calls it from `160.79.104.0/21`.
-- Each builder has a GitHub account.
-- Builders can create repositories in the GitHub organization. A session cannot: at an app's first deployment, the
-  builder creates it from a prefilled link.
-- The Claude GitHub App can push to these repositories. If the organization restricts GitHub Apps, an owner approves
-  each request, or installs the app once.
+- A GitHub bot account in the organization (**GitHub bot** below). Builders need no GitHub account: the platform
+  creates each app's repository and commits their code to it.
+
+**GitHub bot**
+
+Done once, by the platform admin, for both setups below.
+
+1. Create a GitHub account for the platform (e.g. `<org>-platform`), and add it to the organization.
+2. With that account, create a fine-grained personal access token:
+   - Resource owner: the organization. Repository access: All repositories.
+   - Repository permissions: Administration, Contents and Workflows, read and write.
+   - The longest expiry the organization allows (TECH_DEBT SEC-13). If the organization requires approval of
+     fine-grained tokens, an owner approves it.
+3. On the platform host, store it (encrypted):
+
+   ```bash
+   docker exec -i plat-control-plane node src/cli.ts set-setting github_token - < token.txt
+   ```
+
+- At an app's first deployment from the web, the platform creates `<org>/<slug>`. It then commits the builder's
+  code to it, signed by GitHub as the bot ("Verified"), with the builder as co-author.
+- If rulesets protect the default branch, add the bot to their bypass list. A "require signed commits" rule is
+  satisfied.
 
 **Team or Enterprise setup**
 
@@ -262,14 +280,14 @@ Owner does them.
    ```
 
    - The value is the environment's name from step 3.
-   - The welcome email then links to a first session, and `get_app` to a session on each deployed app.
+   - The welcome email then links to a first session, and `get_app` to a session that changes each deployed app.
    - These links open the session in that environment.
    - Without this setting, the platform shows no such link.
 5. **Each builder**, once: Customize > Connectors > Platform > Connect. Then sign in to the platform and accept.
 
 **Pro or Max setup**
 
-- The admin does step 4 only.
+- The admin does the GitHub bot and step 4 only.
 - Each builder opens the Connect Claude page, `https://<domain>/_platform/claude`. Their welcome email links to it.
 - The page gives them their own connector client.
 - It guides them through steps 2, 3 and 5 in their own account.

@@ -6,6 +6,7 @@ import { authenticate } from "./auth.ts";
 import { ciRoutes } from "./ci.ts";
 import { apiUrl } from "./config.ts";
 import { receiveUpload } from "./deployments.ts";
+import { githubRoutes } from "./github.ts";
 import { buildMcpServer } from "./mcp.ts";
 import { mcpChallenge, oauthRoutes } from "./oauth.ts";
 import { buildPlugin } from "./plugin.ts";
@@ -58,3 +59,6 @@ app.put("/uploads/:token", async (c) => {
   if (result.status !== 200) return c.json({ error: result.error }, result.status);
   return c.json({ ok: true, size: result.size });
 });
+
+// A web session's push and pull of its app's code, relayed to GitHub (github.ts)
+app.route("/", githubRoutes);

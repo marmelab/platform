@@ -22,7 +22,12 @@ The target architecture is in the project's `CLAUDE.md`, written from the plugin
 
 1. Ask at most one question when the request is ambiguous about who sees what; otherwise choose the most private reasonable default and say so.
 2. Run `init-app.sh <slug>` (a new app: a short name from the request, `^[a-z][a-z0-9-]{1,30}[a-z0-9]$`, also its web address; an existing app: its `package.json` `name`), then read `CLAUDE.md` and follow it. Build on the skeleton's files instead of rewriting them. If the folder is not a git repository yet, `git init -b main`.
-3. In a session on the web (`CLAUDE_CODE_REMOTE=true`), once the app has its name: `create_app` with the slug (idempotent), and `.platform.json` with `{ "app": "<slug>" }`; the preview needs them. Without the platform tools, follow step 0 of the deploy skill. Nothing goes to GitHub before the user deploys. On a computer, skip this step.
+3. In a session on the web (`CLAUDE_CODE_REMOTE=true`), the folder holds one app, and the platform keeps its code between sessions (on a computer, skip this step). Without the platform tools, follow step 0 of the deploy skill.
+   - Which app: the one the session was opened for ("Change the platform app <slug>: ", the `claude_code_url` of an app), or the one the user names, found in `whoami` `apps`: match their words on `name` first, then `slug`, among the apps whose `role` is `owner`; ask when several match, never guess; when they name none and want to change an app, list theirs by name. The user never needs a slug.
+   - An existing app, in a folder without `.platform.json`: `create_deploy_token` for it, then `PLATFORM_DEPLOY_TOKEN=<token> ${CLAUDE_PLUGIN_ROOT}/skills/deploy/scripts/platform-deploy pull --app <slug>`: it brings back the app's last version online (`PULLED`). If the app was never put online, its code is gone: say so plainly and offer to build it again. Then go on from step 4.
+   - A new app: a name that is not already one of the user's apps (`whoami` `apps`; if they mean that app, it is the case above), then `create_app` with the slug and `.platform.json` with `{ "app": "<slug>" }`; the preview needs them.
+   - The folder already holds another app (its `.platform.json`): to work on a different one, the user opens a new session (the link of the welcome email to start an app, the app's link to change it).
+   Nothing goes to GitHub before the user deploys. Never show the token.
 4. Write the migration first, then the frontend, then the functions.
 5. Check with `npm install` and `npm run build`; fix every error. Commit (do not push: the deploy skill does).
 6. Preview, so the user tries the app before anyone else sees it:

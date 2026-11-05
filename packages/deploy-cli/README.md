@@ -7,6 +7,7 @@ TypeScript with **no runtime dependency**: Node ≥ 22.18 runs `src/main.ts` dir
 ```bash
 node packages/deploy-cli/src/main.ts check  [--dir <app>]
 node packages/deploy-cli/src/main.ts deploy [--dir <app>] [--reason "<why outside CI>"]
+node packages/deploy-cli/src/main.ts push|pull [--dir <app>] [--app <slug>]   # sessions on Claude Code on the web
 pnpm --filter @platform/deploy-cli start -- deploy --dir ../../examples/todo-app   # same, from the workspace
 ```
 
@@ -54,6 +55,12 @@ Direct deployments are allowed by the platform setting `DIRECT_DEPLOY`: `everyon
 8. finish the release `succeeded`; any failure after step 3 finishes it `failed` with the error.
 
 Every step is printed, and a markdown report (steps, blocking / accepted / other lints, app and Studio links, release) is appended to `$GITHUB_STEP_SUMMARY` when set. Exit code: 0 success, 1 check or deployment failed, 2 usage error.
+
+**push** and **pull** ([`src/code.ts`](src/code.ts), `token` only): the code of a session on Claude Code on the web, which has no GitHub access, through the platform (ARCHITECTURE §5, "Code of web sessions"; the app's owners only).
+
+- `push` creates the app's repository at the first push. It then sends the files of `HEAD` that differ from the app's branch, and the deleted ones, as one commit per ~10 MiB, streamed (base64 straight from `git cat-file`). Each commit goes on top of the head the folder last synced. It prints `PUSHED <commit>`, `UNCHANGED`, `BEHIND` (exit 3: `pull`, then push again) or `EXISTING_CODE` (exit 4: the app already has code this folder never synced; it never merges by itself). Symlinks, submodules and executable files are refused, since GitHub's `createCommitOnBranch` sets no file mode.
+- `pull` downloads only the files the folder lacks, straight into its git, and checks the tree against the app's. It restores a folder with no commit, and otherwise rebases the folder's commits on the app's code. It prints `PULLED <commit>` or `CONFLICT` (exit 5: resolve, then `git rebase --continue`).
+- The folder's state is in its git: `refs/platform/base` (the local commit matching the last synced one), `platform.remote` and `platform.app`. A folder holds one app: both commands refuse another app than its `.platform.json` and `platform.app`.
 
 ## In GitHub Actions
 

@@ -5,15 +5,21 @@ import "./localhost-dns.ts";
 import { appendFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { parseArgs } from "node:util";
+import { codeRemote, pull, push } from "./code.ts";
 import { apiBase, ciPlatform, githubOidc, mcpPlatform, type Platform } from "./platform.ts";
 import { readConfig } from "./project.ts";
 import { type Mode, run } from "./run.ts";
 import { markdown } from "./summary.ts";
 
-const USAGE = `Usage: platform-deploy <check|deploy> [options]
+const USAGE = `Usage: platform-deploy <check|deploy|push|pull> [options]
 
   check    get_app, migrations dry run with the security linter, build. Publishes nothing.
   deploy   release, migrations, functions, build, frontend, smoke test.
+  push     Claude Code on the web: commit HEAD to the app's repository through the platform (CI then deploys).
+           Prints PUSHED <commit>, UNCHANGED, BEHIND (exit 3: pull first) or EXISTING_CODE (exit 4: the app
+           already has code this folder never synced).
+  pull     Claude Code on the web: bring the app's code from its repository: restores an empty folder, rebases
+           the folder's commits otherwise. Prints PULLED <commit> or CONFLICT (exit 5: resolve, git rebase --continue).
 
 Options:
   --dir <path>       app repository (default: current directory)
@@ -55,7 +61,9 @@ async function main() {
   const { values, positionals } = parsed;
   if (values.help) usage();
   const mode = positionals[0];
-  if (positionals.length !== 1 || (mode !== "check" && mode !== "deploy")) usage("expected one command: check or deploy");
+  if (positionals.length !== 1 || !["check", "deploy", "push", "pull"].includes(mode!)) {
+    usage("expected one command: check, deploy, push or pull");
+  }
 
   const url = values.url ?? process.env.PLATFORM_URL;
   if (!url) usage("missing platform URL: --url or PLATFORM_URL");
@@ -65,6 +73,16 @@ async function main() {
 
   const dir = resolve(values.dir ?? ".");
   const config = readConfig(dir, values.app);
+  if (mode === "push" || mode === "pull") {
+    const pat = process.env.PLATFORM_TOKEN;
+    if (auth !== "token" || !pat) usage(`${mode} needs PLATFORM_TOKEN`);
+    const app = mcpPlatform(api, config.app, pat);
+    const remote = codeRemote(api, config.app, pat, async () => (await app.getApp()).default_branch ?? null);
+    const result = mode === "push" ? await push(dir, config.app, remote) : await pull(dir, config.app, remote);
+    console.log("commit_sha" in result ? `${result.status} ${result.commit_sha}` : result.status);
+    process.exitCode = { PUSHED: 0, PULLED: 0, UNCHANGED: 0, BEHIND: 3, EXISTING_CODE: 4, CONFLICT: 5 }[result.status];
+    return;
+  }
   let platform: Platform;
   if (auth === "token") {
     const pat = process.env.PLATFORM_TOKEN;

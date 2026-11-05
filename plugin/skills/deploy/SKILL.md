@@ -13,7 +13,7 @@ The platform hosts Supabase-style apps (Postgres, Auth, REST, edge functions, st
 
 Scripts (call them by absolute path, from the project root):
 
-- `${CLAUDE_PLUGIN_ROOT}/skills/deploy/scripts/platform-deploy check|deploy`: `check` = `get_app`, migrations dry run with the security linter, build (publishes nothing, allowed to every member); `deploy` = release, migrations, functions, build, frontend, smoke test. Prints a step report and a markdown summary.
+- `${CLAUDE_PLUGIN_ROOT}/skills/deploy/scripts/platform-deploy check|deploy|push|pull`: `check` = `get_app`, migrations dry run with the security linter, build (publishes nothing, allowed to every member); `deploy` = release, migrations, functions, build, frontend, smoke test. Prints a step report and a markdown summary. `push` and `pull`: the app's code through the platform, in a session on the web (**Push on the web**).
 - `${CLAUDE_PLUGIN_ROOT}/skills/deploy/scripts/function-secrets.sh`: secrets read by the functions (`Deno.env.get`), platform-provided ones excluded.
 - `${CLAUDE_PLUGIN_ROOT}/template/init-app.sh <slug> [<uses> <default_branch>]`: adds the missing files of the app template, never overwrites: `CLAUDE.md` (the target architecture); with `<uses>`, `.github/workflows/platform.yml` and `.claude/settings.json` (offers the platform plugin to whoever opens the repository).
 - `${CLAUDE_PLUGIN_ROOT}/skills/deploy/scripts/check-connection.sh [--after-auth-error]`: why the platform cannot be used, in one word (step 0), and the API URL it checked.
@@ -55,7 +55,7 @@ Add one line for the admin: "for your admin: <word>, <the `api:` line the script
 
 ## 2. Choose the path
 
-- **CI** if `ci` is not null and the repo has a GitHub remote in `ci.github_org`, or the user wants one (offer to create it). Requires `gh auth status` to succeed; otherwise ask the user to run `gh auth login`. In a session on the web (`CLAUDE_CODE_REMOTE=true`), `gh` needs no sign-in, and the user creates the repository (**Repository on the web**).
+- **CI** if `ci` is not null and the repo has a GitHub remote in `ci.github_org`, or the user wants one (offer to create it). Requires `gh auth status` to succeed; otherwise ask the user to run `gh auth login`. In a session on the web (`CLAUDE_CODE_REMOTE=true`), there is no GitHub access and no `gh`: the platform holds the repository and commits for the session (**Push on the web**); CI only needs `ci` not null.
 - **Direct** if `direct_deploy` is true and there is no repository or CI, or the user explicitly asks for a direct deployment. With no repository yet, ask once: "create the GitHub repository and deploy through CI (recommended), or deploy directly now?".
 - **Neither** (`direct_deploy` false and CI impossible): explain why (no `gh`, CI not set up on the platform: ask an admin) and stop. An admin with `direct_deploy_setting: "admins"` deploying outside CI must use the `admin-deploy` skill (reason, audited).
 
@@ -70,24 +70,27 @@ Run `function-secrets.sh`, then `list_secrets`. Ask the user for each missing va
 3. Add a lint to `.platform.json` `acceptedLints` (`{ "name", "object" }`) only if the user explicitly consents in this conversation; it is reviewed in the diff and audited.
 4. Fix build errors before going on.
 
-## Repository on the web
+## Push on the web
 
-In a session on the web (`CLAUDE_CODE_REMOTE=true`), Claude cannot create a GitHub repository: at the first deployment (nothing goes to GitHub before), the user creates it and lets Claude push to it. Skip to 3 when `get_app` already shows the linked repository.
+In a session on the web (`CLAUDE_CODE_REMOTE=true`), there is no GitHub access: at the first deployment the platform creates the app's repository, and it commits the session's code to it (signed, the user as co-author). Only the app's owner can.
 
-1. Ask the user to create it: "Create the app's repository on GitHub: https://github.com/new?owner=<ci.github_org>&name=<slug>&visibility=private (keep it private and empty, without a README), then tell me."
-2. Then ask them to let Claude push to it: "Now allow Claude to use it: https://github.com/apps/claude/installations/new, choose <ci.github_org>, then Only select repositories, add <slug>, and save. If GitHub says an owner must approve, ask them, then tell me." Wait for their answer.
-3. `git remote add origin https://github.com/<ci.github_org>/<slug>.git` (`git remote set-url origin <url>` when `origin` exists and points elsewhere).
-4. Unless already linked: `gh api repos/<ci.github_org>/<slug> --jq '{id: .id, default_branch: .default_branch, full_name: .full_name}'`, then `link_repo` with `repo` (owner/name), `repository_id` (numeric `id`) and `default_branch` (owner of the app only; otherwise ask the owner). If GitHub answers 404, Claude has no access yet: back to 2.
+1. Commit, then `create_deploy_token` for the app, then `PLATFORM_DEPLOY_TOKEN=<token> ${CLAUDE_PLUGIN_ROOT}/skills/deploy/scripts/platform-deploy push`. It prints one word:
+   - `PUSHED <commit>`: done, CI deploys that commit (5a.5).
+   - `UNCHANGED`: the app online already has this version: nothing to deploy.
+   - `BEHIND`: the app changed online since this session got it (from another session). `PLATFORM_DEPLOY_TOKEN=<new token> ${CLAUDE_PLUGIN_ROOT}/skills/deploy/scripts/platform-deploy pull` brings those changes under the session's work; on `CONFLICT`, resolve each file (explain in plain words any choice that changes what users see), `git add` it, `git rebase --continue`. Then step 4 again, and push again.
+   - `EXISTING_CODE`: the app already has other code online, which this session never had. Never merge it on your own; ask: "<app name> is already online with other content: should I change that app (I first bring back what is online), or create a new app under another name?". Change it: `pull`, step 4, push. A new app: a new name with the build skill (`create_app`, `.platform.json`), then deploy it.
+   - Refused because the user is not an owner of the app: "only the app's owner can change it and put it online".
+   - Any other error: say it plainly, plus "for your admin: <the error>".
 
 ## 5a. CI path
 
 1. Repository: if missing, `gh repo create <ci.github_org>/<slug> --private --source . --push` (commit first). Then `gh api repos/<owner>/<repo> --jq '{id: .id, default_branch: .default_branch, full_name: .full_name}'`.
 2. `link_repo` with `repo` (owner/name), `repository_id` (numeric `id`) and `default_branch` (owner of the app only; otherwise ask the owner).
-   On the web, the **Repository on the web** section instead of 1 and 2.
-3. Workflow: `init-app.sh <slug> <ci.uses> <default_branch>` (the caller workflow names the platform's URL: no repository variable to set). It never overwrites: if the workflow already existed, check it calls `ci.uses` with `id-token: write`; if `.claude/settings.json` already existed, add the template's `extraKnownMarketplaces` and `enabledPlugins` entries to it.
-4. Commit the changes (`.platform.json`, the template files, fixes) on the default branch and `git push`: every push to it deploys. On the web, `git push origin HEAD:<default_branch>` (a session opened on the repository works on its own branch); if GitHub refuses it, check steps 1 and 2 of **Repository on the web** with the user. Do not protect the branch: reviews, if the company wants them, come from its GitHub rulesets. Only if the push is refused by such a rule: `git switch -c platform-deploy`, `git push -u origin platform-deploy`, `gh pr create --fill`, `gh pr checks --watch`, then ask the user to get the PR merged (the merge is the push that deploys; `gh pr merge --squash` only if they say so). On the web, `git push origin HEAD:refs/heads/platform-deploy` and give the user https://github.com/<repo>/compare/<default_branch>...platform-deploy?expand=1 to open the PR.
-5. `gh run list --workflow platform.yml --branch <default_branch> --limit 1 --json databaseId,url,status`, then `gh run watch <id> --exit-status`. On the web, `gh` cannot follow the run: `get_app` every 30 seconds until `last_release.commit_sha` is the pushed commit (`git rev-parse HEAD`) and its `status` is `succeeded` or `failed`; after 15 minutes without it, give the user https://github.com/<repo>/actions.
-6. Report the app URL, the Studio link (`get_app` `studio_url`) and the run URL; on the web, also `get_app` `claude_code_url`: "to change the app later, open this link". On failure: `gh run view <id> --log-failed` (on the web, the run URL for the user), then `get_logs`, and diagnose.
+   On the web, skip 1 and 2: the platform creates and links the repository at the first push.
+3. Workflow: `init-app.sh <slug> <ci.uses> <default_branch>` (on the web, `default_branch` from `get_app`, `main` before the first push) (the caller workflow names the platform's URL: no repository variable to set). It never overwrites: if the workflow already existed, check it calls `ci.uses` with `id-token: write`; if `.claude/settings.json` already existed, add the template's `extraKnownMarketplaces` and `enabledPlugins` entries to it.
+4. Commit the changes (`.platform.json`, the template files, fixes) on the default branch and `git push`: every push to it deploys. On the web, **Push on the web** instead of this step. Do not protect the branch: reviews, if the company wants them, come from its GitHub rulesets. Only if the push is refused by such a rule: `git switch -c platform-deploy`, `git push -u origin platform-deploy`, `gh pr create --fill`, `gh pr checks --watch`, then ask the user to get the PR merged (the merge is the push that deploys; `gh pr merge --squash` only if they say so).
+5. `gh run list --workflow platform.yml --branch <default_branch> --limit 1 --json databaseId,url,status`, then `gh run watch <id> --exit-status`. On the web, without `gh`: `get_app` every 30 seconds until `last_release.commit_sha` is the commit `push` printed and its `status` is `succeeded` or `failed`; after 15 minutes without it, tell the user it takes longer than usual, plus "for your admin: https://github.com/<repo>/actions".
+6. Report the app URL, the Studio link (`get_app` `studio_url`) and the run URL; on the web, also `get_app` `claude_code_url`: "to change the app later, open this link". On failure: `gh run view <id> --log-failed` (on the web, where the user has no GitHub access, "for your admin: <ci_run_url>"), then `get_logs`, and diagnose.
 
 ## 5b. Direct path
 

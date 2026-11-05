@@ -5,9 +5,15 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { PREVIEW_PREFIX } from "@platform/shared";
 import type { User } from "./auth.ts";
 
-/** The MCP tools of each token scope: `deploy` is what platform-deploy calls (create_deploy_token). */
+/**
+ * The MCP tools of each token scope: `deploy` is what platform-deploy calls (create_deploy_token). push_code and
+ * pull_code are not tools but the code routes of github.ts.
+ */
 export const SCOPE_TOOLS: Record<string, string[]> = {
-  deploy: ["whoami", "get_app", "apply_migrations", "begin_release", "create_deployment", "finalize_deployment", "finish_release"],
+  deploy: [
+    "whoami", "get_app", "apply_migrations", "begin_release", "create_deployment", "finalize_deployment", "finish_release",
+    "push_code", "pull_code",
+  ],
 };
 
 /** Tools allowed by a token's scopes; null (no scope) means all of them. An unknown scope allows nothing. */

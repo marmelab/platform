@@ -112,8 +112,8 @@ export function buildMcpServer(user: User): McpServer {
         "App details: URL, SUPABASE_URL and anon key (use them as VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY), live " +
         "versions, linked repository, last release, schema_drift: schema changes made outside a release since " +
         "the last one (details with list_schema_changes), auth: the app's auth policy (configure_auth) and " +
-        "whether emails can be sent, and claude_code_url: a link that opens the linked repository in Claude Code on " +
-        "the web (null when the platform has no claude.ai environment or the app no repository)",
+        "whether emails can be sent, and claude_code_url: a link to a new Claude Code session on the web to change " +
+        "this app (null when the platform has no claude.ai environment or the app was never deployed)",
       inputSchema: t.get_app,
     },
     ({ app }) =>
@@ -124,7 +124,9 @@ export function buildMcpServer(user: User): McpServer {
           return null;
         });
         const info = await appInfo(target);
-        const claude_code_url = info.github_repo ? claudeCodeUrl(await getSettings(), info.github_repo) : null;
+        const claude_code_url = info.github_repo
+          ? claudeCodeUrl(await getSettings(), `Change the platform app ${target.slug}: `)
+          : null;
         return { ...info, claude_code_url, schema_drift: drift, auth: await appAuthView(target) };
       }),
   );
