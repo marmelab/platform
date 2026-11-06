@@ -157,6 +157,24 @@ test("push and pull through the relay", async (t) => {
     assert.ok(online.includes("src/a.ts") && online.includes("src/b.ts"), online.join(","));
   });
 
+  await t.test("a folder whose rebase was aborted stays behind until it takes the app's changes", async () => {
+    assert.equal((await pull(b, "todo", github.relay)).status, "PULLED");
+    write(b, "src/app.ts", "from b\n");
+    commitAll(b, "B edits the app");
+    assert.equal((await push(b, "todo", github.relay)).status, "PUSHED");
+    write(a, "src/app.ts", "from a\n");
+    commitAll(a, "A edits the app");
+    assert.equal((await pull(a, "todo", github.relay)).status, "CONFLICT");
+    git(a, ["rebase", "--abort"]);
+    assert.deepEqual(await push(a, "todo", github.relay), { status: "BEHIND" });
+    assert.equal((await pull(a, "todo", github.relay)).status, "CONFLICT");
+    write(a, "src/app.ts", "from a and b\n");
+    git(a, ["add", "src/app.ts"]);
+    git(a, ["-c", "core.editor=true", "rebase", "--continue"]);
+    assert.equal((await push(a, "todo", github.relay)).status, "PUSHED");
+    assert.equal(git(github.repo, ["show", "main:src/app.ts"]), "from a and b");
+  });
+
   await t.test("a new folder never pushes over an app that already has code", async () => {
     const c = session();
     write(c, "index.html", "other app\n");

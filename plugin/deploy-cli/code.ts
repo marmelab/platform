@@ -145,6 +145,9 @@ export async function push(dir: string, app: string, relay: CodeRelay, batchByte
     const syncedHead = gitConfig(dir, "platform.synced");
     if (!syncedHead) return { status: "EXISTING_CODE" };
     if (syncedHead !== remoteHead) return { status: "BEHIND" };
+    // the last pull is not in HEAD (rebase aborted): pushing HEAD would undo it
+    if (gitSucceeds(dir, ["rev-parse", "--verify", "-q", BASE_REF]) &&
+      !gitSucceeds(dir, ["merge-base", "--is-ancestor", BASE_REF, "HEAD"])) return { status: "BEHIND" };
   }
 
   const local = treeFiles(dir, "HEAD");
