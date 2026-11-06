@@ -72,6 +72,8 @@ export interface AppRow {
   /** bigint: returned as a string by pg. */
   github_repo_id: string | null;
   default_branch: string | null;
+  /** The linked repository was created by the platform (github.ts), not linked with link_repo. */
+  github_repo_created: boolean;
   created_at: Date;
   /** Last restore from a backup (A4); null if never restored. */
   restored_at: Date | null;
@@ -520,12 +522,19 @@ async function syncServiceTenants(apps: AppRow[], attempts = 30) {
   }
 }
 
-/** Links the app to its GitHub repository (owner or admin, checked by the caller). Audited. */
-export async function linkRepo(actor: User, app: AppRow, repo: string, repositoryId: number, defaultBranch: string) {
+/**
+ * Links the app to its GitHub repository (owner or admin, checked by the caller). Audited. `created`: by the platform
+ * (github.ts), kept when the same repository is linked again.
+ */
+export async function linkRepo(
+  actor: User, app: AppRow, repo: string, repositoryId: number, defaultBranch: string, created = false,
+) {
   requireWritable(app, "link_repo");
   await platform.query(
-    "update apps set github_repo = $2, github_repo_id = $3, default_branch = $4, updated_at = now() where id = $1",
-    [app.id, repo, repositoryId, defaultBranch],
+    `update apps set github_repo = $2, github_repo_id = $3, default_branch = $4, updated_at = now(),
+       github_repo_created = $5 or (github_repo_created and github_repo = $2 and github_repo_id = $3)
+     where id = $1`,
+    [app.id, repo, repositoryId, defaultBranch, created],
   );
   await audit(actor.id, app.id, "link_repo", {
     from: app.github_repo_id === null

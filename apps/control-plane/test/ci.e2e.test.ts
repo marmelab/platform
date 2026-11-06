@@ -152,7 +152,9 @@ describe("CI deployment API (GitHub OIDC) and DIRECT_DEPLOY", () => {
   let admin: Client;
   let owner: Client;
   let collab: Client;
+  let ownerToken: string;
   let saved: Record<string, string>;
+  let githubTokenSet = false;
 
   before(async () => {
     await waitForControlPlane(MCP_URL);
@@ -161,9 +163,13 @@ describe("CI deployment API (GitHub OIDC) and DIRECT_DEPLOY", () => {
     cli(["set-setting", "oidc_issuer", ISSUER]);
     cli(["set-setting", "oidc_jwks", JSON.stringify({ keys: [jwk] })]);
     cli(["set-setting", "ci_allowed_workflows", `${WORKFLOW}@refs/heads/main, ${OTHER_WORKFLOW}`]);
+    // encrypted: restoreSettings cannot write it back
+    githubTokenSet = psql("select count(*) from settings where key = 'github_token'") === "0";
+    if (githubTokenSet) cli(["set-setting", "github_token", "e2e-unused"]);
     for (const key of ["oidc_audience", "oidc_jwks_url", "direct_deploy"]) cli(["unset-setting", key]);
     admin = await connect(env.PLATFORM_TOKEN);
-    owner = await connect(cli(["create-user", OWNER, "developer"]).trim());
+    ownerToken = cli(["create-user", OWNER, "developer"]).trim();
+    owner = await connect(ownerToken);
     collab = await connect(cli(["create-user", COLLAB, "developer"]).trim());
     // created by the admin: cleanup() deletes the users before the apps, and apps.owner_id keeps the creator
     await call(admin, "create_app", { name: "CI demo", slug: APP });
@@ -173,6 +179,7 @@ describe("CI deployment API (GitHub OIDC) and DIRECT_DEPLOY", () => {
 
   after(async () => {
     if (saved) restoreSettings(saved);
+    if (githubTokenSet) cli(["unset-setting", "github_token"]);
     for (const client of [admin, owner, collab]) await client?.close();
     await cleanup([APP], [OWNER, COLLAB]);
   });
@@ -202,6 +209,33 @@ describe("CI deployment API (GitHub OIDC) and DIRECT_DEPLOY", () => {
         where a.slug = '${APP}' and l.action = 'link_repo'`),
       String(REPO_ID),
     );
+  });
+
+  test("1b. web sessions' code relay reaches only the repository the platform created, never one linked by hand", async () => {
+    const relay = async (method: "GET" | "POST", path: string) => {
+      const response = await fetch(`${API_URL}/apps/${APP}/github${path}`, {
+        method,
+        headers: { authorization: `Bearer ${ownerToken}` },
+      });
+      return { status: response.status, body: await response.json() as any };
+    };
+    const created = () => psql(`select github_repo_created from apps where slug = '${APP}'`);
+    assert.equal(created(), "f");
+    for (const [method, path] of [["GET", "/git/ref/heads/main"], ["POST", ""], ["POST", "/commit"]] as const) {
+      const { status, body } = await relay(method, path);
+      assert.equal(status, 403, `${method} ${path}: ${JSON.stringify(body)}`);
+      assert.match(body.error, /linked to .* by hand/);
+    }
+    const link = { app: APP, repo: REPO, repository_id: REPO_ID, default_branch: "main" };
+    const createdThenLinked = async (args: typeof link) => {
+      psql(`update apps set github_repo_created = true where slug = '${APP}'`);
+      await call(owner, "link_repo", args);
+      return created();
+    };
+    assert.equal(await createdThenLinked(link), "t");
+    assert.equal(await createdThenLinked({ ...link, repo: "e2e-org/other" }), "f");
+    assert.equal(await createdThenLinked({ ...link, repository_id: REPO_ID + 1 }), "f");
+    await call(owner, "link_repo", link);
   });
 
   test("2. invalid tokens are refused", async () => {

@@ -4,13 +4,14 @@
 //   - push: one GraphQL createCommitOnBranch per commit. GitHub signs it as the bot; the member is in a Co-authored-by
 //     trailer. The body is a line-framed stream turned into the GraphQL request as it flows (commitRequestBody).
 //   - pull: read-only Git Data REST calls, relayed as GitHub answers them.
-// Owners only. Nothing is written to disk, no file is held in memory, the platform runs no git.
+// Owners only, on the repository the platform created for the app. Nothing is written to disk, no file is held in
+// memory, the platform runs no git.
 import { type Context, Hono } from "hono";
 import { pipeline, Readable } from "node:stream";
 import type { ReadableStream as WebReadableStream } from "node:stream/web";
 import { type AppRow, AppStoppedError, appForUser, linkRepo, requireWritable, UserError } from "./apps.ts";
 import { audit } from "./audit.ts";
-import { authenticate } from "./auth.ts";
+import { authenticate, type User } from "./auth.ts";
 import { isBehind, commitRequestBody, githubError, pullAnswer, pullPathAllowed } from "./github-policy.ts";
 import { requireOwner } from "./members.ts";
 import { githubServerUrl } from "./oidc.ts";
@@ -63,6 +64,10 @@ function linkedRepo(app: AppRow) {
   if (!app.github_repo || !app.default_branch) {
     throw new HttpError(404, `app "${app.slug}" has no repository yet: it was never deployed`);
   }
+  if (!app.github_repo_created) {
+    throw new HttpError(403, `${app.github_repo} was linked to "${app.slug}" by hand (link_repo): web sessions only ` +
+      "push to and pull from the repository the platform created for the app");
+  }
   return { repo: app.github_repo, branch: app.default_branch };
 }
 
@@ -92,27 +97,29 @@ const handle = (fn: (c: Context) => Promise<unknown>) => async (c: Context) => {
 export const githubRoutes = new Hono();
 
 // Creates the app's repository in the CI organization (auto_init: createCommitOnBranch needs a branch) and links it.
+async function createRepository(user: User, app: AppRow, settings: Settings) {
+  const ci = callerWorkflow(settings);
+  if (!ci) throw new UserError("CI deployment is not set up on this platform (ci_allowed_workflows): ask an admin");
+  const created = await githubFetch(settings, `${githubApiUrls(settings).rest}/orgs/${ci.github_org}/repos`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ name: app.slug, private: true, auto_init: true }),
+  });
+  if (created.status === 422) {
+    throw new HttpError(409, `GitHub refused to create ${ci.github_org}/${app.slug} (${await githubError(created)}): if it ` +
+      "already exists, it is not this app's repository; ask an admin");
+  }
+  if (!created.ok) throw await githubResponseError(created);
+  const repository = (await created.json()) as { id: number; full_name: string; default_branch: string };
+  await linkRepo(user, app, repository.full_name, repository.id, repository.default_branch, true);
+  return { repo: repository.full_name, branch: repository.default_branch };
+}
+
 githubRoutes.post("/apps/:app/github", handle(async (c) => {
   const { user, app, settings } = await authorizeOwner(c, "push_code");
   requireWritable(app, "creating the repository");
-  let { github_repo: repo, default_branch: branch } = app;
-  if (!repo || !branch) {
-    const ci = callerWorkflow(settings);
-    if (!ci) throw new UserError("CI deployment is not set up on this platform (ci_allowed_workflows): ask an admin");
-    const created = await githubFetch(settings, `${githubApiUrls(settings).rest}/orgs/${ci.github_org}/repos`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ name: app.slug, private: true, auto_init: true }),
-    });
-    if (created.status === 422) {
-      throw new HttpError(409, `GitHub refused to create ${ci.github_org}/${app.slug} (${await githubError(created)}): if it ` +
-        "already exists, it is not this app's repository; ask an admin");
-    }
-    if (!created.ok) throw await githubResponseError(created);
-    const repository = (await created.json()) as { id: number; full_name: string; default_branch: string };
-    ({ github_repo: repo, default_branch: branch } = await linkRepo(user, app, repository.full_name, repository.id, repository.default_branch));
-  }
-  return { github_repo: repo, default_branch: branch, head: await branchHead(settings, repo!, branch!) };
+  const { repo, branch } = app.github_repo ? linkedRepo(app) : await createRepository(user, app, settings);
+  return { github_repo: repo, default_branch: branch, head: await branchHead(settings, repo, branch) };
 }));
 
 githubRoutes.post("/apps/:app/github/commit", handle(async (c) => {

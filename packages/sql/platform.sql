@@ -126,6 +126,7 @@ end $$;
 alter table apps add column if not exists github_repo text;
 alter table apps add column if not exists github_repo_id bigint;
 alter table apps add column if not exists default_branch text;
+alter table apps add column if not exists github_repo_created boolean not null default false;
 
 create table if not exists releases (
   id uuid primary key default gen_random_uuid(),
