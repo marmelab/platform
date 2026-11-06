@@ -112,7 +112,7 @@ describe("control plane M2 e2e", () => {
     for (const name of ["apply_migrations", "create_app", "create_deployment", "execute_sql", "finalize_deployment",
       "get_app", "get_logs", "list_apps", "list_deployments", "list_members", "list_secrets", "rollback", "set_secrets",
       "add_member", "remove_member", "stop_app", "start_app", "delete_app", "list_schema_changes", "whoami",
-      "list_auth_users", "invite_user", "delete_user", "ban_user", "unban_user", "configure_auth"]) {
+      "list_auth_users", "invite_user", "delete_user", "ban_user", "unban_user", "configure_auth", "get_ci_run"]) {
       assert.ok(tools.includes(name), `tool ${name} missing`);
     }
   });

@@ -141,7 +141,7 @@ adminApi.post("/users", async (c) => {
 async function sendWelcome(email: string, role: "admin" | "developer") {
   const settings = await getSettings();
   const { sso } = settings;
-  const webStart = claudeCodeUrl(settings, null, "Build me an app for the platform that ");
+  const webStart = claudeCodeUrl(settings, "Build me an app for the platform that ");
   return sendPlatformMail({
     to: [email],
     ...welcomeMail({

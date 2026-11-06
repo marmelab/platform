@@ -166,6 +166,11 @@ export const toolInputs = {
     limit: z.number().int().positive().max(1000).default(200),
     query: z.string().optional().describe("Case-insensitive substring filter"),
   },
+  get_ci_run: {
+    app: slug,
+    commit: z.string().regex(/^[0-9a-f]{40}$/, "a full commit sha").optional()
+      .describe("The commit whose run to read (what platform-deploy push printed); the latest run when omitted"),
+  },
 };
 
 /** Bodies of the CI REST API (/ci/apps/:app/...), authenticated by a GitHub OIDC token. */

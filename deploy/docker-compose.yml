@@ -146,6 +146,8 @@ services:
       # install.sh writes "everyone" into deploy/.env for local installs.
       DIRECT_DEPLOY: ${DIRECT_DEPLOY:-admins}
       CI_ALLOWED_WORKFLOWS: ${CI_ALLOWED_WORKFLOWS:-}
+      # The bot's PAT through which web sessions push (docs/INSTALL.md §7); usually set with set-setting github_token -
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
       OIDC_ISSUER: ${OIDC_ISSUER:-https://token.actions.githubusercontent.com}
       OIDC_AUDIENCE: ${OIDC_AUDIENCE:-}
       OIDC_JWKS_URL: ${OIDC_JWKS_URL:-}

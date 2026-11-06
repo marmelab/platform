@@ -12,7 +12,6 @@ FRP_SHA256=1d9875210972a5d1a62b2dc4c48df45ab0af05d3ca1b5e494a014428259df803
 SUPABASE_VERSION=2.122.0
 SUPABASE_SHA256=119a0f7123f381846f80cf3c4efe96cffb943db55b747177c411f2ac705a5942
 warn() { echo "platform setup: $1 failed" >&2; }
-# fetch <url> <sha256> <file>
 fetch() { curl -fsSL -o "$3" "$1" && echo "$2  $3" | sha256sum -c --quiet; }
 work="$(mktemp -d)"
 

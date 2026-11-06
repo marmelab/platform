@@ -166,6 +166,8 @@ export const config = {
     directDeploy: optional("DIRECT_DEPLOY") ?? "admins",
     claudeWebEnvironment: optional("CLAUDE_WEB_ENVIRONMENT") ?? "",
     ciAllowedWorkflows: optional("CI_ALLOWED_WORKFLOWS") ?? "",
+    /** Fine-grained PAT of the bot account through which web sessions create and commit to repositories (github.ts). */
+    githubToken: optional("GITHUB_TOKEN") ?? "",
     oidcIssuer: optional("OIDC_ISSUER") ?? "https://token.actions.githubusercontent.com",
     oidcAudience: optional("OIDC_AUDIENCE"),
     oidcJwksUrl: optional("OIDC_JWKS_URL"),

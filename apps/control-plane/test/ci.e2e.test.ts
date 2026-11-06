@@ -1,9 +1,12 @@
 // End-to-end test of the CI deployment API (/ci/*, GitHub OIDC), link_repo, releases and DIRECT_DEPLOY, against the
 // running "plat" stack. A fake OIDC issuer: the test generates an RS256 key pair and points the platform settings
 // at it (oidc_issuer + the test-only inline oidc_jwks), then restores the previous settings at the end of the run.
+// The issuer's origin is also where the code relay finds GitHub: a fake one, run inside the control plane container
+// (fixtures/fake-github.cjs).
 import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { randomInt } from "node:crypto";
+import { type ChildProcess, spawn } from "node:child_process";
+import { createHash, randomBytes, randomInt } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -28,7 +31,8 @@ const APP_URL = `http://${APP}.localhost:8100`;
 const OWNER = `${APP}-owner@example.com`;
 const COLLAB = `${APP}-collab@example.com`;
 
-const ISSUER = `https://oidc.e2e.invalid/${RUN_ID}`;
+const GITHUB_PORT = 40_000 + randomInt(20_000);
+const ISSUER = `http://127.0.0.1:${GITHUB_PORT}/${RUN_ID}`;
 const KID = `e2e-${RUN_ID}`;
 const REPO = `e2e-org/${APP}`;
 const REPO_ID = 900_000_000 + randomInt(90_000_000);
@@ -116,6 +120,31 @@ async function ciRefused(method: "GET" | "POST", path: string, token: string | n
   assert.match(result.body.error, pattern);
 }
 
+async function codeRelay(method: "GET" | "POST", path: string, token: string | null, body?: string) {
+  const response = await fetch(`${API_URL}/apps/${APP}/github${path}`, {
+    method,
+    headers: token ? { authorization: `Bearer ${token}` } : {},
+    body,
+  });
+  return { status: response.status, body: await response.json() as any };
+}
+
+async function codeRelayRefused(method: "GET" | "POST", path: string, token: string | null, status: number, pattern: RegExp) {
+  const result = await codeRelay(method, path, token);
+  assert.equal(result.status, status, `${method} ${path}: ${JSON.stringify(result.body)}`);
+  assert.match(result.body.error, pattern);
+}
+
+/** A deploy token of the owner that create_deploy_token never makes: other scopes, or bound to other apps. */
+function forgedToken(scopes: string, appIds: string) {
+  const value = `plat_e2e_${randomBytes(16).toString("hex")}`;
+  psql(`insert into tokens (user_id, name, hash, kind, scopes, app_ids, expires_at)
+    select id, 'e2e forged', '${createHash("sha256").update(value).digest("hex")}', 'deploy', '${scopes}', ${appIds},
+      now() + interval '15 minutes'
+    from users where email = '${OWNER}'`);
+  return value;
+}
+
 const todos = {
   version: "20260101000001",
   name: "create_todos",
@@ -152,19 +181,36 @@ describe("CI deployment API (GitHub OIDC) and DIRECT_DEPLOY", () => {
   let admin: Client;
   let owner: Client;
   let collab: Client;
+  let ownerToken: string;
+  let collabToken: string;
   let saved: Record<string, string>;
+  let githubTokenSet = false;
+  let fakeGithub: ChildProcess | undefined;
 
   before(async () => {
     await waitForControlPlane(MCP_URL);
+    const script = readFileSync(new URL("fixtures/fake-github.cjs", import.meta.url), "utf8");
+    fakeGithub = spawn("docker", ["exec", "-i", "plat-control-plane", "node", "-e", script, String(GITHUB_PORT)], {
+      stdio: ["pipe", "pipe", "inherit"],
+    });
+    await new Promise((resolve, reject) => {
+      fakeGithub!.stdout!.once("data", resolve);
+      fakeGithub!.once("exit", (code) => reject(new Error(`the fake GitHub exited (${code})`)));
+    });
     saved = settingsSnapshot();
     const jwk = { ...(await exportJWK(keys.publicKey)), kid: KID, alg: "RS256", use: "sig" };
     cli(["set-setting", "oidc_issuer", ISSUER]);
     cli(["set-setting", "oidc_jwks", JSON.stringify({ keys: [jwk] })]);
     cli(["set-setting", "ci_allowed_workflows", `${WORKFLOW}@refs/heads/main, ${OTHER_WORKFLOW}`]);
+    // encrypted: restoreSettings cannot write it back
+    githubTokenSet = psql("select count(*) from settings where key = 'github_token'") === "0";
+    if (githubTokenSet) cli(["set-setting", "github_token", "e2e-unused"]);
     for (const key of ["oidc_audience", "oidc_jwks_url", "direct_deploy"]) cli(["unset-setting", key]);
     admin = await connect(env.PLATFORM_TOKEN);
-    owner = await connect(cli(["create-user", OWNER, "developer"]).trim());
-    collab = await connect(cli(["create-user", COLLAB, "developer"]).trim());
+    ownerToken = cli(["create-user", OWNER, "developer"]).trim();
+    owner = await connect(ownerToken);
+    collabToken = cli(["create-user", COLLAB, "developer"]).trim();
+    collab = await connect(collabToken);
     // created by the admin: cleanup() deletes the users before the apps, and apps.owner_id keeps the creator
     await call(admin, "create_app", { name: "CI demo", slug: APP });
     await call(admin, "add_member", { app: APP, email: OWNER, role: "owner" });
@@ -173,7 +219,9 @@ describe("CI deployment API (GitHub OIDC) and DIRECT_DEPLOY", () => {
 
   after(async () => {
     if (saved) restoreSettings(saved);
+    if (githubTokenSet) cli(["unset-setting", "github_token"]);
     for (const client of [admin, owner, collab]) await client?.close();
+    fakeGithub?.stdin!.end();
     await cleanup([APP], [OWNER, COLLAB]);
   });
 
@@ -202,6 +250,55 @@ describe("CI deployment API (GitHub OIDC) and DIRECT_DEPLOY", () => {
         where a.slug = '${APP}' and l.action = 'link_repo'`),
       String(REPO_ID),
     );
+  });
+
+  test("1b. the code relay and get_ci_run reach only the repository the platform created, never one linked by hand", async () => {
+    const created = () => psql(`select github_repo_created from apps where slug = '${APP}'`);
+    assert.equal(created(), "f");
+    for (const [method, path] of [["GET", "/git/ref/heads/main"], ["POST", ""], ["POST", "/commit"]] as const) {
+      await codeRelayRefused(method, path, ownerToken, 403, /linked to .* by hand/);
+    }
+    await refused(owner, "get_ci_run", { app: APP }, /linked to .* by hand/);
+    await refused(collab, "get_ci_run", { app: APP }, /only an owner/);
+    const link = { app: APP, repo: REPO, repository_id: REPO_ID, default_branch: "main" };
+    const createdThenLinked = async (args: typeof link) => {
+      psql(`update apps set github_repo_created = true where slug = '${APP}'`);
+      await call(owner, "link_repo", args);
+      return created();
+    };
+    assert.equal(await createdThenLinked(link), "t");
+    assert.equal(await createdThenLinked({ ...link, repo: "e2e-org/other" }), "f");
+    assert.equal(await createdThenLinked({ ...link, repository_id: REPO_ID + 1 }), "f");
+    await call(owner, "link_repo", link);
+  });
+
+  test("1c. the code relay: who may call it, what it asks GitHub, how it reports GitHub's refusals", async () => {
+    psql(`update apps set github_repo_created = true where slug = '${APP}'`);
+    const deployToken = (await call(owner, "create_deploy_token", { app: APP })).token;
+    const tree = `/git/trees/${SHA}?recursive=1`;
+
+    await codeRelayRefused("GET", tree, null, 401, /^invalid or missing token$/);
+    await codeRelayRefused("GET", tree, forgedToken("{preview}", "null"), 403, /cannot pull code/);
+    await codeRelayRefused("POST", "/commit", forgedToken("{preview}", "null"), 403, /cannot push code/);
+    await codeRelayRefused("GET", tree, forgedToken("{deploy}", "array[gen_random_uuid()]"), 400, /not found/);
+    await codeRelayRefused("GET", tree, collabToken, 400, /only an owner/);
+
+    assert.deepEqual(await codeRelay("GET", tree, deployToken), {
+      status: 200,
+      body: { method: "GET", url: `/api/v3/repos/${REPO}/git/trees/${SHA}?recursive=1` },
+    });
+    await codeRelayRefused("GET", "/git/refs", deployToken, 404, /not a path a pull reads/);
+
+    assert.deepEqual(await codeRelay("POST", "/commit", deployToken, `headline "e2e"\nexpected ${SHA}\n`), {
+      status: 409,
+      body: { error: "behind" },
+    });
+
+    psql(`update apps set github_repo = null, github_repo_id = null, default_branch = null, github_repo_created = false
+      where slug = '${APP}'`);
+    await codeRelayRefused("POST", "", deployToken, 409,
+      /refused to create e2e-org\/.* \(GitHub answered 422: Repository creation failed\.; name already exists/);
+    await call(owner, "link_repo", { app: APP, repo: REPO, repository_id: REPO_ID, default_branch: "main" });
   });
 
   test("2. invalid tokens are refused", async () => {
@@ -290,7 +387,7 @@ describe("CI deployment API (GitHub OIDC) and DIRECT_DEPLOY", () => {
 
     const row = psql(`select concat_ws('|', source, status, commit_sha, github_actor, ci_run_url, created_by is null)
       from releases where id = '${release}'`);
-    assert.equal(row, `ci|succeeded|${SHA}|octocat|https://oidc.e2e.invalid/${REPO}/actions/runs/1001/attempts/1|t`);
+    assert.equal(row, `ci|succeeded|${SHA}|octocat|${new URL(ISSUER).origin}/${REPO}/actions/runs/1001/attempts/1|t`);
     assert.equal(psql(`select string_agg(kind, ',' order by kind) from deployments where release_id = '${release}'`),
       "frontend,migrations");
     const app = await call(owner, "get_app", { app: APP });

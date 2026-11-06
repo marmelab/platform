@@ -30,6 +30,8 @@ export interface Settings {
   backup: BackupSettings;
   /** The claude.ai cloud environment of Claude Code on the web (INSTALL.md §7); empty: not set up. */
   claudeWebEnvironment: string;
+  /** The bot's PAT (github.ts); empty: web sessions cannot push. Never returned by an API, never logged. */
+  githubToken: string;
 }
 
 export interface BackupSettings {
@@ -164,6 +166,7 @@ export function settingsSummary(settings: Settings) {
   return {
     ...settings,
     oidcJwks: settings.oidcJwks ? "(inline JWKS set: test only)" : null,
+    githubToken: settings.githubToken ? "(secret)" : null,
     smtp: smtpSummary(settings.smtp),
     sso: ssoSummary(settings.sso),
     backup: backupSummary(settings.backup),
@@ -191,6 +194,7 @@ export const SETTING_KEYS = {
   direct_deploy: "DIRECT_DEPLOY",
   claude_web_environment: "CLAUDE_WEB_ENVIRONMENT",
   ci_allowed_workflows: "CI_ALLOWED_WORKFLOWS",
+  github_token: "GITHUB_TOKEN",
   oidc_issuer: "OIDC_ISSUER",
   oidc_audience: "OIDC_AUDIENCE",
   oidc_jwks_url: "OIDC_JWKS_URL",
@@ -233,7 +237,7 @@ export const SMTP_KEYS = ["smtp_host", "smtp_port", "smtp_user", "smtp_password"
 /** Settings of the company SSO provider: changing them updates the apps' "custom:company" provider (app-sso.ts). */
 export const SSO_PROVIDER_KEYS = ["sso_enabled", "sso_name", "sso_issuer", "sso_client_id", "sso_client_secret"];
 /** Stored encrypted with the master key. */
-export const ENCRYPTED_KEYS = ["smtp_password", "sso_client_secret", "backup_s3_secret_access_key"];
+export const ENCRYPTED_KEYS = ["smtp_password", "sso_client_secret", "backup_s3_secret_access_key", "github_token"];
 const BOOLEANS = ["sso_enabled", "sso_require_verified_email", "backup_enabled", "backup_s3_path_style"];
 const bool = (key: string, value: string) => {
   if (value !== "true" && value !== "false") throw new Error(`${key} must be true or false`);
@@ -269,6 +273,7 @@ export function validateSetting(key: string, value: string): asserts key is Sett
     throw new Error("direct_deploy must be admins or everyone");
   }
   if (key === "claude_web_environment" && /[\r\n]/.test(value)) throw new Error("claude_web_environment: no line breaks");
+  if (key === "github_token" && /\s/.test(value)) throw new Error("github_token: no whitespace");
   if (DAYS.includes(key)) days(key, value);
   if (key in INTEGERS) integer(key, value, ...INTEGERS[key]!);
   if (key === "backup_s3_endpoint" && value !== "") {
@@ -405,19 +410,15 @@ export async function getSettings(): Promise<Settings> {
       s3: s3.endpoint && s3.bucket && s3.accessKeyId && s3.secretAccessKey ? s3 : null,
     },
     claudeWebEnvironment: get("claude_web_environment", d.claudeWebEnvironment).trim(),
+    githubToken: rows.has("github_token") ? decrypt(rows.get("github_token")!) : d.githubToken,
   };
 }
 
-/** `repo`: owner/name, or null for a session with no repository. */
-export const claudeCodeUrl = (settings: Pick<Settings, "claudeWebEnvironment">, repo: string | null, prompt?: string) =>
+export const claudeCodeUrl = (settings: Pick<Settings, "claudeWebEnvironment">, prompt: string) =>
   settings.claudeWebEnvironment
     ? `https://claude.ai/code?${
       // spaces as %20, as in claude.ai's documented links (a literal "+" is already %2B)
-      new URLSearchParams({
-        environment: settings.claudeWebEnvironment,
-        ...(repo ? { repositories: repo } : {}),
-        ...(prompt ? { prompt } : {}),
-      }).toString().replaceAll("+", "%20")}`
+      new URLSearchParams({ environment: settings.claudeWebEnvironment, prompt }).toString().replaceAll("+", "%20")}`
     : null;
 
 export async function setSetting(key: string, value: string) {

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Usage: platform-deploy <check|deploy> [--reason "<why>"] [other platform-deploy options]  (run from the project root)
+# Usage: platform-deploy <check|deploy|push|pull> [--reason "<why>"] [other platform-deploy options]  (run from the project root)
 # Direct mode of platform-deploy (plugin/deploy-cli, the package packages/deploy-cli points to it): the same CLI
-# as the CI workflow. check publishes nothing (migrations dry run, lints, build).
+# as the CI workflow. check publishes nothing (migrations dry run, lints, build). push and pull: the app's code through
+# the platform, for sessions on Claude Code on the web (no GitHub access there).
 # Credentials: PLATFORM_DEPLOY_TOKEN, the short-lived token of the create_deploy_token tool (what the skills pass, for a
 # builder signed in through the browser), else PLATFORM_TOKEN (a PAT: admins, scripts, tests, CI outside GitHub).
 set -euo pipefail
@@ -18,6 +19,8 @@ node -e 'const [a, b] = process.versions.node.split(".").map(Number); process.ex
   { echo "Node.js >= 22.18 is required (found $(node --version))" >&2; exit 2; }
 PLATFORM_URL="$("$(dirname "${BASH_SOURCE[0]}")/platform-url.sh")"
 export PLATFORM_URL
+# Node's fetch ignores HTTPS_PROXY unless asked: a session on the web reaches the platform only through its proxy
+[ -z "${HTTPS_PROXY:-${https_proxy:-}}" ] || export NODE_USE_ENV_PROXY=1
 export PLATFORM_TOKEN="$token"
 unset PLATFORM_DEPLOY_TOKEN
 exec node "$cli" "$@" --auth token
