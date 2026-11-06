@@ -181,7 +181,9 @@ export async function push(dir: string, app: string, relay: CodeRelay, batchByte
   const details = subjects.slice(1).map((s) => `- ${s}`).join("\n");
   let pushed: { commit_sha: string; tree_sha: string } | undefined;
   for (const [batchIndex, batch] of batches.entries()) {
-    const part = batches.length > 1 ? ` (part ${batchIndex + 1}/${batches.length})` : "";
+    // each batch is a push: only the last one, with the whole tree, runs CI
+    const last = batchIndex === batches.length - 1;
+    const part = batches.length > 1 ? ` (part ${batchIndex + 1}/${batches.length})${last ? "" : " [skip ci]"}` : "";
     async function* frames() {
       yield frameLine(`headline ${JSON.stringify(headline + part)}`);
       if (details) yield frameLine(`body ${JSON.stringify(details)}`);

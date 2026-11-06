@@ -133,6 +133,7 @@ test("push and pull through the relay", async (t) => {
     assert.equal((await push(a, "todo", github.relay, 16)).status, "PUSHED");
     assert.equal(Number(git(github.repo, ["rev-list", "--count", "main"])), before + 2);
     assert.equal(git(github.repo, ["rev-parse", "main^{tree}"]), treeOf(a));
+    assert.match(git(github.repo, ["log", "-1", "--format=%s", "main~1"]), /\(part 1\/2\) \[skip ci\]$/);
     assert.match(git(github.repo, ["log", "-1", "--format=%s", "main"]), /\(part 2\/2\)$/);
   });
 
