@@ -90,6 +90,12 @@ export async function pullAnswer(response: Response) {
   });
 }
 
+const LOG_TAIL_CHARS = 20_000;
+
+/** The end of a CI job's log as get_ci_run shows it, without GitHub's timestamp at the start of each line. */
+export const logTail = (log: string) =>
+  log.replace(/^\uFEFF?\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?Z /gm, "").slice(-LOG_TAIL_CHARS);
+
 /** GitHub's error answer in one line, as gh reads it (go-gh HandleHTTPError): its message, then each of `errors`. */
 export async function githubError(response: Response) {
   const text = await response.text();

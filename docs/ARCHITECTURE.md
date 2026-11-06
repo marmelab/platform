@@ -196,6 +196,7 @@ Each step must be idempotent, with resume on error and a symmetric `delete` oper
 |---|---|
 | `whoami` | User, accessible apps, `direct_deploy` (can this user publish with their PAT) and `ci` (the `uses:` of the reusable workflow to call and the company's GitHub organization, derived from `CI_ALLOWED_WORKFLOWS`) |
 | `list_apps` / `get_app` | Status, URL, `SUPABASE_URL`, anon key, latest version; `get_app` also returns `schema_drift` (schema changes outside releases since the last successful release, §7) |
+| `get_ci_run(app, commit?)` | The app's CI run on its default branch (for a commit, or the latest): status, conclusion, failed jobs with their failed steps and the end of their log. Read through the GitHub bot (§6), so owners only, on the repository the platform created for the app: web sessions have no GitHub access |
 | `list_schema_changes(app, all?)` | Schema changes recorded by the DDL event trigger: those outside releases by default, all of them with `all` |
 | `create_app(name)` | Provisioning (§4.2) |
 | `link_repo(app, repo, repository_id, default_branch)` | Links the app to its GitHub repo (app owner; change audited) |

@@ -236,7 +236,7 @@ Done once, by the platform admin, for both setups below.
 1. Create a GitHub account for the platform (e.g. `<org>-platform`), and add it to the organization.
 2. With that account, create a fine-grained personal access token:
    - Resource owner: the organization. Repository access: All repositories.
-   - Repository permissions: Administration, Contents and Workflows, read and write.
+   - Repository permissions: Administration, Contents and Workflows, read and write; Actions, read (`get_ci_run`).
    - The longest expiry the organization allows (TECH_DEBT SEC-13). If the organization requires approval of
      fine-grained tokens, an owner approves it.
 3. On the platform host, store it (encrypted):

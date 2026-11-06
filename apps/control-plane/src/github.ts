@@ -4,6 +4,7 @@
 //   - push: one GraphQL createCommitOnBranch per commit. GitHub signs it as the bot; the member is in a Co-authored-by
 //     trailer. The body is a line-framed stream turned into the GraphQL request as it flows (commitRequestBody).
 //   - pull: read-only Git Data REST calls, relayed as GitHub answers them.
+// The MCP tool get_ci_run reads the app's CI runs the same way (ciRun).
 // Owners only, on the repository the platform created for the app. Nothing is written to disk, no file is held in
 // memory, the platform runs no git.
 import { type Context, Hono } from "hono";
@@ -12,7 +13,7 @@ import type { ReadableStream as WebReadableStream } from "node:stream/web";
 import { type AppRow, AppStoppedError, appForUser, linkRepo, requireWritable, UserError } from "./apps.ts";
 import { audit } from "./audit.ts";
 import { authenticate, type User } from "./auth.ts";
-import { isBehind, commitRequestBody, githubError, pullAnswer, pullPathAllowed } from "./github-policy.ts";
+import { isBehind, commitRequestBody, githubError, logTail, pullAnswer, pullPathAllowed } from "./github-policy.ts";
 import { requireOwner } from "./members.ts";
 import { githubServerUrl } from "./oidc.ts";
 import { callerWorkflow, getSettings, type Settings } from "./settings.ts";
@@ -47,17 +48,21 @@ const githubFetch = (settings: Settings, url: string, init: RequestInit = {}) =>
 
 const githubResponseError = async (response: Response) => new HttpError(502, await githubError(response));
 
-async function authorizeOwner(c: Context, scope: "push_code" | "pull_code") {
-  const user = await authenticate(c.req.header("authorization"));
-  if (!user) throw new HttpError(401, "invalid or missing token");
-  if (!toolAllowed(user, scope)) throw new HttpError(403, `this token cannot ${scope === "push_code" ? "push" : "pull"} code`);
-  const app = await appForUser(user, c.req.param("app")!);
-  requireOwner(user, app, scope === "push_code" ? "push its code" : "read its code");
+async function ownedApp(user: User, slug: string, action: string) {
+  const app = await appForUser(user, slug);
+  requireOwner(user, app, action);
   const settings = await getSettings();
   if (!settings.githubToken) {
     throw new UserError("the platform has no GitHub token: an admin sets github_token (docs/INSTALL.md §7)");
   }
-  return { user, app, settings };
+  return { app, settings };
+}
+
+async function authorizeOwner(c: Context, scope: "push_code" | "pull_code") {
+  const user = await authenticate(c.req.header("authorization"));
+  if (!user) throw new HttpError(401, "invalid or missing token");
+  if (!toolAllowed(user, scope)) throw new HttpError(403, `this token cannot ${scope === "push_code" ? "push" : "pull"} code`);
+  return { user, ...(await ownedApp(user, c.req.param("app")!, scope === "push_code" ? "push its code" : "read its code")) };
 }
 
 function linkedRepo(app: AppRow) {
@@ -65,10 +70,54 @@ function linkedRepo(app: AppRow) {
     throw new HttpError(404, `app "${app.slug}" has no repository yet: it was never deployed`);
   }
   if (!app.github_repo_created) {
-    throw new HttpError(403, `${app.github_repo} was linked to "${app.slug}" by hand (link_repo): web sessions only ` +
-      "push to and pull from the repository the platform created for the app");
+    throw new HttpError(403, `${app.github_repo} was linked to "${app.slug}" by hand (link_repo): the platform only ` +
+      "reaches the repository it created for the app");
   }
   return { repo: app.github_repo, branch: app.default_branch };
+}
+
+async function githubJson<T>(settings: Settings, url: string): Promise<T> {
+  const response = await githubFetch(settings, url);
+  if (!response.ok) throw await githubResponseError(response);
+  return (await response.json()) as T;
+}
+
+const FAILED = ["failure", "timed_out"];
+
+/**
+ * get_ci_run (mcp.ts): the run of the app's workflow (platform.yml) on its branch for `commit`, or the latest one, with
+ * its failed jobs and the end of their log. `run` null: none yet.
+ */
+export async function ciRun(user: User, slug: string, commit?: string) {
+  const { app, settings } = await ownedApp(user, slug, "read its CI runs");
+  const { repo, branch } = linkedRepo(app);
+  const actions = `${githubApiUrls(settings).rest}/repos/${repo}/actions`;
+  const query = new URLSearchParams({ branch, event: "push", per_page: "1", ...(commit ? { head_sha: commit } : {}) });
+  const runs = await githubFetch(settings, `${actions}/workflows/platform.yml/runs?${query}`);
+  if (runs.status === 404) return { run: null, failed_jobs: [] }; // no platform.yml pushed yet
+  if (!runs.ok) throw await githubResponseError(runs);
+  const [run] = ((await runs.json()) as {
+    workflow_runs: { id: number; status: string; conclusion: string | null; head_sha: string; html_url: string; created_at: string }[];
+  }).workflow_runs;
+  if (!run) return { run: null, failed_jobs: [] };
+  const summary = {
+    status: run.status, conclusion: run.conclusion, head_sha: run.head_sha, url: run.html_url, created_at: run.created_at,
+  };
+  if (run.status !== "completed" || run.conclusion === "success") return { run: summary, failed_jobs: [] };
+  const { jobs } = await githubJson<{
+    jobs: { id: number; name: string; conclusion: string | null; steps?: { name: string; conclusion: string | null }[] }[];
+  }>(settings, `${actions}/runs/${run.id}/jobs?per_page=100`);
+  const failed_jobs = [];
+  for (const job of jobs.filter((j) => FAILED.includes(j.conclusion ?? ""))) {
+    // ponytail: the whole log is read, then cut; stream it if CI logs grow to many MB
+    const log = await githubFetch(settings, `${actions}/jobs/${job.id}/logs`);
+    failed_jobs.push({
+      name: job.name,
+      failed_steps: (job.steps ?? []).filter((s) => FAILED.includes(s.conclusion ?? "")).map((s) => s.name),
+      log_tail: log.ok ? logTail(await log.text()) : await githubError(log),
+    });
+  }
+  return { run: summary, failed_jobs };
 }
 
 async function branchHead(settings: Settings, repo: string, branch: string) {

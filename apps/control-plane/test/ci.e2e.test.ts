@@ -211,7 +211,7 @@ describe("CI deployment API (GitHub OIDC) and DIRECT_DEPLOY", () => {
     );
   });
 
-  test("1b. web sessions' code relay reaches only the repository the platform created, never one linked by hand", async () => {
+  test("1b. the code relay and get_ci_run reach only the repository the platform created, never one linked by hand", async () => {
     const relay = async (method: "GET" | "POST", path: string) => {
       const response = await fetch(`${API_URL}/apps/${APP}/github${path}`, {
         method,
@@ -226,6 +226,8 @@ describe("CI deployment API (GitHub OIDC) and DIRECT_DEPLOY", () => {
       assert.equal(status, 403, `${method} ${path}: ${JSON.stringify(body)}`);
       assert.match(body.error, /linked to .* by hand/);
     }
+    await refused(owner, "get_ci_run", { app: APP }, /linked to .* by hand/);
+    await refused(collab, "get_ci_run", { app: APP }, /only an owner/);
     const link = { app: APP, repo: REPO, repository_id: REPO_ID, default_branch: "main" };
     const createdThenLinked = async (args: typeof link) => {
       psql(`update apps set github_repo_created = true where slug = '${APP}'`);

@@ -1,12 +1,12 @@
 // Unit tests of src/github-policy.ts: the push stream that becomes the GraphQL request (the JSON of each frame is
 // tested in test/push-frame.test.ts), the paths a pull may read and what it answers, the "behind" answer, GitHub's
-// errors. The GitHub calls themselves are checked by hand (TECH_DEBT PLG-9).
+// errors, the end of a CI job's log. The GitHub calls themselves are checked by hand (TECH_DEBT PLG-9).
 import assert from "node:assert/strict";
 import { once } from "node:events";
 import { Readable } from "node:stream";
 import { text } from "node:stream/consumers";
 import { test } from "node:test";
-import { commitRequestBody, githubError, isBehind, pullAnswer, pullPathAllowed } from "../src/github-policy.ts";
+import { commitRequestBody, githubError, isBehind, logTail, pullAnswer, pullPathAllowed } from "../src/github-policy.ts";
 
 const OID = "a".repeat(40);
 const TARGET = { repo: "acme/todo", branch: "main", coAuthor: { name: "Dana", email: "dana@example.com" } };
@@ -176,4 +176,18 @@ test("GitHub's stale head error means behind", () => {
   assert.ok(isBehind([{ type: "STALE_DATA", message: "" }]));
   assert.ok(!isBehind([{ type: "FORBIDDEN", message: "Resource not accessible" }]));
   assert.ok(!isBehind(undefined));
+});
+
+test("a CI job's log is shown from its end, without the timestamps", () => {
+  const log = "\uFEFF2026-11-06T10:00:00.1234567Z ##[group]Run npm run build\n" +
+    "2026-11-06T10:00:01.0000000Z src/App.tsx(3,1): error TS2304: Cannot find name 'x'.\n" +
+    "2026-11-06T10:00:01Z ##[error]Process completed with exit code 2.\n";
+  assert.equal(
+    logTail(log),
+    "##[group]Run npm run build\nsrc/App.tsx(3,1): error TS2304: Cannot find name 'x'.\n" +
+      "##[error]Process completed with exit code 2.\n",
+  );
+  const long = logTail(`${"x".repeat(30_000)}\nthe error\n`);
+  assert.equal(long.length, 20_000);
+  assert.ok(long.endsWith("the error\n"));
 });

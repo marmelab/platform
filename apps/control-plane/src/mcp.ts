@@ -27,6 +27,7 @@ import {
 } from "./deployments.ts";
 import { createManualBackup, listBackups } from "./backups.ts";
 import { createDeployToken } from "./deploy-tokens.ts";
+import { ciRun } from "./github.ts";
 import { getLogs } from "./logs.ts";
 import { addMember, listMembers, removeMember, requireOwner } from "./members.ts";
 import {
@@ -534,6 +535,18 @@ export function buildMcpServer(user: User): McpServer {
           query,
         })
       ),
+  );
+
+  server.registerTool(
+    "get_ci_run",
+    {
+      description: "The app's CI run (GitHub Actions, platform.yml) on its default branch, for a commit or the latest " +
+        "one: status (queued, in_progress, completed...), conclusion, url (for an admin: builders on the web have no " +
+        "GitHub access), and failed_jobs with their failed steps and the end of their log. run null: no run yet. " +
+        "Owner or admin, for an app whose repository the platform created (web sessions)",
+      inputSchema: t.get_ci_run,
+    },
+    ({ app, commit }) => run(() => ciRun(user, app, commit)),
   );
 
   return server;
