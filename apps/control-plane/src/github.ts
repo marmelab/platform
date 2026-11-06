@@ -48,7 +48,7 @@ const githubResponseError = async (response: Response) => new HttpError(502, awa
 
 async function authorizeOwner(c: Context, scope: "push_code" | "pull_code") {
   const user = await authenticate(c.req.header("authorization"));
-  if (!user) throw new HttpError(401, "framesError or missing token");
+  if (!user) throw new HttpError(401, "invalid or missing token");
   if (!toolAllowed(user, scope)) throw new HttpError(403, `this token cannot ${scope === "push_code" ? "push" : "pull"} code`);
   const app = await appForUser(user, c.req.param("app")!);
   requireOwner(user, app, scope === "push_code" ? "push its code" : "read its code");
