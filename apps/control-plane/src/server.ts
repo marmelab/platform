@@ -60,5 +60,4 @@ app.put("/uploads/:token", async (c) => {
   return c.json({ ok: true, size: result.size });
 });
 
-// A web session's push and pull of its app's code, relayed to GitHub (github.ts)
 app.route("/", githubRoutes);

@@ -414,7 +414,6 @@ export async function getSettings(): Promise<Settings> {
   };
 }
 
-/** A new session with no repository (the code goes through github.ts), opened on `prompt`. */
 export const claudeCodeUrl = (settings: Pick<Settings, "claudeWebEnvironment">, prompt: string) =>
   settings.claudeWebEnvironment
     ? `https://claude.ai/code?${

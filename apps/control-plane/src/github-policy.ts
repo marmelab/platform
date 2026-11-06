@@ -1,6 +1,4 @@
-// The pure rules of the code relay of web sessions (github.ts), unit-tested in test/github.test.ts: the push stream
-// that becomes the GraphQL request (each header frame translated by push-frame.ts), the paths a pull may read and what
-// it answers, GitHub's "behind" answer, GitHub's errors.
+// The pure rules of the code relay of web sessions (github.ts), kept apart to be unit-tested (test/github.test.ts).
 import { Transform } from "node:stream";
 import { type CommitTarget, frameToJson, newPushFrameState } from "./push-frame.ts";
 
@@ -71,17 +69,14 @@ export function commitRequestBody(target: CommitTarget) {
   );
 }
 
-/** createCommitOnBranch refused because the branch moved since the session's last sync. */
 export const isBehind = (errors: { type?: string; message?: string }[] = []) =>
   errors.some((e) => e.type === "STALE_DATA" || /expected branch to point to/i.test(e.message ?? ""));
 
-/** The Git Data paths a pull reads: nothing else is relayed. */
 export function pullPathAllowed(path: string, search: string, branch: string) {
   if (path === `git/ref/heads/${branch}` || /^git\/(commits|blobs)\/[0-9a-f]{40}$/.test(path)) return search === "";
   return /^git\/trees\/[0-9a-f]{40}$/.test(path) && (search === "" || search === "?recursive=1");
 }
 
-/** A pull read as the session gets it: GitHub's answer, or its failure as the relay's own error, never GitHub's status. */
 export async function pullAnswer(response: Response) {
   if (!response.ok) return Response.json({ error: await githubError(response) }, { status: 502 });
   return new Response(response.body, {
@@ -92,7 +87,6 @@ export async function pullAnswer(response: Response) {
 
 const LOG_TAIL_CHARS = 20_000;
 
-/** The end of a CI job's log as get_ci_run shows it, without GitHub's timestamp at the start of each line. */
 export const logTail = (log: string) =>
   log.replace(/^\uFEFF?\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?Z /gm, "").slice(-LOG_TAIL_CHARS);
 

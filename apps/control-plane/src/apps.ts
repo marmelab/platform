@@ -522,10 +522,7 @@ async function syncServiceTenants(apps: AppRow[], attempts = 30) {
   }
 }
 
-/**
- * Links the app to its GitHub repository (owner or admin, checked by the caller). Audited. `created`: by the platform
- * (github.ts), kept when the same repository is linked again.
- */
+/** Links the app to its GitHub repository (owner or admin, checked by the caller). Audited. */
 export async function linkRepo(
   actor: User, app: AppRow, repo: string, repositoryId: number, defaultBranch: string, created = false,
 ) {

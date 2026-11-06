@@ -8,11 +8,9 @@ import { join } from "node:path";
 import { Readable } from "node:stream";
 import { request } from "./platform.ts";
 
-/** The platform's side of push and pull: the app's code routes, and its repository (get_app). */
 export interface CodeRelay {
   /** null: the app has no repository yet (never deployed). */
   defaultBranch(): Promise<string | null>;
-  /** Creates the app's repository (first push): its branch and first commit. */
   createRepository(): Promise<{ default_branch: string; head: string }>;
   /** A read-only Git Data path (git/ref/heads/<branch>, git/commits|trees|blobs/<sha>). */
   readGit(path: string): Promise<Response>;
@@ -74,7 +72,6 @@ async function readJson<T>(response: Response): Promise<T> {
   return body as T;
 }
 
-/** This folder belongs to one app: the one of its .platform.json, and the one it last synced with. */
 function checkFolderApp(dir: string, app: string) {
   const file = join(dir, ".platform.json");
   const namedApp = existsSync(file) ? JSON.parse(readFileSync(file, "utf8")).app : null;
@@ -88,7 +85,6 @@ function requireCleanTree(dir: string) {
   if (git(dir, ["status", "--porcelain"]) !== "") throw new Error("uncommitted changes: commit them first");
 }
 
-/** `git ls-tree -r -l -z`: the files of a commit, with their size. */
 function treeFiles(dir: string, rev: string): TreeFile[] {
   return git(dir, ["ls-tree", "-r", "-l", "-z", rev]).split("\0").filter(Boolean).map((entry) => {
     const [, mode, , sha, size, path] = /^(\d+) (\w+) ([0-9a-f]+) +(\S+)\t(.*)$/s.exec(entry)!;
@@ -214,8 +210,7 @@ export async function push(dir: string, app: string, relay: CodeRelay, batchByte
 
 /**
  * Brings the app's code into this folder: restores it into a folder with no commit, otherwise rebases the folder's
- * own commits on it (CONFLICT: resolve, then `git rebase --continue`). Only the missing files are downloaded, straight
- * into the folder's git.
+ * own commits on it (CONFLICT: resolve, then `git rebase --continue`).
  */
 export async function pull(dir: string, app: string, relay: CodeRelay): Promise<PullResult> {
   checkFolderApp(dir, app);

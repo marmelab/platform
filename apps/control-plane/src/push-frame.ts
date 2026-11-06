@@ -1,7 +1,3 @@
-// One header frame of a web session's push, as commitRequestBody (github-policy.ts) reads it: the JSON it adds to the
-// createCommitOnBranch request body. The platform writes the query, the repository and the branch itself, and
-// re-serializes every value the session sends.
-
 const CREATE_COMMIT_MUTATION =
   "mutation($input: CreateCommitOnBranchInput!) { createCommitOnBranch(input: $input) { commit { oid tree { oid } } } }";
 const OID_RE = /^[0-9a-f]{40}$/;
@@ -12,13 +8,11 @@ export interface CommitTarget {
   coAuthor: { name: string | null; email: string };
 }
 
-/** Where a push stands between two frames. */
 export interface PushFrameState {
   stage: "headline" | "body" | "expected" | "deletions" | "additions";
   headline: string;
   body: string;
   counts: { deleted: number; added: number };
-  /** An add frame was read: the next line is the file's contents, in base64. */
   readingContents: boolean;
 }
 
@@ -43,7 +37,7 @@ function jsonString(value: string, frame: string) {
   return parsed;
 }
 
-/** The JSON that `text`, one header frame without its newline, adds to the request body. Throws when out of order. */
+/** `text`: one header frame, without its newline. */
 export function frameToJson(text: string, state: PushFrameState, target: CommitTarget) {
   const spaceIndex = text.indexOf(" ");
   const key = spaceIndex < 0 ? text : text.slice(0, spaceIndex);

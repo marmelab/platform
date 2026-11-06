@@ -53,7 +53,6 @@ async function mcp(token: string, method: string, params: Record<string, unknown
   return { status: response.status, body: text ? JSON.parse(text) : null };
 }
 
-/** A tool's result: parsed, or the error text with `error: true`. */
 async function call(token: string, name: string, args: Record<string, unknown> = {}): Promise<any> {
   const reply = await mcp(token, "tools/call", { name, arguments: args });
   assert.equal(reply.status, 200, JSON.stringify(reply.body));

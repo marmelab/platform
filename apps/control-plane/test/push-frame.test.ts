@@ -1,6 +1,5 @@
-// Unit tests of src/push-frame.ts: the JSON each header frame of a web session's push adds to the createCommitOnBranch
-// request. The contents lines, the line splitting and the end of the request are commitRequestBody's
-// (test/github.test.ts).
+// Unit tests of src/push-frame.ts. The contents lines, the line splitting and the end of the request are tested with
+// commitRequestBody (test/github.test.ts).
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { type CommitTarget, frameToJson, newPushFrameState } from "../src/push-frame.ts";
@@ -24,7 +23,6 @@ function requestOf(frames: string[], target = TARGET) {
   return { request: JSON.parse(json), counts: state.counts };
 }
 
-/** All frames but the last are accepted, the last throws `message`. */
 function refuses(frames: string[], message: RegExp) {
   const state = newPushFrameState();
   for (const frame of frames.slice(0, -1)) {

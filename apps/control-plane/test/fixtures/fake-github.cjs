@@ -1,6 +1,5 @@
-// GitHub as the code relay's routes reach it in ci.e2e.test.ts, run inside the control plane container (node -e, the
-// port as argument): repository creation refused (422), every commit refused as behind, every other request echoed.
-// Exits when its stdin ends, so with the test that started it.
+// GitHub for the code relay's routes in ci.e2e.test.ts, run inside the control plane container (node -e, the port as
+// argument). Exits with the test that started it, when its stdin ends.
 const http = require("node:http");
 
 const answer = (res, status, body) => res.writeHead(status, { "content-type": "application/json" }).end(JSON.stringify(body));

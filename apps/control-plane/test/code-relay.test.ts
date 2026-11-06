@@ -23,7 +23,6 @@ const tempDir = (prefix: string) => {
 const git = (dir: string, args: string[], options: { input?: string | Buffer; env?: Record<string, string> } = {}) =>
   execFileSync("git", args, { cwd: dir, encoding: "utf8", input: options.input, env: { ...process.env, ...options.env } }).trim();
 
-/** GitHub as the platform relays it: one repository, createCommitOnBranch and the read-only Git Data paths. */
 function fakeGithub() {
   const repo = tempDir("relay-github-");
   git(repo, ["init", "-q", "-b", "main"]); // not bare: update-index needs a work tree, even unused

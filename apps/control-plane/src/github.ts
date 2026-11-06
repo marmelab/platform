@@ -1,12 +1,7 @@
 // Claude Code on the web (docs/ARCHITECTURE.md §6): a session has no GitHub access, so it pushes and pulls its app's
 // code through these routes, which call GitHub with the platform bot's token (setting github_token). The caller names
 // the app only (its slug, which a deploy token is bound to): the repository and the branch come from the app.
-//   - push: one GraphQL createCommitOnBranch per commit. GitHub signs it as the bot; the member is in a Co-authored-by
-//     trailer. The body is a line-framed stream turned into the GraphQL request as it flows (commitRequestBody).
-//   - pull: read-only Git Data REST calls, relayed as GitHub answers them.
-// The MCP tool get_ci_run reads the app's CI runs the same way (ciRun).
-// Owners only, on the repository the platform created for the app. Nothing is written to disk, no file is held in
-// memory, the platform runs no git.
+// Nothing is written to disk, no file is held in memory, the platform runs no git.
 import { type Context, Hono } from "hono";
 import { pipeline, Readable } from "node:stream";
 import type { ReadableStream as WebReadableStream } from "node:stream/web";
@@ -84,10 +79,6 @@ async function githubJson<T>(settings: Settings, url: string): Promise<T> {
 
 const FAILED = ["failure", "timed_out"];
 
-/**
- * get_ci_run (mcp.ts): the run of the app's workflow (platform.yml) on its branch for `commit`, or the latest one, with
- * its failed jobs and the end of their log. `run` null: none yet.
- */
 export async function ciRun(user: User, slug: string, commit?: string) {
   const { app, settings } = await ownedApp(user, slug, "read its CI runs");
   const { repo, branch } = linkedRepo(app);
@@ -145,7 +136,7 @@ const handle = (fn: (c: Context) => Promise<unknown>) => async (c: Context) => {
 
 export const githubRoutes = new Hono();
 
-// Creates the app's repository in the CI organization (auto_init: createCommitOnBranch needs a branch) and links it.
+// auto_init: createCommitOnBranch needs an existing branch
 async function createRepository(user: User, app: AppRow, settings: Settings) {
   const ci = callerWorkflow(settings);
   if (!ci) throw new UserError("CI deployment is not set up on this platform (ci_allowed_workflows): ask an admin");

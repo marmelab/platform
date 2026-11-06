@@ -1,6 +1,5 @@
-// Unit tests of src/github-policy.ts: the push stream that becomes the GraphQL request (the JSON of each frame is
-// tested in test/push-frame.test.ts), the paths a pull may read and what it answers, the "behind" answer, GitHub's
-// errors, the end of a CI job's log. The GitHub calls themselves are checked by hand (TECH_DEBT PLG-9).
+// Unit tests of src/github-policy.ts. The JSON of each frame is tested in test/push-frame.test.ts; the calls to the
+// real GitHub are checked by hand (TECH_DEBT PLG-9).
 import assert from "node:assert/strict";
 import { once } from "node:events";
 import { Readable } from "node:stream";
@@ -13,12 +12,10 @@ const TARGET = { repo: "acme/todo", branch: "main", coAuthor: { name: "Dana", em
 const HEAD = `headline "Add todos"\nexpected ${OID}\n`;
 const MAX_HEADER_LINE_BYTES = 64 * 1024;
 
-/** `input` cut in chunks of `size` bytes. */
 function chunked(input: string | Buffer, size: number) {
   const bytes = Buffer.from(input);
   return Array.from({ length: Math.ceil(bytes.length / size) }, (_, i) => bytes.subarray(i * size, (i + 1) * size));
 }
-/** The request commitRequestBody writes from the push `chunks`. */
 async function requestOf(chunks: (string | Buffer)[]) {
   const body = commitRequestBody(TARGET);
   const output = await text(Readable.from(chunks.map((chunk) => Buffer.from(chunk))).pipe(body));
