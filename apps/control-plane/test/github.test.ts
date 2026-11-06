@@ -1,12 +1,12 @@
 // Unit tests of src/github-policy.ts: the push stream that becomes the GraphQL request (the JSON of each frame is
-// tested in test/push-frame.test.ts), the paths a pull may read, the "behind" answer. The GitHub calls themselves are
-// checked by hand (TECH_DEBT PLG-9).
+// tested in test/push-frame.test.ts), the paths a pull may read and what it answers, the "behind" answer, GitHub's
+// errors. The GitHub calls themselves are checked by hand (TECH_DEBT PLG-9).
 import assert from "node:assert/strict";
 import { once } from "node:events";
 import { Readable } from "node:stream";
 import { text } from "node:stream/consumers";
 import { test } from "node:test";
-import { commitRequestBody, isBehind, pullPathAllowed } from "../src/github-policy.ts";
+import { commitRequestBody, githubError, isBehind, pullAnswer, pullPathAllowed } from "../src/github-policy.ts";
 
 const OID = "a".repeat(40);
 const TARGET = { repo: "acme/todo", branch: "main", coAuthor: { name: "Dana", email: "dana@example.com" } };
@@ -138,6 +138,37 @@ test("a pull reads only the app's branch head, and commits, trees and blobs by s
   assert.ok(!pullPathAllowed(`git/trees/main`, "", "main"));
   assert.ok(!pullPathAllowed("contents/.env", "", "main"));
   assert.ok(!pullPathAllowed(`git/commits/${OID}/../../../../orgs`, "", "main"));
+});
+
+test("a pull relays GitHub's answer, and its failure as the relay's own error", async () => {
+  const read = await pullAnswer(Response.json({ sha: OID }));
+  assert.equal(read.status, 200);
+  assert.deepEqual(await read.json(), { sha: OID });
+  const failed = await pullAnswer(
+    Response.json({ message: "Bad credentials", documentation_url: "https://docs.github.com/rest" }, { status: 401 }),
+  );
+  assert.equal(failed.status, 502);
+  assert.deepEqual(await failed.json(), { error: "GitHub answered 401: Bad credentials" });
+});
+
+test("GitHub's errors read as gh reads them: the message, then each error", async () => {
+  const errorOf = (body: unknown, status = 422) =>
+    githubError(new Response(typeof body === "string" ? body : JSON.stringify(body), { status }));
+  assert.equal(
+    await errorOf({
+      message: "Repository creation failed.",
+      errors: [{ resource: "Repository", code: "custom", field: "name", message: "name already exists on this account" }],
+    }),
+    "GitHub answered 422: Repository creation failed.; name already exists on this account",
+  );
+  assert.equal(
+    await errorOf({
+      message: "Validation Failed",
+      errors: [{ resource: "Repository", field: "name", code: "missing_field" }, "visibility is invalid"],
+    }),
+    "GitHub answered 422: Validation Failed; Repository.name missing_field; visibility is invalid",
+  );
+  assert.equal(await errorOf("<html>Bad gateway</html>", 502), "GitHub answered 502: <html>Bad gateway</html>");
 });
 
 test("GitHub's stale head error means behind", () => {

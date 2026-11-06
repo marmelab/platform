@@ -1,6 +1,6 @@
 // The pure rules of the code relay of web sessions (github.ts), unit-tested in test/github.test.ts: the push stream
-// that becomes the GraphQL request (each header frame translated by push-frame.ts), the paths a pull may read,
-// GitHub's "behind" answer.
+// that becomes the GraphQL request (each header frame translated by push-frame.ts), the paths a pull may read and what
+// it answers, GitHub's "behind" answer, GitHub's errors.
 import { Transform } from "node:stream";
 import { type CommitTarget, frameToJson, newPushFrameState } from "./push-frame.ts";
 
@@ -79,4 +79,30 @@ export const isBehind = (errors: { type?: string; message?: string }[] = []) =>
 export function pullPathAllowed(path: string, search: string, branch: string) {
   if (path === `git/ref/heads/${branch}` || /^git\/(commits|blobs)\/[0-9a-f]{40}$/.test(path)) return search === "";
   return /^git\/trees\/[0-9a-f]{40}$/.test(path) && (search === "" || search === "?recursive=1");
+}
+
+/** A pull read as the session gets it: GitHub's answer, or its failure as the relay's own error, never GitHub's status. */
+export async function pullAnswer(response: Response) {
+  if (!response.ok) return Response.json({ error: await githubError(response) }, { status: 502 });
+  return new Response(response.body, {
+    status: response.status,
+    headers: { "content-type": response.headers.get("content-type") ?? "application/json" },
+  });
+}
+
+/** GitHub's error answer in one line, as gh reads it (go-gh HandleHTTPError): its message, then each of `errors`. */
+export async function githubError(response: Response) {
+  const text = await response.text();
+  let parts: string[] = [];
+  try {
+    const { message, errors = [] } = JSON.parse(text) as {
+      message?: string;
+      errors?: (string | { message?: string; resource?: string; field?: string; code?: string })[];
+    };
+    parts = [message, ...errors.map((e) => (typeof e === "string" ? e : e.message ?? `${e.resource}.${e.field} ${e.code}`))]
+      .filter((part): part is string => !!part);
+  } catch {
+    // not JSON: the raw text below
+  }
+  return `GitHub answered ${response.status}: ${parts.join("; ") || text.slice(0, 500)}`;
 }

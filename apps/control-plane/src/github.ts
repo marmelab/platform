@@ -11,7 +11,7 @@ import type { ReadableStream as WebReadableStream } from "node:stream/web";
 import { type AppRow, AppStoppedError, appForUser, linkRepo, requireWritable, UserError } from "./apps.ts";
 import { audit } from "./audit.ts";
 import { authenticate } from "./auth.ts";
-import { isBehind, commitRequestBody, pullPathAllowed } from "./github-policy.ts";
+import { isBehind, commitRequestBody, githubError, pullAnswer, pullPathAllowed } from "./github-policy.ts";
 import { requireOwner } from "./members.ts";
 import { githubServerUrl } from "./oidc.ts";
 import { callerWorkflow, getSettings, type Settings } from "./settings.ts";
@@ -44,8 +44,7 @@ const githubFetch = (settings: Settings, url: string, init: RequestInit = {}) =>
     },
   });
 
-const githubResponseError = async (response: Response) =>
-  new HttpError(502, `GitHub answered ${response.status}: ${(await response.text()).slice(0, 500)}`);
+const githubResponseError = async (response: Response) => new HttpError(502, await githubError(response));
 
 async function authorizeOwner(c: Context, scope: "push_code" | "pull_code") {
   const user = await authenticate(c.req.header("authorization"));
@@ -106,7 +105,7 @@ githubRoutes.post("/apps/:app/github", handle(async (c) => {
       body: JSON.stringify({ name: app.slug, private: true, auto_init: true }),
     });
     if (created.status === 422) {
-      throw new HttpError(409, `GitHub refused to create ${ci.github_org}/${app.slug} (${await created.text()}): if it ` +
+      throw new HttpError(409, `GitHub refused to create ${ci.github_org}/${app.slug} (${await githubError(created)}): if it ` +
         "already exists, it is not this app's repository; ask an admin");
     }
     if (!created.ok) throw await githubResponseError(created);
@@ -161,9 +160,5 @@ githubRoutes.get("/apps/:app/github/*", handle(async (c) => {
   const url = new URL(c.req.url);
   const path = url.pathname.slice(`/apps/${app.slug}/github/`.length);
   if (!pullPathAllowed(path, url.search, branch)) throw new HttpError(404, "not a path a pull reads");
-  const response = await githubFetch(settings, `${githubApiUrls(settings).rest}/repos/${repo}/${path}${url.search}`);
-  return new Response(response.body, {
-    status: response.status,
-    headers: { "content-type": response.headers.get("content-type") ?? "application/json" },
-  });
+  return pullAnswer(await githubFetch(settings, `${githubApiUrls(settings).rest}/repos/${repo}/${path}${url.search}`));
 }));
