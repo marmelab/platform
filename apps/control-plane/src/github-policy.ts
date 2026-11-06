@@ -5,8 +5,7 @@ import { Transform } from "node:stream";
 import { type CommitTarget, frameToJson, newPushFrameState } from "./push-frame.ts";
 
 const MAX_HEADER_LINE_BYTES = 64 * 1024;
-const IS_BASE64 = new Uint8Array(256);
-for (const char of "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=") IS_BASE64[char.charCodeAt(0)] = 1;
+const BASE64_RE = /^[A-Za-z0-9+/=]*$/;
 
 /**
  * Writes the body of the createCommitOnBranch request from a session's push, as it flows. Frames, one per line, in
@@ -32,32 +31,28 @@ export function commitRequestBody(target: CommitTarget) {
         try {
           let pos = 0;
           while (pos < chunk.length) {
+            const newlineIndex = chunk.indexOf(0x0a, pos);
+            const end = newlineIndex < 0 ? chunk.length : newlineIndex;
             if (state.readingContents) {
-              let end = pos;
-              while (end < chunk.length && chunk[end] !== 0x0a) {
-                if (!IS_BASE64[chunk[end]!]) throw new Error("add: the contents must be base64");
-                end++;
-              }
-              if (end > pos) output.push(chunk.subarray(pos, end));
-              if (end < chunk.length) {
+              if (!BASE64_RE.test(chunk.toString("latin1", pos, end))) throw new Error("add: the contents must be base64");
+              output.push(chunk.subarray(pos, end));
+              if (newlineIndex >= 0) {
                 output.push(`"}`);
                 state.readingContents = false;
-                end++;
               }
-              pos = end;
             } else {
-              const newline = chunk.indexOf(0x0a, pos);
-              const end = newline < 0 ? chunk.length : newline;
               headerLineBytes += end - pos;
               if (headerLineBytes > MAX_HEADER_LINE_BYTES) throw new Error("frame line too long");
               headerLine.push(chunk.subarray(pos, end));
-              if (newline < 0) break;
-              const text = Buffer.concat(headerLine).toString("utf8");
-              headerLine = [];
-              headerLineBytes = 0;
-              output.push(frameToJson(text, state, target));
-              pos = newline + 1;
+              if (newlineIndex >= 0) {
+                const text = Buffer.concat(headerLine).toString("utf8");
+                headerLine = [];
+                headerLineBytes = 0;
+                output.push(frameToJson(text, state, target));
+              }
             }
+            if (newlineIndex < 0) break;
+            pos = newlineIndex + 1;
           }
         } catch (error) {
           return callback(error as Error);

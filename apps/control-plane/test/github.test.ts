@@ -1,71 +1,130 @@
-// Unit tests of the code relay of web sessions (src/github-policy.ts, src/push-frame.ts): the push stream that becomes
-// the GraphQL request, the paths a pull may read, the "behind" answer. The GitHub calls themselves are checked by hand
-// (TECH_DEBT PLG-9).
+// Unit tests of src/github-policy.ts: the push stream that becomes the GraphQL request (the JSON of each frame is
+// tested in test/push-frame.test.ts), the paths a pull may read, the "behind" answer. The GitHub calls themselves are
+// checked by hand (TECH_DEBT PLG-9).
 import assert from "node:assert/strict";
+import { once } from "node:events";
 import { Readable } from "node:stream";
 import { text } from "node:stream/consumers";
 import { test } from "node:test";
-import { isBehind, commitRequestBody, pullPathAllowed } from "../src/github-policy.ts";
+import { commitRequestBody, isBehind, pullPathAllowed } from "../src/github-policy.ts";
 
 const OID = "a".repeat(40);
-const target = { repo: "acme/todo", branch: "main", coAuthor: { name: "Dana <x>\nEvil", email: "dana@example.com" } };
+const TARGET = { repo: "acme/todo", branch: "main", coAuthor: { name: "Dana", email: "dana@example.com" } };
+const HEAD = `headline "Add todos"\nexpected ${OID}\n`;
+const MAX_HEADER_LINE_BYTES = 64 * 1024;
 
-/** Feeds `input` to commitRequestBody in 3-byte chunks, so frames split mid-line and mid-contents. */
-async function requestBodyOf(input: string) {
+/** `input` cut in chunks of `size` bytes. */
+function chunked(input: string | Buffer, size: number) {
   const bytes = Buffer.from(input);
-  const chunks = Array.from({ length: Math.ceil(bytes.length / 3) }, (_, i) => bytes.subarray(i * 3, i * 3 + 3));
-  return text(Readable.from(chunks).pipe(commitRequestBody(target)));
+  return Array.from({ length: Math.ceil(bytes.length / size) }, (_, i) => bytes.subarray(i * size, (i + 1) * size));
 }
-const refuses = (input: string, message: RegExp) =>
-  assert.rejects(
-    () => new Promise((resolve, reject) => {
-      const frames = commitRequestBody(target);
-      frames.on("error", reject).on("data", () => {}).on("end", resolve);
-      Readable.from([Buffer.from(input)]).pipe(frames);
-    }),
-    message,
-  );
+/** The request commitRequestBody writes from the push `chunks`. */
+async function requestOf(chunks: (string | Buffer)[]) {
+  const body = commitRequestBody(TARGET);
+  const output = await text(Readable.from(chunks.map((chunk) => Buffer.from(chunk))).pipe(body));
+  return { output, input: JSON.parse(output).variables.input, counts: body.counts };
+}
+const refuses = (chunks: (string | Buffer)[], message: RegExp) => assert.rejects(requestOf(chunks), message);
+const contentsOf = async (chunks: (string | Buffer)[]) => (await requestOf(chunks)).input.fileChanges.additions[0].contents;
 
-test("the push becomes a createCommitOnBranch on the app's repository, with the member as co-author", async () => {
-  const output = await requestBodyOf(
-    `headline ${JSON.stringify("Add todos")}\nbody ${JSON.stringify("détails")}\nexpected ${OID}\n` +
-      `delete "README.md"\nadd "src/a.ts"\n${Buffer.from("a").toString("base64")}\nadd "empty"\n\n`,
-  );
-  const request = JSON.parse(output);
-  assert.match(request.query, /^mutation\(\$input: CreateCommitOnBranchInput!\) \{ createCommitOnBranch/);
-  assert.deepEqual(Object.keys(request), ["query", "variables"]);
-  assert.deepEqual(request.variables.input, {
+test("the frames become the request, each file's contents copied as it comes", async () => {
+  const binary = Buffer.from(Array.from({ length: 256 }, (_, i) => i)).toString("base64");
+  const { output, input, counts } = await requestOf([
+    `headline "Add todos 🎉"\nbody "Détails"\nexpected ${OID}\ndelete "README.md"\ndelete "old.ts"\n` +
+      `add "logo.bin"\n${binary}\nadd "empty"\n\nadd "src/é.ts"\nYQ==\n`,
+  ]);
+  assert.deepEqual(Object.keys(JSON.parse(output)), ["query", "variables"]);
+  assert.deepEqual(input, {
     branch: { repositoryNameWithOwner: "acme/todo", branchName: "main" },
     expectedHeadOid: OID,
-    message: { headline: "Add todos", body: "détails\n\nCo-authored-by: Dana xEvil <dana@example.com>" },
+    message: { headline: "Add todos 🎉", body: "Détails\n\nCo-authored-by: Dana <dana@example.com>" },
     fileChanges: {
-      deletions: [{ path: "README.md" }],
-      additions: [{ path: "src/a.ts", contents: "YQ==" }, { path: "empty", contents: "" }],
+      deletions: [{ path: "README.md" }, { path: "old.ts" }],
+      additions: [{ path: "logo.bin", contents: binary }, { path: "empty", contents: "" }, { path: "src/é.ts", contents: "YQ==" }],
     },
   });
+  assert.deepEqual(counts, { deleted: 2, added: 3 });
 });
 
-test("no body, no deletion, no addition: still a complete request", async () => {
-  const request = JSON.parse(await requestBodyOf(`headline "x"\nexpected ${OID}\n`));
-  assert.equal(request.variables.input.message.body, "Co-authored-by: Dana xEvil <dana@example.com>");
-  assert.deepEqual(request.variables.input.fileChanges, { deletions: [], additions: [] });
+test("the request is the same however the push is cut into chunks", async () => {
+  const push = Buffer.from(`headline "🎉 é"\nbody "b"\nexpected ${OID}\ndelete "d"\nadd "a"\nYWJj\nadd "e"\n\nadd "f"\nZGVm\n`);
+  const { output } = await requestOf([push]);
+  for (let cut = 1; cut < push.length; cut++) {
+    assert.equal((await requestOf([push.subarray(0, cut), push.subarray(cut)])).output, output, `cut at byte ${cut}`);
+  }
+  assert.equal((await requestOf(chunked(push, 1))).output, output);
+  assert.equal((await requestOf(["", push, ""])).output, output);
 });
 
-test("contents cannot break out of their JSON string, nor frames reach the query or the repository", async () => {
-  await refuses(`headline "x"\nexpected ${OID}\nadd "a"\nYQ"}],"x":1\n`, /must be base64/);
-  await refuses(`headline "x"\nexpected ${OID}\nadd "a"\nYQ\\u0022\n`, /must be base64/);
-  await refuses(`headline "x"\nexpected ${OID}\nadd "a", "repositoryNameWithOwner": "acme/other"\n\n`, /JSON string/);
-  await refuses(`headline {"a":1}\nexpected ${OID}\n`, /JSON string/);
-  await refuses(`headline "x"\nexpected ${OID}"\n`, /commit sha/);
-  await refuses(`headline "x"\nexpected ${OID}\nquery "mutation { deleteRepository }"\n`, /unexpected frame/);
+test("contents go out as they come, before their line ends", async () => {
+  const body = commitRequestBody(TARGET);
+  let output = "";
+  body.on("data", (chunk: Buffer) => (output += chunk));
+  body.write(`${HEAD}add "a"\nYWJj`);
+  await new Promise(setImmediate);
+  assert.match(output, /"contents":"YWJj$/);
+  body.end("ZGVm\n");
+  await once(body, "end");
+  assert.equal(JSON.parse(output).variables.input.fileChanges.additions[0].contents, "YWJjZGVm");
 });
 
-test("frames out of order, unterminated or oversized are refused", async () => {
-  await refuses(`expected ${OID}\n`, /unexpected frame/);
-  await refuses(`headline "x"\nexpected ${OID}\nadd "a"\n\ndelete "b"\n`, /unexpected frame/);
-  await refuses(`headline "x"\n`, /incomplete push/);
-  await refuses(`headline "x"\nexpected ${OID}\nadd "a"\nYQ==`, /incomplete push/);
-  await refuses(`headline "${"x".repeat(70_000)}"\n`, /too long/);
+test("a file's contents have no size cap", async () => {
+  const contents = "QUJD".repeat(256 * 1024);
+  assert.equal(await contentsOf(chunked(`${HEAD}add "big"\n${contents}\n`, 64 * 1024)), contents);
+});
+
+test("a frame line holds at most 64 KiB, counted in bytes, however it arrives", async () => {
+  const deleteLine = (bytes: number) => `delete "${"x".repeat(bytes - 9)}"\n`; // 9: `delete "` and `"`
+  for (const chunkSize of [1024 * 1024, 1000]) {
+    const { input } = await requestOf(chunked(`${HEAD}${deleteLine(MAX_HEADER_LINE_BYTES)}`, chunkSize));
+    assert.equal(input.fileChanges.deletions[0].path.length, MAX_HEADER_LINE_BYTES - 9);
+    await refuses(chunked(`${HEAD}${deleteLine(MAX_HEADER_LINE_BYTES + 1)}`, chunkSize), /frame line too long/);
+  }
+  await refuses([`${HEAD}delete "${"€".repeat(22_000)}"\n`], /frame line too long/);
+  const { input } = await requestOf([HEAD, deleteLine(60_000), deleteLine(60_000), deleteLine(60_000)]);
+  assert.equal(input.fileChanges.deletions.length, 3);
+});
+
+test("an oversized frame line is refused before it ends", async () => {
+  const body = commitRequestBody(TARGET);
+  body.resume();
+  body.write(`${HEAD}delete "${"x".repeat(MAX_HEADER_LINE_BYTES)}`);
+  const [error] = await once(body, "error");
+  assert.match(error.message, /frame line too long/);
+});
+
+test("contents hold only base64 characters, so they never leave their JSON string", async () => {
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=";
+  assert.equal(await contentsOf([`${HEAD}add "a"\n${alphabet}\n`]), alphabet);
+  for (const character of ['"', "\\", " ", "\t", "\r", "\0", "-", "_", ".", "%", "}", "é", " "]) {
+    await refuses([`${HEAD}add "a"\nYQ${character}==\n`], /must be base64/);
+  }
+  await refuses([Buffer.concat([Buffer.from(`${HEAD}add "a"\nYQ`), Buffer.from([0xff]), Buffer.from("==\n")])], /must be base64/);
+  await refuses([`${HEAD}add "a"\nYQ==\r\n`], /must be base64/);
+  await refuses([`${HEAD}add "a"\nYQ"}],"x":1\n`], /must be base64/);
+  await refuses(chunked(`${HEAD}add "a"\n${"YQ==".repeat(100)}"\n`, 7), /must be base64/);
+});
+
+test("a push ends with a newline, after the expected head at least", async () => {
+  for (const push of ["", `headline "x"\n`, `headline "x"\nbody "y"\n`, `headline "x"\nexpected ${OID}`, `${HEAD}delete "a"`, `${HEAD}add "a"\n`, `${HEAD}add "a"\nYQ==`]) {
+    await refuses([push], /incomplete push/);
+  }
+  assert.deepEqual((await requestOf([HEAD])).input.fileChanges, { deletions: [], additions: [] });
+  assert.deepEqual((await requestOf([`${HEAD}delete "a"\n`])).input.fileChanges, { deletions: [{ path: "a" }], additions: [] });
+  assert.deepEqual((await requestOf([`${HEAD}add "a"\nYQ==\n`])).input.fileChanges, { deletions: [], additions: [{ path: "a", contents: "YQ==" }] });
+});
+
+test("a blank line is the empty contents of an added file, never a frame", async () => {
+  assert.equal(await contentsOf([`${HEAD}add "a"\n\n`]), "");
+  await refuses([`\n${HEAD}`], /unexpected frame ""/);
+  await refuses([`${HEAD}\n`], /unexpected frame ""/);
+  await refuses([`${HEAD}add "a"\nYQ==\n\n`], /unexpected frame ""/);
+});
+
+test("a frame out of order, unknown or not a JSON string fails the push", async () => {
+  await refuses([`expected ${OID}\n`], /unexpected frame/);
+  await refuses([`${HEAD}query "mutation { deleteRepository }"\n`], /unexpected frame/);
+  await refuses([`${HEAD}add "a", "repositoryNameWithOwner": "acme/other"\n\n`], /JSON string/);
 });
 
 test("a pull reads only the app's branch head, and commits, trees and blobs by sha", () => {

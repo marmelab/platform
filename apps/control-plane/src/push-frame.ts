@@ -45,9 +45,9 @@ function jsonString(value: string, frame: string) {
 
 /** The JSON that `text`, one header frame without its newline, adds to the request body. Throws when out of order. */
 export function frameToJson(text: string, state: PushFrameState, target: CommitTarget) {
-  const space = text.indexOf(" ");
-  const key = space < 0 ? text : text.slice(0, space);
-  const value = space < 0 ? "" : text.slice(space + 1);
+  const spaceIndex = text.indexOf(" ");
+  const key = spaceIndex < 0 ? text : text.slice(0, spaceIndex);
+  const value = spaceIndex < 0 ? "" : text.slice(spaceIndex + 1);
   if (key === "headline" && state.stage === "headline") {
     state.headline = jsonString(value, key);
     state.stage = "body";
@@ -61,8 +61,8 @@ export function frameToJson(text: string, state: PushFrameState, target: CommitT
   if (key === "expected" && (state.stage === "body" || state.stage === "expected")) {
     if (!OID_RE.test(value)) throw new Error("expected: a commit sha");
     state.stage = "deletions";
-    const { name, email } = target.coAuthor;
-    const trailer = `Co-authored-by: ${cleanIdent(name || email)} <${cleanIdent(email)}>`;
+    const email = cleanIdent(target.coAuthor.email);
+    const trailer = `Co-authored-by: ${cleanIdent(target.coAuthor.name ?? "") || email} <${email}>`;
     const branch = { repositoryNameWithOwner: target.repo, branchName: target.branch };
     const message = { headline: state.headline, body: state.body ? `${state.body}\n\n${trailer}` : trailer };
     return `{"query":${JSON.stringify(CREATE_COMMIT_MUTATION)},"variables":{"input":{"branch":${JSON.stringify(branch)},` +
