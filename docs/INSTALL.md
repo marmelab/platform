@@ -200,15 +200,89 @@ Deployments go through the company's GitHub Actions (ARCHITECTURE §5.1 and §6.
    (installer option `--github-org`). Pin a branch or a tag the security team controls: the platform accepts a
    deployment only from that exact `job_workflow_ref`, which proves that the company checks ran.
 5. **Set the organization variable** `PLATFORM_URL=https://api.<domain>` (Settings > Secrets and variables > Actions >
-   Variables). It is also the OIDC audience the platform expects.
+   Variables), for app repositories set up by an older `deploy` skill: the caller workflow it writes now names the
+   platform's URL itself (`platform-url`). It is also the OIDC audience the platform expects.
 6. **Branch protection** (optional): every push to an app's default branch deploys, and the `deploy` skill does not
    protect the branches it creates. To require pull requests and reviews before a deployment, use organization
    rulesets on the default branch of every repository; the skill then opens a PR instead of pushing.
-7. **Builders** install the plugin the platform serves, with the command of their welcome email:
-   `claude plugin install platform --marketplace https://api.<domain>/plugin/marketplace.json`. Nothing to configure:
-   the served plugin carries the platform's URL. They also have the GitHub CLI logged in. At the first use, Claude Code
-   asks them to sign in (`/mcp`, then Authenticate): the browser opens on the platform's login page, then a consent
-   page. Admins who prefer a PAT export `PLATFORM_TOKEN` before starting Claude Code.
+7. **Builders** use either:
+   - Claude Code on the web (below). Nothing to install. The usual choice for non-developers.
+   - Claude Code on their computer. They need Node.js 22.18+ and the GitHub CLI logged in. They install the plugin
+     with the command from their welcome email:
+     `claude plugin install platform --marketplace https://api.<domain>/plugin/marketplace.json`. Nothing to
+     configure. At first use, they sign in (`/mcp`, then Authenticate).
+
+   Admins can skip the browser sign-in with a personal access token (PAT):
+   - The installer saves the first admin's PAT in `deploy/.env.local` (`PLATFORM_TOKEN`).
+   - Export it as `PLATFORM_TOKEN` before starting Claude Code.
+   - Details: [plugin/README.md](../plugin/README.md).
+
+### Claude Code on the web
+
+Builders build, try and deploy apps from [claude.ai/code](https://claude.ai/code). They install nothing
+(USER_JOURNEYS B1).
+
+**Prerequisites**
+
+- claude.ai seats that include Claude Code.
+- The platform is reachable from the Internet. claude.ai calls it from `160.79.104.0/21`.
+- Each builder has a GitHub account.
+- Builders can create repositories in the GitHub organization. A session cannot: at an app's first deployment, the
+  builder creates it from a prefilled link.
+- The Claude GitHub App can push to these repositories. If the organization restricts GitHub Apps, an owner approves
+  each request, or installs the app once.
+
+**Team or Enterprise setup**
+
+Done once, by the platform admin. Steps 2 and 3 need the Owner role in claude.ai. If the admin is not an Owner, an
+Owner does them.
+
+1. **On the platform host**: create the connector's OAuth client. On the AWS module's VM, open a session first
+   ([infra/aws/README.md](../infra/aws/README.md#updating-the-platform), step 1).
+
+   ```bash
+   docker exec plat-control-plane node src/cli.ts claude-connector
+   ```
+
+   - It prints a client ID and a secret.
+   - The secret is shown only once.
+2. **In claude.ai**: add the connector. In Organization settings > Connectors, add a custom connector:
+   - Name: `Platform`
+   - URL: `https://api.<domain>/mcp`
+   - Advanced settings (or "Use your own OAuth client"): the client ID and secret.
+3. **In claude.ai**: create the environment. In Organization settings > Claude Code, create a shared cloud environment:
+   - Name: `Platform`
+   - Network access: Custom. Keep the default list. Add `api.<domain>` and `*.<domain>`.
+   - Setup script: `curl -fsSL https://api.<domain>/plugin/cloud-setup.sh | bash`
+   - No variable, no secret.
+4. **On the platform host**: turn on the platform's links to Claude Code on the web.
+
+   ```bash
+   docker exec plat-control-plane node src/cli.ts set-setting claude_web_environment Platform
+   ```
+
+   - The value is the environment's name from step 3.
+   - The welcome email then links to a first session, and `get_app` to a session on each deployed app.
+   - These links open the session in that environment.
+   - Without this setting, the platform shows no such link.
+5. **Each builder**, once: Customize > Connectors > Platform > Connect. Then sign in to the platform and accept.
+
+**Pro or Max setup**
+
+- The admin does step 4 only.
+- Each builder opens the Connect Claude page, `https://<domain>/_platform/claude`. Their welcome email links to it.
+- The page gives them their own connector client.
+- It guides them through steps 2, 3 and 5 in their own account.
+
+**Good to know**
+
+- The setup script installs the plugin, the Supabase CLI and `frpc`, the preview tunnel's client (ARCHITECTURE §3.10).
+- claude.ai caches the setup for about a week. Edit the environment to apply a platform upgrade at once.
+- Only the platform's connector clients can sign in through claude.ai. Their codes are useless without the secret.
+- claude.ai stores the builders' refresh tokens (TECH_DEBT).
+- To replace the secret, run `claude-connector --new-secret`. The old secret stops working.
+- claude.ai cannot update a connector's secret. Remove the connector in claude.ai and add it again. Builders then
+  connect again.
 
 GitHub Enterprise Server: install with `--oidc-issuer https://<host>/_services/token`; the control plane must reach
 that host. The `$/` action reference is not available there: in the copy, replace `uses: $/plugin/deploy-cli` with

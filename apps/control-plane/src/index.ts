@@ -12,6 +12,7 @@ import { recordVersion } from "./version.ts";
 import { appMailRoutes } from "./app-auth.ts";
 import { app } from "./server.ts";
 import { studioInternalRoutes } from "./studio/routes.ts";
+import { previewRoutes } from "./previews.ts";
 import { tlsRoutes } from "./tls.ts";
 
 await initCluster();
@@ -30,11 +31,11 @@ startBackupScheduler();
 startLintSweeper(config.lintSweepIntervalHours);
 startSchemaRelayReconciler();
 serve({ fetch: app.fetch, port: config.port }, (info) => console.log(`control plane listening on :${info.port}`));
-// internal listener (never routed publicly): Studio's forward auth and project configs, Caddy's TLS `ask` endpoint,
-// the apps' email templates (fetched by their GoTrue)
+// internal listener, never routed publicly
 const internal = new Hono();
 internal.route("/", studioInternalRoutes);
 internal.route("/", tlsRoutes);
+internal.route("/", previewRoutes);
 internal.route("/", appMailRoutes);
 serve({ fetch: internal.fetch, port: config.internalPort }, (info) =>
   console.log(`internal listener on :${info.port}`));
