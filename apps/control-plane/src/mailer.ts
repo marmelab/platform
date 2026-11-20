@@ -8,6 +8,8 @@ export interface PlatformMail {
   to: string[];
   subject: string;
   text: string;
+  /** With `text` as the alternative for clients without HTML. */
+  html?: string;
 }
 
 function transport(smtp: SmtpSettings) {
@@ -34,6 +36,7 @@ export async function sendPlatformMail(mail: PlatformMail, smtp?: SmtpSettings |
       to: mail.to,
       subject: mail.subject,
       text: mail.text,
+      html: mail.html,
     });
   } finally {
     mailer.close();

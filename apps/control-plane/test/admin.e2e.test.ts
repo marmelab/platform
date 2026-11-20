@@ -146,6 +146,21 @@ describe("admin API e2e", () => {
     }
   });
 
+  test("1b. app builders only once Claude Code on the web is set up (local installs: CLAUDE_WEB_ENVIRONMENT)", async () => {
+    const key = "claude_web_environment";
+    const previous = ok(await request("GET", "/settings")).overrides.find((o: { key: string }) => o.key === key)?.value as string | undefined;
+    try {
+      cli(["set-setting", key, ""]);
+      const refused = await request("POST", "/users", { body: { email: BUILDER, role: "developer" } });
+      assert.equal(refused.status, 409);
+      assert.match(refused.body.message, /set up Claude Code on the web/);
+      assert.equal(psql(`select count(*) from users where email = '${BUILDER}'`), "0");
+    } finally {
+      if (previous !== undefined) cli(["set-setting", key, previous]);
+      else cli(["unset-setting", key]);
+    }
+  });
+
   test("2. anonymous and non-admin callers are refused", async () => {
     assert.equal((await request("GET", "/apps", { token: null })).status, 401);
     assert.equal((await request("GET", "/apps", { token: "plat_not-a-token" })).status, 401);
@@ -154,18 +169,22 @@ describe("admin API e2e", () => {
     assert.equal(created.email, BUILDER);
     assert.equal(created.has_password, true);
     assert.equal(created.active, true);
-    // M6: a welcome email through the platform SMTP, without the password
+    // M6: a welcome email through the platform SMTP, without the password. Either claude.ai setup (whether the OAuth
+    // suite created the organization's connector on this stack): what both emails say.
     assert.equal(created.welcome_email_sent, true);
     const welcome = await waitForMail(`to:"${BUILDER}" subject:"Your account"`);
     assert.equal(welcome.From.Address, "noreply@platform.localhost");
-    assert.match(welcome.Text, /Studio: http:\/\/localhost:8100 /);
-    assert.match(welcome.Text, /claude plugin install platform --marketplace http:\/\/api\.localhost:8100\/plugin\/marketplace\.json\r?\n/);
+    assert.match(welcome.Text, /^\d\. Open Studio: http:\/\/localhost:8100\r?$/m);
+    assert.match(welcome.Text, /^\d\. Start building: https:\/\/claude\.ai\/code\?environment=Platform&/m);
+    assert.match(welcome.Text, /^ +claude plugin install platform --marketplace http:\/\/api\.localhost:8100\/plugin\/marketplace\.json\r?$/m);
+    assert.match(welcome.HTML, /<a href="http:\/\/localhost:8100" [^>]*>Open Studio<\/a>/);
+    assert.match(welcome.HTML, />Start building<\/a>/);
     // the plugin it points to (src/plugin.ts): the zip matches the marketplace's pin
     const marketplace = await (await fetch("http://api.localhost:8100/plugin/marketplace.json")).json();
     const zip = await fetch(marketplace.plugins[0].source.url);
     assert.equal(zip.headers.get("content-type"), "application/zip");
     assert.equal(createHash("sha256").update(Buffer.from(await zip.arrayBuffer())).digest("hex"), marketplace.plugins[0].source.sha256);
-    assert.ok(!welcome.Text.includes(PASSWORD), "no password in the email");
+    assert.ok(!welcome.Text.includes(PASSWORD) && !welcome.HTML.includes(PASSWORD), "no password in the email");
     const token = ok(await request("POST", "/tokens", { body: { user_id: created.id, name: "e2e" } }), 201);
     assert.match(token.token, /^plat_/);
     users.builder = { id: created.id, token: token.token };

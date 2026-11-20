@@ -199,6 +199,8 @@ async function connectorSetup(user: User, issued?: { client_id: string; client_s
     hosts: [config.apiHost, `*.${config.appsDomain}`],
     setupScript: `curl -fsSL ${apiUrl()}/plugin/cloud-setup.sh | bash`,
     environment: claudeWebEnvironment || "Platform",
+    // a client just issued shows its secret, whatever the setup
+    organization: !issued && (await connectorClientId(null)) !== null,
   };
 }
 

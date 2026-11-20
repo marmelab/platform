@@ -251,7 +251,7 @@ The reusable workflow lives in the company's **internal copy of this repository*
 - It starts with no repository and no GitHub sign-in, and its network cannot create a GitHub repository: the code stays in the session until the first deployment, when the builder creates the app's repository from a prefilled link and lets the Claude GitHub App push to it (that repository only); the `deploy` skill then pushes, links the repository and follows the release through `get_app`, `gh` not reaching the run. Later sessions open on that repository.
 - It has no local preview: the preview tunnel (§3.10).
 
-`get_app` returns `claude_code_url`, a link to a new session on the app's repository (`claude_web_environment` setting), and the welcome email a link to a first session with no repository.
+`get_app` returns `claude_code_url`, a link to a new session on the app's repository (`claude_web_environment` setting), and the welcome email a link to a first session with no repository. Until that setting is set, the admin API refuses to create app builders (accounts created at a first company SSO sign-in get no welcome email and are not refused). The platform has one claude.ai setup, told by the organization's connector client: with it, the welcome email and the Connect Claude page give the Team or Enterprise steps; without it, the Pro or Max ones (TECH_DEBT PLG-11).
 
 ### 6.1 `deploy` skill (builder)
 

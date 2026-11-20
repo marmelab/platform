@@ -544,12 +544,22 @@ describe("OAuth e2e (browser sign-in for Claude Code)", () => {
     assert.ok((await connections()).some((t) => t.client_name === "Claude (claude.ai connector)" && t.status === "active"));
   });
 
-  test("11. a builder's own connector (claude.ai Pro or Max): from the Connect Claude page, it signs in that builder only", async () => {
+  test("11. a builder's own connector (claude.ai Pro or Max): from the Connect Claude page, it signs in that builder only", async (t) => {
     const page = `${STUDIO}/_platform/claude`;
     assert.equal(location(await fetch(page, { redirect: "manual" })), `${STUDIO}/_platform/login?next=%2F_platform%2Fclaude`);
     const own = new Browser();
     await own.post(`${STUDIO}/_platform/login`, { email: BUILDER, password: PASSWORD, next: "/_platform/claude" });
-    assert.match(await (await own.get(page)).text(), /Create my client/);
+    // the page shows the setup in place: the organization's connector of test 10, until it is set aside
+    const organization = await (await own.get(page)).text();
+    assert.match(organization, /Your organization's <strong>Platform<\/strong> connector is ready/);
+    assert.ok(!organization.includes("Create my client"));
+    const orgClient = psql("with d as (delete from connector_clients where user_id is null returning client_id) select client_id from d");
+    t.after(() => {
+      if (orgClient) psql(`insert into connector_clients (client_id, user_id) values ('${orgClient}', null)`);
+    });
+    const personal = await (await own.get(page)).text();
+    assert.match(personal, /Create my client/);
+    assert.ok(!personal.includes("connector is ready"));
     // the form is protected like the login form
     assert.equal((await own.post(page, {}, "http://evil.example")).status, 403);
     const issue = async () => {
