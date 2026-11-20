@@ -1,6 +1,6 @@
 // Never a password nor a token in the welcome email: the admin hands them over. HTML, links shown by their label, with
 // a plain-text alternative. One action per step, only the steps of this platform's claude.ai setup.
-import { BUTTON_STYLE, escape, htmlMail } from "./app-mail.ts";
+import { BUTTON_STYLE, escape, htmlMail } from "./mail-html.ts";
 
 export interface WelcomeMail {
   role: "admin" | "developer";
@@ -10,7 +10,7 @@ export interface WelcomeMail {
   /** Company SSO is on; `passwordToo`: this account may also sign in with a password. null: password only. */
   sso: { passwordToo: boolean } | null;
   /**
-   * Claude Code on the web; null: not set up (admins only, builders cannot be created before). `organization`: the
+   * Claude Code on the web; null: not set up (admins only: the admin API refuses builders before). `organization`: the
    * claude.ai organization's connector (Team, Enterprise); otherwise each builder adds their own (Pro, Max).
    */
   claude: { organization: boolean; start: string; connectPage: string } | null;
@@ -19,6 +19,10 @@ export interface WelcomeMail {
 type Step = string | { link: string; url: string } | { button: string; url: string } | { text: string; code: string };
 type Block = { p: string } | { ol: Step[] } | { ul: Step[] };
 interface Section { title?: string; blocks: Block[] }
+
+/** Connecting the claude.ai organization's connector, also on the Connect Claude page (studio/pages.ts). */
+export const organizationConnectorSteps = (signIn: string) =>
+  ["On claude.ai, open Customize > Connectors.", "Choose Platform.", "Click Connect.", signIn, "Click Allow."];
 
 const LINK_STYLE = "color:#2563eb";
 const CODE_STYLE = "display:block;margin:8px 0;padding:8px 12px;background:#f4f4f5;border-radius:6px;" +
@@ -79,7 +83,7 @@ export function welcomeMail(m: WelcomeMail) {
       title: "Build your first app",
       blocks: [{
         ol: m.claude.organization
-          ? ["On claude.ai, open Customize > Connectors.", "Choose Platform.", "Click Connect.", signIn, "Click Allow.", ...start]
+          ? [...organizationConnectorSteps(signIn), ...start]
           : [{ link: "Open the Connect Claude page", url: m.claude.connectPage }, signIn, "Follow the steps on the page.", ...start],
       }],
     });

@@ -117,7 +117,7 @@ adminApi.post("/users", async (c) => {
     password: z.union([password, z.literal("")]).nullish(),
   }));
   const email = input.email.toLowerCase();
-  // builders start from Claude Code on the web: their welcome email would lead nowhere before it is set up
+  // product choice (CLAUDE.md): builders start from Claude Code on the web, where their welcome email leads them
   if (input.role === "developer" && !(await getSettings()).claudeWebEnvironment) {
     throw new HttpError(409, "set up Claude Code on the web before adding app builders (INSTALL.md §7, claude_web_environment setting)");
   }

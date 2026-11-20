@@ -1,5 +1,6 @@
 import { isLoopbackRedirect } from "../oauth-policy.ts";
 import { CONNECTOR_PATH, CONSENT_PATH as OAUTH_CONSENT_PATH, PREVIEW_PATH } from "../platform-auth.ts";
+import { organizationConnectorSteps } from "../welcome-mail.ts";
 
 const escape = (value: string) =>
   value.replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[ch]!);
@@ -158,11 +159,7 @@ ${s.organization ? organizationConnector : ownConnector(s)}
 
 const organizationConnector = `<p>Your organization's <strong>Platform</strong> connector is ready:</p>
 <ol>
-  <li>On claude.ai, open Customize &gt; Connectors.</li>
-  <li>Choose Platform.</li>
-  <li>Click Connect.</li>
-  <li>Sign in with your platform account.</li>
-  <li>Click Allow.</li>
+${organizationConnectorSteps("Sign in with your platform account.").map((step) => `  <li>${escape(step)}</li>`).join("\n")}
 </ol>`;
 
 function ownConnector(s: ConnectorSetup) {

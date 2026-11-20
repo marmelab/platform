@@ -2,6 +2,7 @@
 // GoTrue's built-in ones are two generic lines that name no app, which spam filters flag; these are served to it by
 // the internal listener (app-auth.ts, GOTRUE_MAILER_TEMPLATES_* in auth-policy.ts). GoTrue renders them as Go templates
 // ({{ .ConfirmationURL }}, {{ .Email }}, {{ .NewEmail }}) and sends HTML only (no text part). Pure: unit tested.
+import { BUTTON_STYLE, escape, htmlMail } from "./mail-html.ts";
 
 export const APP_MAIL_TYPES = ["invite", "confirmation", "recovery", "magic_link", "email_change"] as const;
 export type AppMailType = (typeof APP_MAIL_TYPES)[number];
@@ -44,28 +45,6 @@ const MAILS: Record<AppMailType, { subject: string; intro: (app: string) => stri
     ignore: "If you did not ask for this change, ignore this email and tell the app's team.",
   },
 };
-
-/** HTML-escaped, braces included: GoTrue parses the result as a Go template. */
-export const escape = (value: string) => value.replace(/[&<>"'{}]/g, (c) => `&#${c.charCodeAt(0)};`);
-
-export const BUTTON_STYLE = "display:inline-block;padding:12px 24px;background:#2563eb;color:#ffffff;text-decoration:none;" +
-  "border-radius:6px;font-weight:bold";
-
-/** The page of an HTML email, shared with the platform's own emails (welcome-mail.ts). `title` and `body` are HTML. */
-export const htmlMail = (title: string, body: string) => `<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${title}</title>
-</head>
-<body style="margin:0;padding:24px;background:#f4f4f5;font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.5;color:#18181b">
-<div style="max-width:560px;margin:0 auto;padding:24px 32px;background:#ffffff;border-radius:8px">
-${body}
-</div>
-</body>
-</html>
-`;
 
 /**
  * GoTrue parses the subject as an html/template and sends its text as is: `{` as a Go string literal; angle brackets
