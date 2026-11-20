@@ -46,7 +46,26 @@ const MAILS: Record<AppMailType, { subject: string; intro: (app: string) => stri
 };
 
 /** HTML-escaped, braces included: GoTrue parses the result as a Go template. */
-const escape = (value: string) => value.replace(/[&<>"'{}]/g, (c) => `&#${c.charCodeAt(0)};`);
+export const escape = (value: string) => value.replace(/[&<>"'{}]/g, (c) => `&#${c.charCodeAt(0)};`);
+
+export const BUTTON_STYLE = "display:inline-block;padding:12px 24px;background:#2563eb;color:#ffffff;text-decoration:none;" +
+  "border-radius:6px;font-weight:bold";
+
+/** The page of an HTML email, shared with the platform's own emails (welcome-mail.ts). `title` and `body` are HTML. */
+export const htmlMail = (title: string, body: string) => `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${title}</title>
+</head>
+<body style="margin:0;padding:24px;background:#f4f4f5;font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.5;color:#18181b">
+<div style="max-width:560px;margin:0 auto;padding:24px 32px;background:#ffffff;border-radius:8px">
+${body}
+</div>
+</body>
+</html>
+`;
 
 /**
  * GoTrue parses the subject as an html/template and sends its text as is: `{` as a Go string literal; angle brackets
@@ -62,23 +81,10 @@ export const appMailSubject = (type: AppMailType, appName: string) =>
 export function appMailTemplate(type: AppMailType, app: AppMailApp) {
   const mail = MAILS[type];
   const name = escape(app.name);
-  return `<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${mail.subject} ${name}</title>
-</head>
-<body style="margin:0;padding:24px;background:#f4f4f5;font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.5;color:#18181b">
-<div style="max-width:560px;margin:0 auto;padding:24px 32px;background:#ffffff;border-radius:8px">
-<p>Hello,</p>
+  return htmlMail(`${mail.subject} ${name}`, `<p>Hello,</p>
 <p>${mail.intro(`<strong>${name}</strong>`)}</p>
-<p style="margin:28px 0"><a href="{{ .ConfirmationURL }}" style="display:inline-block;padding:12px 24px;background:#2563eb;color:#ffffff;text-decoration:none;border-radius:6px;font-weight:bold">${mail.action}</a></p>
+<p style="margin:28px 0"><a href="{{ .ConfirmationURL }}" style="${BUTTON_STYLE}">${mail.action}</a></p>
 <p style="font-size:13px;color:#52525b">If the button does not work, copy this link into your browser:<br><span style="word-break:break-all">{{ .ConfirmationURL }}</span></p>
 <p>${mail.ignore}</p>
-<p style="margin-top:32px;font-size:12px;color:#71717a">This email was sent by ${name} (${escape(app.url)}), an app of your company's app platform.</p>
-</div>
-</body>
-</html>
-`;
+<p style="margin-top:32px;font-size:12px;color:#71717a">This email was sent by ${name} (${escape(app.url)}), an app of your company's app platform.</p>`);
 }

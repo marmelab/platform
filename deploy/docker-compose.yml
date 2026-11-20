@@ -145,6 +145,8 @@ services:
       # Platform settings (apps/control-plane/README.md, "Settings"). DIRECT_DEPLOY: "admins" in production;
       # install.sh writes "everyone" into deploy/.env for local installs.
       DIRECT_DEPLOY: ${DIRECT_DEPLOY:-admins}
+      # install.sh writes "Platform" for local installs; production: the claude_web_environment setting (INSTALL.md §7)
+      CLAUDE_WEB_ENVIRONMENT: ${CLAUDE_WEB_ENVIRONMENT:-}
       CI_ALLOWED_WORKFLOWS: ${CI_ALLOWED_WORKFLOWS:-}
       OIDC_ISSUER: ${OIDC_ISSUER:-https://token.actions.githubusercontent.com}
       OIDC_AUDIENCE: ${OIDC_AUDIENCE:-}

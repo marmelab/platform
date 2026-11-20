@@ -188,7 +188,7 @@ add_secret POOLER_ADMIN_PASSWORD 16
 PRODUCTION_KEYS=(PLATFORM_DOMAIN PUBLIC_SCHEME PUBLIC_PORT TLS_MODE ACME_EMAIL ACME_CA CADDY_HTTP_PUBLISH CADDY_HTTP_PORT
   CADDY_HTTPS_PUBLISH STUDIO_PUBLIC_URL)
 # Values of the local mode (test services and test-only flags), removed by the production mode
-LOCAL_KEYS=(ALLOW_TEST_OIDC_JWKS SSO_TEST_NETWORK SSO_TEST_CA_VOLUME S3_TEST_SECRET_KEY)
+LOCAL_KEYS=(ALLOW_TEST_OIDC_JWKS SSO_TEST_NETWORK SSO_TEST_CA_VOLUME S3_TEST_SECRET_KEY CLAUDE_WEB_ENVIRONMENT)
 
 if [ "$MODE" = local ]; then
   if [ "$PREVIOUS_MODE" = production ]; then
@@ -202,6 +202,9 @@ if [ "$MODE" = local ]; then
   # Local installs: builders may still deploy from their machine with their PAT (the e2e suites, the seed and the
   # deploy skill rely on it). Production installs use DIRECT_DEPLOY=admins (publishing through CI only).
   add_value DIRECT_DEPLOY everyone
+  # Local installs: app builders can only be created once Claude Code on the web is set up (INSTALL.md §7), which a
+  # local stack cannot be (claude.ai does not reach it); the e2e suites create builders. Production: set-setting.
+  add_value CLAUDE_WEB_ENVIRONMENT Platform
   # Local installs only (SEC-10): the CI e2e suite makes the CI API trust its fake OIDC issuer (inline oidc_jwks setting).
   add_value ALLOW_TEST_OIDC_JWKS 1
   # Local installs only (M6): every email goes to the mailpit catcher (http://localhost:8025), started with the "mail"

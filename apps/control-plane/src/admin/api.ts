@@ -44,6 +44,7 @@ import {
 } from "../settings.ts";
 import { syncCompanySso } from "../app-sso.ts";
 import { welcomeMail } from "../welcome-mail.ts";
+import { connectorClientId } from "../oauth.ts";
 import { discover, ssoCallbackUrl, SsoError } from "../sso.ts";
 import { errorResponse, HttpError, includes, listInMemory, type ListParams, listParams, page, truthy } from "./rest.ts";
 
@@ -116,6 +117,10 @@ adminApi.post("/users", async (c) => {
     password: z.union([password, z.literal("")]).nullish(),
   }));
   const email = input.email.toLowerCase();
+  // builders start from Claude Code on the web: their welcome email would lead nowhere before it is set up
+  if (input.role === "developer" && !(await getSettings()).claudeWebEnvironment) {
+    throw new HttpError(409, "set up Claude Code on the web before adding app builders (INSTALL.md §7, claude_web_environment setting)");
+  }
   const created = await one<{ id: string }>(
     `insert into users (email, name, role, active) values ($1, $2, $3, $4)
      on conflict (email) do nothing returning id`,
@@ -141,18 +146,20 @@ adminApi.post("/users", async (c) => {
 async function sendWelcome(email: string, role: "admin" | "developer") {
   const settings = await getSettings();
   const { sso } = settings;
-  const webStart = claudeCodeUrl(settings, null, "Build me an app for the platform that ");
+  const start = claudeCodeUrl(settings, null, "Build me an app for the platform that ");
   return sendPlatformMail({
     to: [email],
     ...welcomeMail({
-      email,
       role,
       apiUrl: apiUrl(),
       studioUrl: studioUrl(),
       adminUrl: adminUrl(),
-      sso: ssoActive(sso) ? { name: sso.name, passwordToo: sso.passwordLogin === "everyone" || role === "admin" } : null,
-      webStart,
-      connectPage: studioUrl(CONNECTOR_PATH),
+      sso: ssoActive(sso) ? { passwordToo: sso.passwordLogin === "everyone" || role === "admin" } : null,
+      // ponytail: one claude.ai setup per platform, told by the organization's connector; a company mixing Team and
+      // personal plans would need a setting
+      claude: start
+        ? { organization: (await connectorClientId(null)) !== null, start, connectPage: studioUrl(CONNECTOR_PATH) }
+        : null,
     }),
   });
 }

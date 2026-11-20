@@ -166,9 +166,10 @@ README, "Settings"): a database setting overrides the environment.
    `PLATFORM_ADMIN_PASSWORD` from `deploy/.env.local`. Keep the PAT for your own Claude Code (admin deployments) or
    revoke it on the Tokens screen.
 3. Optionally configure the company SSO (SSO screen, OpenID Connect): builders then sign in to Studio with it.
-4. Create the builders' accounts (Users). They need no token: Claude Code signs them in through the browser, on the
-   platform's login page (password or company SSO). With SMTP, each new account gets a welcome email. PATs (Tokens:
-   the value is shown once) are for admins, scripts and tests.
+4. Create the builders' accounts (Users), once Claude Code on the web is set up ([§7](#claude-code-on-the-web),
+   step 4): the admin console refuses them before. They need no token: Claude Code signs them in through the browser,
+   on the platform's login page (password or company SSO). With SMTP, each new account gets a welcome email with the
+   steps of this platform's claude.ai setup. PATs (Tokens: the value is shown once) are for admins, scripts and tests.
 5. The dashboard shows the platform version, the apps, the backups and the security linter's alerts.
 
 ## 7. GitHub organization
@@ -264,7 +265,9 @@ Owner does them.
    - The value is the environment's name from step 3.
    - The welcome email then links to a first session, and `get_app` to a session on each deployed app.
    - These links open the session in that environment.
-   - Without this setting, the platform shows no such link.
+   - Without this setting, the platform shows no such link, and the admin console refuses to create app builders.
+   - Local installs set it (`CLAUDE_WEB_ENVIRONMENT=Platform` in `deploy/.env`), so that the e2e suites can create
+     builders.
 5. **Each builder**, once: Customize > Connectors > Platform > Connect. Then sign in to the platform and accept.
 
 **Pro or Max setup**
@@ -273,6 +276,9 @@ Owner does them.
 - Each builder opens the Connect Claude page, `https://<domain>/_platform/claude`. Their welcome email links to it.
 - The page gives them their own connector client.
 - It guides them through steps 2, 3 and 5 in their own account.
+
+The platform tells the two setups apart by the organization's connector client (step 1). With it, the welcome email
+and the Connect Claude page give the Team or Enterprise steps; without it, the Pro or Max ones (TECH_DEBT PLG-11).
 
 **Good to know**
 

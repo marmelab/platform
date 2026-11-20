@@ -112,6 +112,8 @@ export interface ConnectorSetup {
   hosts: string[];
   setupScript: string;
   environment: string;
+  /** The claude.ai organization's connector exists (Team, Enterprise); otherwise each builder adds their own (Pro, Max). */
+  organization: boolean;
 }
 
 const code = (value: string) => `<code>${escape(value)}</code>`;
@@ -145,14 +147,26 @@ export function connectorPage(s: ConnectorSetup) {
     `<h1>Connect Claude to the platform</h1>
 <p>Claude Code on the web reaches the platform through a claude.ai connector, set up once.</p>
 
-<h2>On claude.ai Team or Enterprise</h2>
-<p>
-  Your organization's <strong>Platform</strong> connector is ready: on claude.ai, open Customize, then Connectors,
-  choose Platform, then Connect, and sign in with your platform account.
-</p>
+${s.organization ? organizationConnector : ownConnector(s)}
 
-<h2>On claude.ai Pro or Max</h2>
+<form method="post" action="/_platform/logout">
+  <button type="submit" class="link">Not ${escape(s.email)}? Sign out</button>
+</form>`,
+    true,
+  );
+}
+
+const organizationConnector = `<p>Your organization's <strong>Platform</strong> connector is ready:</p>
 <ol>
+  <li>On claude.ai, open Customize &gt; Connectors.</li>
+  <li>Choose Platform.</li>
+  <li>Click Connect.</li>
+  <li>Sign in with your platform account.</li>
+  <li>Click Allow.</li>
+</ol>`;
+
+function ownConnector(s: ConnectorSetup) {
+  return `<ol>
   <li>
     <p>Your connector's client, which signs in ${escape(s.email)} only:</p>
     ${ownClient(s)}
@@ -170,13 +184,7 @@ export function connectorPage(s: ConnectorSetup) {
       default list, plus ${s.hosts.map(code).join(" and ")}; setup script ${code(s.setupScript)}.
     </p>
   </li>
-</ol>
-
-<form method="post" action="/_platform/logout">
-  <button type="submit" class="link">Not ${escape(s.email)}? Sign out</button>
-</form>`,
-    true,
-  );
+</ol>`;
 }
 
 export function oauthMessagePage(title: string, message: string) {

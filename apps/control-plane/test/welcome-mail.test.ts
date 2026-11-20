@@ -2,44 +2,78 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { welcomeMail } from "../src/welcome-mail.ts";
 
+const start = "https://claude.ai/code?environment=Platform&prompt=Build%20me%20an%20app";
+const connectPage = "https://example.com/_platform/claude";
 const base = {
-  email: "dana@example.com",
   role: "developer" as const,
   apiUrl: "https://api.example.com",
   studioUrl: "https://example.com",
   adminUrl: "https://admin.example.com",
   sso: null,
-  webStart: null,
-  connectPage: "https://example.com/_platform/claude",
+  claude: { organization: true, start, connectPage },
 };
-const PLUGIN = /claude plugin install platform --marketplace https:\/\/api\.example\.com\/plugin\/marketplace\.json\n/;
+const PLUGIN = "claude plugin install platform --marketplace https://api.example.com/plugin/marketplace.json";
+/** The HTML without its tags' attributes: what the reader sees. */
+const visible = (html: string) => html.replace(/<[^>]*>/g, " ");
 
-test("without Claude Code on the web: the plugin, Node and gh", () => {
+test("organization connector: its steps, then the first session; the Connect Claude page is not needed", () => {
+  const { text, html } = welcomeMail(base);
+  assert.match(text, /^\d\. On claude\.ai, open Customize > Connectors\.\n\d\. Choose Platform\.\n\d\. Click Connect\.$/m);
+  assert.match(text, /^\d\. Start building: https:\/\/claude\.ai\/code\?environment=Platform&prompt=Build%20me%20an%20app$/m);
+  assert.ok(!text.includes(connectPage) && !html.includes(connectPage));
+  assert.ok(html.includes(`href="${start.replaceAll("&", "&#38;")}"`), "the button links the session");
+});
+
+test("personal connectors: the Connect Claude page first, then the first session", () => {
+  const { text } = welcomeMail({ ...base, claude: { ...base.claude, organization: false } });
+  const page = text.indexOf(`Open the Connect Claude page: ${connectPage}`);
+  assert.ok(page > 0 && page < text.indexOf(`Start building: ${start}`));
+  assert.ok(!text.includes("Customize > Connectors"));
+});
+
+test("the plan is never named; links show their label, not their URL", () => {
+  for (const organization of [true, false]) {
+    const { text, html } = welcomeMail({ ...base, claude: { ...base.claude, organization } });
+    assert.doesNotMatch(text, /Team|Enterprise|Pro\b|Max\b/);
+    const seen = visible(html);
+    for (const url of [start, connectPage, base.studioUrl]) assert.ok(!seen.includes(url), url);
+    assert.match(seen, /Start building/);
+    assert.match(seen, /Open Studio/);
+    assert.ok(seen.includes(PLUGIN), "a command to copy stays visible");
+  }
+});
+
+test("Claude Code on the computer comes last, as advanced usage", () => {
   const { text } = welcomeMail(base);
-  assert.match(text, /^- Build and deploy apps with Claude Code\. You need Node\.js 22\.18/m);
-  assert.match(text, PLUGIN);
-  assert.ok(!text.includes("claude.ai"));
-  assert.ok(!text.includes(base.connectPage));
-  assert.match(text, /password over a private channel/);
+  const advanced = text.indexOf("ADVANCED: CLAUDE CODE ON YOUR COMPUTER");
+  assert.ok(advanced > text.indexOf("BUILD YOUR FIRST APP") && advanced > text.indexOf("SEE YOUR APPS' DATA"));
+  assert.ok(text.indexOf(PLUGIN) > advanced);
+  assert.match(text, /^- Node\.js 22\.18 or later\.$/m);
 });
 
-test("with Claude Code on the web: the connector's page, then the first session, the terminal as an alternative", () => {
-  const webStart = "https://claude.ai/code?environment=Platform&prompt=Build%20me%20an%20app";
-  const { text } = welcomeMail({ ...base, webStart });
-  const connect = text.indexOf(`    ${base.connectPage}\n`);
-  const web = text.indexOf(webStart);
-  assert.ok(connect > 0 && connect < web, "the connector before the session");
-  assert.ok(web < text.search(PLUGIN), "the browser path comes first");
-  assert.match(text, /one click on claude\.ai Team or Enterprise, three steps on Pro or Max/);
-  assert.match(text, /^- Or with Claude Code on your computer, with Node\.js 22\.18/m);
+test("sign-in: the company account with SSO (never the IdP's name), the password line only when one applies", () => {
+  const password = welcomeMail(base).text;
+  assert.match(password, /^\d\. Sign in with your email and password\.$/m);
+  assert.match(password, /never sent by email/);
+  const sso = welcomeMail({ ...base, sso: { passwordToo: false } }).text;
+  assert.match(sso, /^\d\. Sign in with your company account\.$/m);
+  assert.match(sso, /In the browser that opens, sign in with your company account\./);
+  assert.ok(!sso.includes("password"));
+  assert.match(welcomeMail({ ...base, sso: { passwordToo: true } }).text, /never sent by email/);
 });
 
-test("company SSO: Studio sign-in, and no password line when SSO is the only way in", () => {
-  const { text } = welcomeMail({ ...base, sso: { name: "Okta", passwordToo: false } });
-  assert.match(text, /\(sign in with Okta\)\./);
-  assert.ok(!text.includes("password"));
-  const admin = welcomeMail({ ...base, role: "admin", sso: { name: "Okta", passwordToo: true } }).text;
-  assert.match(admin, /as an admin\./);
-  assert.match(admin, /^- Administration console: https:\/\/admin\.example\.com$/m);
-  assert.match(admin, /password over a private channel/);
+test("admins: the admin console; without Claude Code on the web, no build section", () => {
+  const builder = welcomeMail(base).text;
+  assert.ok(!builder.includes(base.adminUrl));
+  const admin = welcomeMail({ ...base, role: "admin", claude: null }).text;
+  assert.match(admin, /^Your admin account on the company's app platform is ready\.$/m);
+  assert.match(admin, /^- Open the admin console: https:\/\/admin\.example\.com$/m);
+  assert.ok(!admin.includes("BUILD YOUR FIRST APP") && !admin.includes("claude.ai"));
+  assert.ok(admin.includes(PLUGIN));
+});
+
+test("the HTML escapes what it shows", () => {
+  const { html } = welcomeMail({ ...base, studioUrl: `https://example.com/"><script>` });
+  assert.ok(!html.includes("<script>"));
+  assert.match(html, /^<!doctype html>/);
 });
