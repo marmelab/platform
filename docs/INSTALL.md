@@ -283,8 +283,8 @@ and the Connect Claude page give the Team or Enterprise steps; without it, the P
 **Good to know**
 
 - The setup script installs the plugin, the Supabase CLI and `frpc`, the preview tunnel's client (ARCHITECTURE §3.10).
-- It also writes `~/.claude/CLAUDE.md`, so that Claude talks to builders in plain language. The session still shows
-  the commands and file changes Claude makes (TECH_DEBT PLG-12).
+- It also writes `~/.claude/CLAUDE.md`: Claude talks to builders in plain language, and builds every app for the
+  platform. The session still shows the commands and file changes Claude makes (TECH_DEBT PLG-12).
 - claude.ai caches the setup for about a week. Edit the environment to apply a platform upgrade at once.
 - Only the platform's connector clients can sign in through claude.ai. Their codes are useless without the secret.
 - claude.ai stores the builders' refresh tokens (TECH_DEBT).
