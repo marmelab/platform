@@ -64,7 +64,7 @@ How to write them:
 - One test per rule, not per function or branch; cases that differ only by their input share one `it.each`.
 - The name states the rule: `it("another user cannot read a private note")`.
 - Assert what the user or the caller observes (rows, errors, text on screen), never internals.
-- Red first: write the test, see it fail for the right reason, then write the code.
+- Write each test with the code it covers, and run the tests once the change is complete.
 - A failing test is fixed in the code. Change a test only when the rule itself changed.
 - Import `describe`, `it`, `expect` and `vi` from `vitest`.
 

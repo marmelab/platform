@@ -1,6 +1,6 @@
 ---
 name: analyst
-description: Turns an app builder's request into the app's access rules (who sees and changes what) and the tests that prove them, before any code is written. Use from the build skill when a change touches the app's data, sharing, sign-in or edge functions.
+description: Turns an app builder's request into the app's access rules (who sees and changes what) and the tests that prove them, before any code is written. Use from the build skill when a change to an existing app touches its data, sharing, sign-in or edge functions.
 tools: Read, Grep, Glob
 model: sonnet
 effort: medium
