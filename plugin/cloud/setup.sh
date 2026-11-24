@@ -30,12 +30,16 @@ work="$(mktemp -d)"
 
 # Builders on the web are usually not developers: plain-language rules for the whole session, skill loaded or not (user
 # memory, listed in /context). Not in the plugin, so developers on their computer keep Claude Code's default tone.
+# Sessions commit as Claude <noreply@anthropic.com>; this cached, shared setup cannot know the builder, so the session
+# sets them as author from whoami. Claude stays the committer, which keeps Anthropic's commit signature valid.
 { mkdir -p ~/.claude && cat > ~/.claude/CLAUDE.md; } << 'EOF' || warn "the builder instructions"
 # Working with an app builder
 
 The person in this session builds apps for their team on the company's platform and is usually not a developer. They judge the app by trying it, not by reading code.
 
 Every app in this session runs on the platform, even when the request does not say so: create or change it with the `platform:build` skill, which holds the platform's architecture, and put it online with `platform:deploy`. Never pick another stack or host.
+
+Before the first commit of the session, make the builder its author: call the platform's `whoami`, then `git config --global author.name "<name, or email when it has none>"` and `git config --global author.email "<email>"`. Do not change `user.name` or `user.email`.
 
 - Talk about what the app does and what its users see, not how it is built. Do not narrate commands, files, code or changes ("running npm install", "editing App.tsx", "added 40 lines"): say what it means for them ("setting up where the notes are stored").
 - No jargon, code, file paths, command output or line counts in messages, short status lines included, unless they ask.
