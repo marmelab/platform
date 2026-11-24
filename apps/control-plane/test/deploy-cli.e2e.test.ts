@@ -353,4 +353,29 @@ describe("platform-deploy (packages/deploy-cli): direct and CI deployments of ex
     assert.equal(psql("select to_regclass('public.cli_probe') is not null", APP_DB), "t");
     assert.equal(releases(), "direct|succeeded|-,ci|succeeded|2001/1,ci|failed|2003/1,ci|succeeded|2005/1");
   });
+
+  test("4. tests: `npm test` runs without the deploy credentials, and a failing test publishes nothing", async () => {
+    const pkg = JSON.parse(readFileSync(join(repo, "package.json"), "utf8"));
+    const withTest = (test: string) => ({ "package.json": JSON.stringify({ ...pkg, scripts: { ...pkg.scripts, test } }, null, 2) });
+    const pr = { ref: "refs/pull/8/merge", ref_protected: "false", event_name: "pull_request" };
+    const releasesBefore = releases();
+    const frontendBefore = liveFrontend();
+
+    commit("tests that look for credentials", withTest(
+      `node -e "process.exit(process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN || process.env.PLATFORM_TOKEN ? 3 : 0)"`,
+    ));
+    const clean = await ci(["check"], { ...pr, run_id: "2006" });
+    assertExit(clean, 0);
+    assert.match(clean.output, /ok {3}test: npm test/);
+
+    commit("a failing test", withTest("exit 1"));
+    const check = await ci(["check"], { ...pr, run_id: "2007" });
+    assertExit(check, 1);
+    assert.match(check.output, /FAIL test: npm test failed with exit code 1/);
+    const deploy = await ci(["deploy"], { run_id: "2008" });
+    assertExit(deploy, 1);
+    assert.match(deploy.output, /FAIL test/);
+    assert.equal(releases(), releasesBefore);
+    assert.equal(liveFrontend(), frontendBefore);
+  });
 });

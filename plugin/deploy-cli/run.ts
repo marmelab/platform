@@ -1,7 +1,7 @@
 // The check and deploy flows. One code path for CI (OIDC) and direct (PAT) deployments: only the Platform
 // transport differs (platform.ts).
 import { type AppInfo, type Kind, type Lint, type MigrationsResult, type Platform, PlatformError, request } from "./platform.ts";
-import { buildFrontend, functionNames, gitState, hasFrontend, isAccepted, pack, type PlatformConfig, readMigrations } from "./project.ts";
+import { buildFrontend, functionNames, gitState, hasScript, isAccepted, pack, type PlatformConfig, readMigrations, runTests } from "./project.ts";
 
 export type Mode = "check" | "deploy";
 export type StepStatus = "ok" | "skipped" | "failed";
@@ -102,7 +102,7 @@ export async function run(options: Options): Promise<Report> {
 
     const migrations = await attempt("migrations", () => readMigrations(dir));
     const functions = functionNames(dir);
-    const frontend = hasFrontend(dir);
+    const frontend = hasScript(dir, "build");
 
     // 2. migrations dry run (check), with the platform's security linter; always rolled back
     if (mode === "check") {
@@ -125,7 +125,13 @@ export async function run(options: Options): Promise<Report> {
         functions.length ? `${functions.join(", ")} (not deployed in check mode)` : "no supabase/functions/<name>/index.ts");
     }
 
-    // 3. build, before anything is published: a broken build publishes nothing
+    // 3. tests and build, before anything is published: a failing test or a broken build publishes nothing
+    if (hasScript(dir, "test")) {
+      await attempt("test", () => runTests(dir));
+      step("test", "ok", "npm test");
+    } else {
+      step("test", "skipped", "no test script in package.json");
+    }
     let builtIndex: string | null = null;
     if (frontend) {
       builtIndex = await attempt("build", () =>

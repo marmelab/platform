@@ -88,6 +88,21 @@ jobs:
           elif [ -f package.json ]; then npm install --no-audit --no-fund
           else echo "no package.json: nothing to install"; fi
 
+      # The app's data tests (supabase/tests, run by platform-deploy's test step) need a local Supabase; the same pinned
+      # CLI as the claude.ai cloud environment (plugin/cloud/setup.sh), without the services no test uses.
+      - name: Local Supabase for the tests
+        working-directory: ${{ inputs.working-directory }}
+        env:
+          SUPABASE_VERSION: 2.122.0
+          SUPABASE_SHA256: 119a0f7123f381846f80cf3c4efe96cffb943db55b747177c411f2ac705a5942
+        run: |
+          find supabase/tests -name '*.test.ts' 2> /dev/null | grep -q . || { echo "no data tests: no local Supabase"; exit 0; }
+          deb="$RUNNER_TEMP/supabase.deb"
+          curl -fsSL -o "$deb" "https://github.com/supabase/cli/releases/download/v$SUPABASE_VERSION/supabase_${SUPABASE_VERSION}_linux_amd64.deb"
+          echo "$SUPABASE_SHA256  $deb" | sha256sum -c --quiet
+          sudo dpkg -i "$deb" > /dev/null
+          supabase start -x studio,imgproxy,mailpit,postgres-meta,logflare,vector,supavisor
+
       # the composite action of this workflow's own repository, at the running commit (`$/` is not available on
       # GitHub Enterprise Server: use <org>/<repo>/plugin/deploy-cli@<ref> there, with the ref of CI_ALLOWED_WORKFLOWS)
       - name: platform-deploy
