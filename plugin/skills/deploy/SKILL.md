@@ -13,7 +13,7 @@ The platform hosts Supabase-style apps (Postgres, Auth, REST, edge functions, st
 
 Scripts (call them by absolute path, from the project root):
 
-- `${CLAUDE_PLUGIN_ROOT}/skills/deploy/scripts/platform-deploy check|deploy`: `check` = `get_app`, migrations dry run with the security linter, build (publishes nothing, allowed to every member); `deploy` = release, migrations, functions, build, frontend, smoke test. Prints a step report and a markdown summary.
+- `${CLAUDE_PLUGIN_ROOT}/skills/deploy/scripts/platform-deploy check|deploy`: `check` = `get_app`, migrations dry run with the security linter, the app's tests (`npm test`), build (publishes nothing, allowed to every member); `deploy` = tests, build, release, migrations, functions, frontend, smoke test. Prints a step report and a markdown summary.
 - `${CLAUDE_PLUGIN_ROOT}/skills/deploy/scripts/function-secrets.sh`: secrets read by the functions (`Deno.env.get`), platform-provided ones excluded.
 - `${CLAUDE_PLUGIN_ROOT}/template/init-app.sh <slug> [<uses> <default_branch>]`: adds the missing files of the app template, never overwrites: `CLAUDE.md` (the target architecture); with `<uses>`, `.github/workflows/platform.yml` and `.claude/settings.json` (offers the platform plugin to whoever opens the repository).
 - `${CLAUDE_PLUGIN_ROOT}/skills/deploy/scripts/check-connection.sh [--after-auth-error]`: why the platform cannot be used, in one word (step 0), and the API URL it checked.
@@ -63,12 +63,13 @@ Add one line for the admin: "for your admin: <word>, <the `api:` line the script
 
 Run `function-secrets.sh`, then `list_secrets`. Ask the user for each missing value, then `set_secrets`. If one stays missing, say which function will fail to boot and ask whether to continue.
 
-## 4. Migrations review (both paths)
+## 4. Migrations, tests and build (both paths)
 
 1. Read the migrations not yet applied (`execute_sql`: `select version from supabase_migrations.schema_migrations`) and point out risks (table or view without RLS, `security definer`).
-2. Run `platform-deploy check` (with a deploy token when `credential` is `oauth`, see above). It fails on any new `ERROR` lint not in `acceptedLints`: show each blocking lint (name, object, detail), explain the risk and propose a fix in the migration. **Stop** while a table is exposed without RLS.
-3. Add a lint to `.platform.json` `acceptedLints` (`{ "name", "object" }`) only if the user explicitly consents in this conversation; it is reviewed in the diff and audited.
-4. Fix build errors before going on.
+2. When the app has data tests (`supabase/tests/*.test.ts`), start the local Supabase first, without a message (`supabase start`; `supabase db reset` after a migration change): `platform-deploy` runs them against it. Without Docker: on the CI path, go on (CI runs them; a `test` step that only fails because the local Supabase is not running does not block); on the direct path, tell the user in one plain sentence that this computer cannot run the app's safety checks, and stop.
+3. Run `platform-deploy check` (with a deploy token when `credential` is `oauth`, see above). It fails on any new `ERROR` lint not in `acceptedLints`: show each blocking lint (name, object, detail), explain the risk and propose a fix in the migration. **Stop** while a table is exposed without RLS.
+4. Add a lint to `.platform.json` `acceptedLints` (`{ "name", "object" }`) only if the user explicitly consents in this conversation; it is reviewed in the diff and audited.
+5. Fix failing tests and build errors before going on, in the app's code (the `build` skill's method; never by weakening a test) and without asking the user. Mention a fix only when it changes what the app's users see or who sees what, in one plain sentence.
 
 ## Repository on the web
 
@@ -87,12 +88,12 @@ In a session on the web (`CLAUDE_CODE_REMOTE=true`), Claude cannot create a GitH
 3. Workflow: `init-app.sh <slug> <ci.uses> <default_branch>` (the caller workflow names the platform's URL: no repository variable to set). It never overwrites: if the workflow already existed, check it calls `ci.uses` with `id-token: write`; if `.claude/settings.json` already existed, add the template's `extraKnownMarketplaces` and `enabledPlugins` entries to it.
 4. Commit the changes (`.platform.json`, the template files, fixes) on the default branch and `git push`: every push to it deploys. On the web, `git push origin HEAD:<default_branch>` (a session opened on the repository works on its own branch); if GitHub refuses it, check steps 1 and 2 of **Repository on the web** with the user. Do not protect the branch: reviews, if the company wants them, come from its GitHub rulesets. Only if the push is refused by such a rule: `git switch -c platform-deploy`, `git push -u origin platform-deploy`, `gh pr create --fill`, `gh pr checks --watch`, then ask the user to get the PR merged (the merge is the push that deploys; `gh pr merge --squash` only if they say so). On the web, `git push origin HEAD:refs/heads/platform-deploy` and give the user https://github.com/<repo>/compare/<default_branch>...platform-deploy?expand=1 to open the PR.
 5. `gh run list --workflow platform.yml --branch <default_branch> --limit 1 --json databaseId,url,status`, then `gh run watch <id> --exit-status`. On the web, `gh` cannot follow the run: `get_app` every 30 seconds until `last_release.commit_sha` is the pushed commit (`git rev-parse HEAD`) and its `status` is `succeeded` or `failed`; after 15 minutes without it, give the user https://github.com/<repo>/actions.
-6. Report the app URL, the Studio link (`get_app` `studio_url`) and the run URL; on the web, also `get_app` `claude_code_url`: "to change the app later, open this link". On failure: `gh run view <id> --log-failed` (on the web, the run URL for the user), then `get_logs`, and diagnose.
+6. Report the app URL, the Studio link (`get_app` `studio_url`) and the run URL; on the web, also `get_app` `claude_code_url`: "to change the app later, open this link". On failure: `gh run view <id> --log-failed` (on the web, the run URL for the user), then `get_logs`, and diagnose; a failing test is fixed as in section 4, then pushed again.
 
 ## 5b. Direct path
 
 1. Commit first if the tree is dirty (the release records the commit).
-2. `platform-deploy deploy` (with a new deploy token when `credential` is `oauth`; it rebuilds, applies the migrations with `acceptedLints`, deploys functions and frontend, smoke-tests).
+2. `platform-deploy deploy` (with a new deploy token when `credential` is `oauth`; it runs the tests, rebuilds, applies the migrations with `acceptedLints`, deploys functions and frontend, smoke-tests).
 3. Report the app URL, the Studio link, the release, migrations applied, functions and frontend versions, warnings. Mention that a GitHub repository with CI is the production path.
 
 ## On errors

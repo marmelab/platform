@@ -12,8 +12,8 @@ import { markdown } from "./summary.ts";
 
 const USAGE = `Usage: platform-deploy <check|deploy> [options]
 
-  check    get_app, migrations dry run with the security linter, build. Publishes nothing.
-  deploy   release, migrations, functions, build, frontend, smoke test.
+  check    get_app, migrations dry run with the security linter, tests, build. Publishes nothing.
+  deploy   tests, build, release, migrations, functions, frontend, smoke test.
 
 Options:
   --dir <path>       app repository (default: current directory)

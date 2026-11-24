@@ -2,19 +2,22 @@
 
 An app hosted on the company's platform: one Supabase-style instance (Postgres, Auth, REST, Storage, Realtime, edge functions), with its static frontend served at `https://__APP__.<domain>`. There is no other server: everything the app does fits in the architecture below.
 
-The people who change this app are often not developers: use the `platform:build` skill to change it (it also runs a local preview) and `platform:deploy` to put it online.
+The people who change this app are often not developers: use the `platform:build` skill to change it (it also runs a local preview) and `platform:deploy` to put it online. Write and review its code with the `platform:guidelines` skill.
 
 ## Target architecture
 
 ```
-package.json            # name = the app slug (^[a-z][a-z0-9-]{1,30}[a-z0-9]$), scripts dev / build / typecheck
-index.html, vite.config.ts, tsconfig.json
+package.json            # name = the app slug (^[a-z][a-z0-9-]{1,30}[a-z0-9]$), scripts dev / build / typecheck / test
+index.html, vite.config.ts, tsconfig.json, vitest.config.ts
 src/                    # React + TypeScript, supabase-js; one file per screen, flat
   supabase.ts           # createClient(import.meta.env.VITE_SUPABASE_URL, import.meta.env.VITE_SUPABASE_ANON_KEY)
+  <table>.ts            # the supabase-js calls of one table, used by the screens
+  <Screen>.test.tsx     # component and unit tests (jsdom, Testing Library)
 supabase/
   config.toml           # for the local preview (`supabase start`)
   migrations/<YYYYMMDDHHMMSS>_<name>.sql
   functions/<name>/index.ts   # Deno, only for what the browser must not do
+  tests/<table>.test.ts       # who sees and changes what, against the local Supabase (helpers.ts, global-setup.ts)
 .env.example            # VITE_SUPABASE_URL=, VITE_SUPABASE_ANON_KEY=
 .gitignore              # node_modules, dist, .env.local
 .claude/launch.json     # the dev server, for the preview pane of Claude Desktop
@@ -25,6 +28,7 @@ supabase/
 - **Logic**: in the database (policies, constraints, triggers, RPC functions) when it protects data; in an edge function when it needs a secret, another service, or privileges the user does not have (read the secret with `Deno.env.get`; `SUPABASE_URL`, `SUPABASE_ANON_KEY` and `SUPABASE_SERVICE_ROLE_KEY` are provided). Call functions with `supabase.functions.invoke`. The `service_role` key never appears in the frontend.
 - **Auth**: email and password with supabase-js. Users are usually invited by the app builder: an invitation link signs the person in and lands on the app with a session; the app must then ask them to choose a password (`supabase.auth.updateUser({ password })`, detected with the `type=invite` in the URL hash, or a user without a password set yet). Also handle `PASSWORD_RECOVERY` (reset link). Keep a "Create an account" button only if the user wants open sign-up.
 - **Files**: Supabase Storage buckets, created in a migration with their policies. **Live updates**: Supabase Realtime on the tables that need it.
+- **Tests**: `npm test` (vitest) runs the tests of `src/` and, with the local Supabase started, the data tests of `supabase/tests/`. Every deployment runs them and stops on a failure.
 
 ## Deployment
 

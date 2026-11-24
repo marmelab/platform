@@ -29,13 +29,20 @@ for skill in "$plugin"/skills/*/SKILL.md; do
   done
 done
 
+# 2b. Every skill an agent preloads (frontmatter `skills:`) is shipped
+for agent in "$plugin"/agents/*.md; do
+  for name in $(awk '/^skills:/ { list = 1; next } list && /^  - / { print $2; next } { list = 0 }' "$agent"); do
+    check "$(basename "$agent" .md) preloads the $name skill" test -f "$plugin/skills/$name/SKILL.md"
+  done
+done
+
 # 3. Every MCP tool named in the skills is registered by the control plane
 tools="$(tr '\n' ' ' < "$ROOT/apps/control-plane/src/mcp.ts" | grep -oE 'registerTool\(\s*"[a-z_]+"' | grep -oE '"[a-z_]+"' | tr -d '"' | sort -u)"
 # backticked snake_case words that are fields or options, not tools
 fields="direct_deploy direct_deploy_setting api_url github_org github_repo default_branch studio_url last_release
   admin_exception schema_drift since_minutes repository_id required_approving_review_count
   email_confirmation_effective redirect_urls callback_url service_role user_metadata shadow_port email_confirm
-  claude_code_url"
+  claude_code_url raw_user_meta_data"
 for skill in "$plugin"/skills/*/SKILL.md; do
   name="$(basename "$(dirname "$skill")")"
   for word in $(grep -oE '`[a-z]+(_[a-z]+)+`' "$skill" | tr -d '`' | sort -u); do
@@ -177,6 +184,11 @@ refuses "preflight outside a git checkout" "not a git checkout" "$preflight"
 workflow="$ROOT/.github/workflows/deploy.yml"
 check "reusable workflow uses the plugin's action at the running commit" grep -qx '        uses: $/plugin/deploy-cli' "$workflow"
 check "reusable workflow is workflow_call only" bash -c "grep -qx '  workflow_call:' '$workflow' && ! grep -qE '^  (push|pull_request|schedule|workflow_dispatch):' '$workflow'"
+# the app's data tests run in CI and in the cloud environment with the same Supabase CLI
+for var in SUPABASE_VERSION SUPABASE_SHA256; do
+  cloud="$(sed -n "s/^$var=//p" "$ROOT/plugin/cloud/setup.sh")"
+  check "reusable workflow pins the cloud environment's $var" test -n "$cloud" -a "$cloud" = "$(sed -n "s/^ *$var: //p" "$workflow")"
+done
 if command -v actionlint > /dev/null; then check "actionlint accepts the reusable workflow" actionlint "$workflow"; fi
 
 # 9. The platform URL: PLATFORM_URL when exported, else the local stack. The platform serves the plugin with its own

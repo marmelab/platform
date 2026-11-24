@@ -67,11 +67,11 @@ export function functionNames(dir: string): string[] {
     .sort();
 }
 
-/** A Vite SPA: package.json with a build script. */
-export function hasFrontend(dir: string): boolean {
+/** package.json has this script: `build` for a Vite SPA, `test` for the app's tests. */
+export function hasScript(dir: string, script: string): boolean {
   const file = join(dir, "package.json");
   if (!existsSync(file)) return false;
-  return typeof JSON.parse(readFileSync(file, "utf8"))?.scripts?.build === "string";
+  return typeof JSON.parse(readFileSync(file, "utf8"))?.scripts?.[script] === "string";
 }
 
 function run(command: string, args: string[], cwd: string, env: NodeJS.ProcessEnv = process.env) {
@@ -81,17 +81,30 @@ function run(command: string, args: string[], cwd: string, env: NodeJS.ProcessEn
   if (result.status !== 0) throw new Error(`${command} ${args.join(" ")} failed with exit code ${result.status}`);
 }
 
-/** Installs dependencies when node_modules is missing, then `npm run build` with the app's public variables. */
+// The app's own code (install scripts, tests, build) never gets the credentials that deploy it.
+function appEnv(vars: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
+  const env = { ...process.env, ...vars };
+  for (const name of ["PLATFORM_TOKEN", "ACTIONS_ID_TOKEN_REQUEST_URL", "ACTIONS_ID_TOKEN_REQUEST_TOKEN"]) delete env[name];
+  return env;
+}
+
+/** Installs dependencies when node_modules is missing. */
+function install(dir: string) {
+  if (existsSync(join(dir, "node_modules"))) return;
+  const lock = existsSync(join(dir, "package-lock.json"));
+  run("npm", [lock ? "ci" : "install", "--no-audit", "--no-fund"], dir, appEnv());
+}
+
+/** `npm test`, without the app's variables: its data tests run against the local Supabase, never the app. */
+export function runTests(dir: string) {
+  install(dir);
+  run("npm", ["test"], dir, appEnv());
+}
+
+/** `npm run build` with the app's public variables. */
 export function buildFrontend(dir: string, vars: { supabaseUrl: string; anonKey: string }) {
-  if (!existsSync(join(dir, "node_modules"))) {
-    const lock = existsSync(join(dir, "package-lock.json"));
-    run("npm", [lock ? "ci" : "install", "--no-audit", "--no-fund"], dir);
-  }
-  run("npm", ["run", "build"], dir, {
-    ...process.env,
-    VITE_SUPABASE_URL: vars.supabaseUrl,
-    VITE_SUPABASE_ANON_KEY: vars.anonKey,
-  });
+  install(dir);
+  run("npm", ["run", "build"], dir, appEnv({ VITE_SUPABASE_URL: vars.supabaseUrl, VITE_SUPABASE_ANON_KEY: vars.anonKey }));
   const index = join(dir, "dist", "index.html");
   if (!existsSync(index)) throw new Error("the build did not produce dist/index.html");
   return readFileSync(index, "utf8");
