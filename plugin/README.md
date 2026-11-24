@@ -11,14 +11,18 @@ plugin/
   cloud/setup.sh                   # setup script of the claude.ai cloud environment (Claude Code on the web), served
                                    # at /plugin/cloud-setup.sh: this plugin, the Supabase CLI and frpc
   deploy-cli/                      # platform-deploy, the CLI the CI runs, and its composite action (action.yml)
+  agents/                          # dispatched by the build skill: analyst (access rules and tests of a change),
+                                   # security-reviewer and quality-reviewer (VERDICT PASS or BLOCK); preload guidelines
   template/                        # the app template, written by init-app.sh (missing files only, never overwrites)
     init-app.sh                    # <slug> [<uses> <default_branch>]
-    app/                           # skeleton of a new app (no package.json yet): Vite + React + supabase-js, preview config
+    app/                           # skeleton of a new app (no package.json yet): Vite + React + supabase-js, preview config,
+                                   # vitest (vitest.config.ts; supabase/tests: data tests against the local Supabase)
     project/CLAUDE.md              # the target architecture, on any app
     ci/                            # with <uses>: .github/workflows/platform.yml (caller of the reusable workflow) and
                                    # .claude/settings.json (offers the plugin to whoever opens the repository)
   skills/build/SKILL.md            # builder: creates or extends an app from the template, preview
   skills/build/scripts/preview.sh  # the preview of a session on the web, through the platform's tunnel (frp)
+  skills/guidelines/SKILL.md       # coding guidelines of the apps (screens, migrations and RLS, functions, tests)
   skills/deploy/SKILL.md           # builder: sets up the CI and pushes, or deploys directly when allowed
   skills/deploy/scripts/
     platform-deploy                # runs deploy-cli/main.ts with a deploy token or the PAT (check | deploy [--reason])

@@ -235,7 +235,10 @@ plugin/
   .claude-plugin/plugin.json
   .mcp.json                     # url: ${PLATFORM_URL:-<the platform's>}; browser sign-in (OAuth), or a PAT in X-Platform-Token
   deploy-cli/                   # platform-deploy shipped in the plugin, with its composite action (action.yml)
+  agents/                       # analyst, security-reviewer, quality-reviewer: dispatched by the build skill
   skills/build/SKILL.md         # target architecture of the apps (Vite + React, supabase-js, migrations with RLS, functions)
+  skills/guidelines/SKILL.md    # coding guidelines of the apps, preloaded by the agents
+  template/                     # app template (init-app.sh): skeleton with its vitest setup, CLAUDE.md, CI caller
   skills/deploy/SKILL.md        # CI setup, then push and run follow-up; direct deployment if allowed
   skills/admin-deploy/SKILL.md  # direct deployment, admins only (§6.3)
 .github/workflows/deploy.yml    # reusable workflow maintained by the admin (§6.2), `workflow_call` only: never runs here
@@ -253,6 +256,8 @@ The reusable workflow lives in the company's **internal copy of this repository*
 - Its builder is usually not a developer: the setup script writes a user `CLAUDE.md` that keeps Claude's messages in plain language for the whole session, whether a skill is loaded or not, and sends every app request to the `build` skill, even one that does not name the platform. The session still shows each command and file change, which claude.ai does not let us hide (TECH_DEBT PLG-12).
 - It commits as `Claude <noreply@anthropic.com>`, signed by Anthropic: the same user `CLAUDE.md` has Claude set the builder from `whoami` as the commits' author (`author.name`, `author.email`), so the repository history shows who made each change. Claude stays the committer, which keeps the signature valid.
 
+**Code quality of the apps.** Builders judge an app by using it, so the plugin carries its code quality, out of their sight: the builder sees the app, never the checks. The `guidelines` skill sets how screens, migrations and row level security, functions and tests are written. The `build` skill sizes each change: a change to data, sharing, sign-in or functions first goes to the `analyst` agent, which turns the request into access rules (who reads, creates, changes, deletes what) and the tests proving them; once committed, a screen change goes to the `quality-reviewer`, a data change to it and the `security-reviewer`, with one fix round, while the preview starts. The template gives every app vitest tests: data tests against the local Supabase (two throwaway users per scenario, deleted after the run), component tests (jsdom, Testing Library) and unit tests; `platform-deploy` runs them before anything is published, in CI and in direct deployments. Guidelines and agents ship with the plugin rather than in the app's repository: they follow the platform's releases, reach the first session on the web, and an app's own session cannot weaken them. The app keeps only its tests and a pointer in its `CLAUDE.md`.
+
 `get_app` returns `claude_code_url`, a link to a new session on the app's repository (`claude_web_environment` setting), and the welcome email a link to a first session with no repository. Until that setting is set, the admin API refuses to create app builders (accounts created at a first company SSO sign-in get no welcome email and are not refused). The platform has one claude.ai setup, told by the organization's connector client: with it, the welcome email and the Connect Claude page give the Team or Enterprise steps; without it, the Pro or Max ones (TECH_DEBT PLG-11).
 
 ### 6.1 `deploy` skill (builder)
@@ -264,7 +269,7 @@ The reusable workflow lives in the company's **internal copy of this repository*
 3. GitHub repo: if there is no remote in the company's organization, create it (`gh repo create`; on the web, the builder creates it, see above). `link_repo` with `owner/name`, `repository_id` and the default branch.
 4. Function secrets: find the `Deno.env.get(...)` calls, compare with `list_secrets`, ask the user for the missing values, `set_secrets`.
 5. CI, only if absent: `.github/workflows/platform.yml` that calls the reusable workflow on `push` (default branch) and `pull_request`, with `id-token: write` and the platform's URL (`platform-url`).
-6. Prior review of the new migrations, and `apply_migrations` in `dry_run`: report the lints, **stop if tables are exposed without RLS**. Add a lint to `acceptedLints` only with the user's explicit consent.
+6. Prior review of the new migrations, and `apply_migrations` in `dry_run`: report the lints, **stop if tables are exposed without RLS**. The app's tests run in the same check, against the local Supabase. Add a lint to `acceptedLints` only with the user's explicit consent.
 7. Commit and push (or a PR if a ruleset refuses the push), then `gh run watch` (on the web, `get_app` until the release of the pushed commit ends). Show the app URL, the Studio link and the run link. On failure: run logs (`gh run view --log-failed`), `get_logs`, diagnosis.
 
 Path choice: CI if `whoami.ci` exists and the project has (or the user wants) a repo in `ci.github_org`; direct if `direct_deploy` and no repo nor CI, or on explicit request; otherwise, explanation and stop. The migration review (step 6) goes in both cases through `platform-deploy check` with the PAT (`dry_run` stays open to builders). The default branch must be protected for CI to publish: the skill checks it and offers a minimal protection (PR required). The calling workflow is written from the plugin's app template (`plugin/template/ci/.github/workflows/platform.yml`, by `init-app.sh`) with the `uses:` from `whoami.ci`.
@@ -278,9 +283,9 @@ Local development stays standard (`supabase start` with the official CLI). Migra
 Input `mode: deploy | check`. Steps:
 
 1. **Company checks**, defined by the admin: dependency analysis, secret scanning, SAST, etc. These are those of the customer's existing CI; the platform does not impose a list.
-2. `npm ci`, then `platform-deploy` with the OIDC token:
-   - `check`: `dry_run` of migrations and lints, build; result in the run summary and as a PR comment;
-   - `deploy`: migrations (rejection of any new `ERROR` lint absent from `acceptedLints`), functions (warmed up before the switch), build with the variables from `get_app`, frontend, smoke test.
+2. `npm ci`, a local Supabase when the app has data tests (`supabase/tests`, the Supabase CLI pinned like the cloud environment's), then `platform-deploy` with the OIDC token:
+   - `check`: `dry_run` of migrations and lints, the app's tests (`npm test`), build; result in the run summary and as a PR comment;
+   - `deploy`: the app's tests, then migrations (rejection of any new `ERROR` lint absent from `acceptedLints`), functions (warmed up before the switch), build with the variables from `get_app`, frontend, smoke test.
 
 Required reviews, required checks and branch protection remain configured by the customer on GitHub (rulesets); the platform does not check them, and the `deploy` skill does not protect the branch it creates (every push to the default branch deploys).
 
